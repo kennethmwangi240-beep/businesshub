@@ -1007,18 +1007,39 @@ async function syncPull(){
     if(me.plans) d.plans = me.plans;
     if(me.isAdmin){
       const ov = await api('/api/admin/overview');
-      // merge users list (no passwords from server publicUser - keep local pwd if any)
-      ov.clients.forEach(c=>{
-        let x=d.users.find(u=>u.id===c.id);
-        if(!x) d.users.push({id:c.id,email:c.email,name:c.name,role:'owner',password:''});
-        else { x.email=c.email; x.name=c.name; }
+      // Replace non-admin users with server list (deleted clients disappear)
+      const adminUsers = d.users.filter(u=>u.role==='admin'||u.email===(d.adminEmail||'admin@businesshub.ke')||u.id===me.user.id);
+      const byId = {};
+      adminUsers.forEach(u=>{ byId[u.id]=u; });
+      (ov.clients||[]).forEach(c=>{
+        byId[c.id] = {id:c.id,email:c.email,name:c.name||'',role:'owner',phone:c.phone||'',password:''};
       });
-      // businesses summary + full fetch each
-      const full = await api('/api/businesses');
-      d.businesses = full.businesses || [];
+      // ensure current admin stays
+      byId[me.user.id] = Object.assign(byId[me.user.id]||{},{id:me.user.id,email:me.user.email,name:me.user.name||'',role:'admin',password:(byId[me.user.id]&&byId[me.user.id].password)||''});
+      d.users = Object.keys(byId).map(k=>byId[k]);
+      d.adminEmail = me.user.email || d.adminEmail;
+      // Businesses: full records preferred; fall back to overview summaries
+      let fullBiz = [];
+      try{
+        const full = await api('/api/businesses');
+        fullBiz = full.businesses || [];
+      }catch(e){ console.warn('admin businesses fetch', e); }
+      if(!fullBiz.length && ov.businesses && ov.businesses.length){
+        fullBiz = ov.businesses.map(b=>({
+          id:b.id, ownerId:b.ownerId, name:b.name||'Unnamed', plan:b.plan||'FREE',
+          suspended:!!b.suspended, createdAt:b.createdAt, trialEndsAt:b.trialEndsAt,
+          onlineStore:b.onlineStore!==false, products:[], orders:[], expenses:[]
+        }));
+      }
+      d.businesses = fullBiz;
       d.platform = ov.platform || d.platform;
       d.notices = ov.notices || [];
       if(ov.plans) d.plans = ov.plans;
+      d._adminTotals = ov.totals || null;
+      try{
+        const al=await api('/api/admin/alerts');
+        d.adminAlerts=al.alerts||[];
+      }catch(e){d.adminAlerts=d.adminAlerts||[]}
     }else{
       const full = await api('/api/businesses');
       const remote = full.businesses || [];
@@ -1258,10 +1279,19 @@ function bucketPnL(b,mode){
 function getSalesPin(){const b=biz();return (b&&b.salesPin)||''}
 function setSalesPin(pin){const b=biz();if(!b)return;b.salesPin=String(pin);saveBiz(b)}
 function requireSalesPin(onOk){
+  const b=biz();
+  if(!b){toast('No business');return}
+  if(b.pinLocked){
+    openModal(`<h3 class="text-lg font-bold mb-2 text-red-700">Sales PIN locked</h3>
+      <p class="text-sm text-slate-600 mb-3">Too many incorrect attempts. Platform admin was notified. Ask them to unlock or reset your sales PIN under Admin → Alerts.</p>
+      <button type="button" id="pinCancel" class="w-full py-2.5 rounded-xl border">Close</button>`);
+    document.getElementById('pinCancel').onclick=closeModal;
+    return;
+  }
   const pin=getSalesPin();
   if(!pin){
     openModal(`<h3 class="text-lg font-bold mb-2">Create sales PIN</h3>
-      <p class="text-sm text-slate-500 mb-3">4–6 digits. Required before every sale.</p>
+      <p class="text-sm text-slate-500 mb-3">4–6 digits. After <b>2 wrong tries</b> the PIN locks and admin is notified.</p>
       <input id="newPin1" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-2 text-center text-lg tracking-widest"/>
       <input id="newPin2" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-3 text-center text-lg tracking-widest" placeholder="Confirm"/>
       <p id="pinErr" class="hidden text-sm text-red-600 mb-2"></p>
@@ -1269,25 +1299,51 @@ function requireSalesPin(onOk){
       <button type="button" id="pinCancel" class="w-full py-2 text-sm text-slate-500 mt-2">Cancel</button>`);
     document.getElementById('pinCancel').onclick=closeModal;
     document.getElementById('pinSave').onclick=()=>{
-      const a=document.getElementById('newPin1').value.trim(),b=document.getElementById('newPin2').value.trim(),err=document.getElementById('pinErr');
+      const a=document.getElementById('newPin1').value.trim(),c=document.getElementById('newPin2').value.trim(),err=document.getElementById('pinErr');
       if(!/^\d{4,6}$/.test(a)){err.textContent='PIN must be 4–6 digits';err.classList.remove('hidden');return}
-      if(a!==b){err.textContent='PINs do not match';err.classList.remove('hidden');return}
-      setSalesPin(a);closeModal();toast('Sales PIN saved');onOk();
+      if(a!==c){err.textContent='PINs do not match';err.classList.remove('hidden');return}
+      setSalesPin(a);const bb=biz();if(bb){bb.pinFails=0;bb.pinLocked=false;saveBiz(bb)}
+      closeModal();toast('Sales PIN saved');onOk();
     };
     return;
   }
+  const fails=Number(b.pinFails||0);
   openModal(`<h3 class="text-lg font-bold mb-2">Enter sales PIN</h3>
+    <p class="text-xs text-slate-500 mb-2">${fails?('Attempts used: '+fails+'/2'):'2 attempts allowed'}</p>
     <input id="checkPin" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-3 text-center text-lg tracking-widest" autofocus/>
     <p id="pinErr" class="hidden text-sm text-red-600 mb-2"></p>
     <button type="button" id="pinOk" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${S.accent()}">Confirm sale</button>
     <button type="button" id="pinCancel" class="w-full py-2 text-sm text-slate-500 mt-2">Cancel</button>`);
   const input=document.getElementById('checkPin');
-  const go=()=>{if(input.value.trim()!==getSalesPin()){document.getElementById('pinErr').textContent='Incorrect PIN';document.getElementById('pinErr').classList.remove('hidden');input.value='';input.focus();return}closeModal();onOk()};
+  const go=()=>{
+    const bb=biz();if(!bb)return;
+    if(input.value.trim()===getSalesPin()){
+      bb.pinFails=0;bb.pinLocked=false;saveBiz(bb);closeModal();onOk();return;
+    }
+    bb.pinFails=Number(bb.pinFails||0)+1;
+    if(bb.pinFails>=2){
+      bb.pinLocked=true;bb.pinLockedAt=new Date().toISOString();saveBiz(bb);
+      if(typeof SERVER_MODE!=='undefined'&&SERVER_MODE){
+        api('/api/admin/pin-lock',{method:'POST',body:{businessId:bb.id,fails:bb.pinFails}}).catch(function(){});
+      }
+      closeModal();
+      openModal(`<h3 class="text-lg font-bold text-red-700 mb-2">PIN locked</h3>
+        <p class="text-sm text-slate-600 mb-3">2 incorrect attempts. Admin has been notified to unlock your sales PIN.</p>
+        <button type="button" id="pinCancel" class="w-full py-2.5 rounded-xl border">OK</button>`);
+      document.getElementById('pinCancel').onclick=closeModal;
+      return;
+    }
+    saveBiz(bb);
+    document.getElementById('pinErr').textContent='Incorrect PIN ('+bb.pinFails+'/2). One more wrong try will lock the PIN.';
+    document.getElementById('pinErr').classList.remove('hidden');
+    input.value='';input.focus();
+  };
   document.getElementById('pinCancel').onclick=closeModal;
   document.getElementById('pinOk').onclick=go;
   input.onkeydown=e=>{if(e.key==='Enter')go()};
   setTimeout(()=>input.focus(),80);
 }
+
 
 const S={
   view:'landing',appView:'dashboard',filter:'All',search:'',bizCatTab:'all',
@@ -1781,18 +1837,43 @@ function viewRegister(){
   </div></div>`;
 }
 function viewForgot(){
-  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="BusinessHub" class="h-14 mx-auto mb-2"/>
-  <button type="button" data-go="login" class="text-xs text-slate-400 mb-4">← Back</button>
-  <h1 class="text-2xl font-bold">Reset password</h1>
-  <form id="forgotForm" class="mt-6 space-y-4">
-    <div><label class="text-sm font-medium">Email</label><input name="email" type="email" required class="w-full border rounded-xl px-3 py-2.5 mt-1"/></div>
-    <div><label class="text-sm font-medium">New password</label>${pwField('password','',true)}</div>
-    <div><label class="text-sm font-medium">Confirm</label>${pwField('password2','',true)}</div>
-    <p id="forgotErr" class="hidden text-sm text-red-600"></p>
-    <p id="forgotOk" class="hidden text-sm text-emerald-600"></p>
-    <button class="w-full py-3 rounded-xl text-white font-semibold bg-teal-600">Update password</button>
-  </form></div></div>`;
+  return `<div class="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+  <div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm">
+    <button type="button" data-go="login" class="text-xs text-slate-400 mb-4">← Back to login</button>
+    <h1 class="text-2xl font-bold">Account recovery</h1>
+    <p class="text-sm text-slate-500 mt-1">Reset your password with a one-time recovery code.</p>
+    <form id="forgotForm" class="mt-6 space-y-4">
+      <div>
+        <label class="text-sm font-medium">Account email</label>
+        <input name="email" type="email" required class="w-full border rounded-xl px-3 py-2.5 mt-1" placeholder="you@email.com"/>
+      </div>
+      <div id="codeStep" class="hidden space-y-4">
+        <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-sm text-amber-950">
+          <p class="font-medium">Your recovery code</p>
+          <p id="codeDisplay" class="text-2xl font-bold tracking-widest mt-1"></p>
+          <p class="text-xs mt-1">Valid 30 minutes. Copy it now.</p>
+        </div>
+        <div>
+          <label class="text-sm font-medium">Enter recovery code</label>
+          <input name="code" inputmode="numeric" class="w-full border rounded-xl px-3 py-2.5 mt-1 tracking-widest text-center" placeholder="6-digit code"/>
+        </div>
+        <div>
+          <label class="text-sm font-medium">New password</label>
+          ${pwField('password','Min. 6 characters',true)}
+        </div>
+        <div>
+          <label class="text-sm font-medium">Confirm password</label>
+          ${pwField('password2','',true)}
+        </div>
+      </div>
+      <p id="forgotErr" class="hidden text-sm text-red-600"></p>
+      <p id="forgotOk" class="hidden text-sm text-emerald-600"></p>
+      <button type="submit" id="forgotBtn" class="w-full py-3 rounded-xl text-white font-semibold bg-teal-600">Get recovery code</button>
+    </form>
+    <p class="text-center text-sm mt-4 text-slate-500">Remembered it? <button type="button" data-go="login" class="text-teal-700 font-medium">Log in</button></p>
+  </div></div>`;
 }
+
 
 function viewAdminLogin(){
   return `<div class="min-h-screen flex items-center justify-center p-4 bg-slate-900">
@@ -2183,6 +2264,23 @@ function secShop(b,a){
         <input id="mpesaPhone" class="w-full border rounded-xl px-3 py-2.5" placeholder="0712 345 678"/></div>
       <div><label class="block text-sm font-medium mb-1">Transaction / receipt code</label>
         <input id="txCode" class="w-full border rounded-xl px-3 py-2.5" placeholder="M-Pesa code or receipt no."/></div>
+      <div id="cashCalc" class="${S.payMethod==='Cash'?'':'hidden'} mt-3 p-3 rounded-xl border bg-slate-50 space-y-2">
+        <p class="text-sm font-semibold text-slate-700">Cash calculator</p>
+        <div class="flex justify-between text-sm"><span>Total due</span><span class="font-bold" id="cashDue">${kes(cartTotal())}</span></div>
+        <div>
+          <label class="text-xs text-slate-500">Amount received</label>
+          <input id="cashTendered" type="number" min="0" step="0.01" class="w-full border rounded-xl px-3 py-2 mt-1" placeholder="0.00"/>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span>Change to give</span>
+          <span class="font-bold text-lg" id="cashChange">KES 0.00</span>
+        </div>
+        <p id="cashCalcMsg" class="text-xs text-amber-700 hidden">Amount received is less than total.</p>
+        <div class="flex flex-wrap gap-1">
+          ${[50,100,200,500,1000].map(n=>`<button type="button" data-cash-quick="${n}" class="text-xs px-2 py-1 rounded-lg border bg-white">+${n}</button>`).join('')}
+          <button type="button" data-cash-exact class="text-xs px-2 py-1 rounded-lg border bg-white">Exact</button>
+        </div>
+      </div>
       <button type="button" id="btnCompleteSale" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${a}">Complete sale</button>
       <button type="button" id="btnClear" class="w-full py-2 text-sm text-slate-500">Clear cart</button>
     </div>`:''}
@@ -2605,6 +2703,10 @@ function secSettings(b,a){
 }
 
 function viewAdmin(){
+  if(SERVER_MODE&&API_TOKEN&&!S._adminPullOnce){
+    S._adminPullOnce=true;
+    syncPull().then(function(){render()}).catch(function(){});
+  }
   if(!isAdmin()){
     return `<div class="min-h-screen flex items-center justify-center p-6 bg-slate-100">
       <div class="bg-white rounded-2xl border p-8 max-w-md text-center">
@@ -2629,7 +2731,7 @@ function viewAdmin(){
   const swatches=Object.keys(AD_THEMES).map(k=>`<button type="button" data-ad-theme="${k}" title="${k}" aria-label="${k} theme" class="ad-sw ${adTheme()===k?'on':''}" style="background:${AD_THEMES[k]}"></button>`).join('');
 
   const tabs=[
-    ['overview','Overview'],['clients','Clients'],['businesses','Businesses'],['plans','Payment plans'],['profile','My platform details'],['updates','Updates / notices'],['backup','Backup']
+    ['overview','Overview'],['clients','Clients'],['businesses','Businesses'],['plans','Payment plans'],['profile','My platform details'],['updates','Updates / notices'],['alerts','Alerts'],['backup','Backup']
   ];
   const tabNav=tabs.map(([k,l])=>`<button type="button" data-admin-tab="${k}" class="ad-tab px-3 py-2 text-sm rounded-lg ${tab===k?'ad-btn font-semibold':'bg-white border text-slate-600'}">${l}</button>`).join('');
 
@@ -2813,6 +2915,38 @@ function viewAdmin(){
         <p class="text-sm text-slate-600 mt-1">${esc(n.body)}</p>
         <p class="text-xs text-slate-400 mt-1">${esc(n.date)}</p>
       </div>`).join('')||'<p class="text-sm text-slate-400">No notices yet</p>'}
+    </div>`;
+  }else if(tab==='alerts'){
+    const alerts=(d.adminAlerts||[]).slice().reverse();
+    body=`<div class="bg-white rounded-2xl border p-6 max-w-3xl">
+      <div class="flex flex-wrap justify-between gap-2 mb-4">
+        <div>
+          <h3 class="font-semibold">Admin alerts</h3>
+          <p class="text-sm text-slate-500">PIN locks, password recovery requests, and system notices.</p>
+        </div>
+        <button type="button" id="clearAlerts" class="text-xs border px-3 py-1.5 rounded-lg">Clear all</button>
+      </div>
+      <div class="space-y-2">
+        ${alerts.map(a=>`<div class="border rounded-xl p-3 text-sm">
+          <div class="flex justify-between gap-2">
+            <span class="font-medium">${esc(a.type||'alert')}</span>
+            <span class="text-xs text-slate-400">${esc((a.at||'').slice(0,19).replace('T',' '))}</span>
+          </div>
+          <p class="text-slate-700 mt-1">${esc(a.message||'')}</p>
+          ${a.type==='pin_locked'&&a.businessId?`<button type="button" data-unlock-pin="${a.businessId}" class="mt-2 text-xs text-white px-3 py-1.5 rounded-lg bg-teal-600">Unlock PIN</button>`:''}
+          ${a.email?`<p class="text-xs text-slate-500 mt-1">${esc(a.email)}</p>`:''}
+        </div>`).join('')||'<p class="text-slate-400 text-sm py-8 text-center">No alerts</p>'}
+      </div>
+      <div class="mt-6 border-t pt-4">
+        <h3 class="font-semibold mb-2">Unlock / reset sales PIN for a business</h3>
+        <form id="unlockPinForm" class="flex flex-wrap gap-2 text-sm">
+          <select name="businessId" class="border rounded-xl px-3 py-2 flex-1 min-w-[160px]">
+            ${(d.businesses||[]).map(b=>`<option value="${b.id}">${esc(b.name)} ${b.pinLocked?'(LOCKED)':''}</option>`).join('')}
+          </select>
+          <input name="newPin" placeholder="New PIN (optional)" inputmode="numeric" maxlength="6" class="border rounded-xl px-3 py-2 w-36"/>
+          <button class="px-4 py-2 rounded-xl text-white bg-teal-600 font-medium">Unlock</button>
+        </form>
+      </div>
     </div>`;
   }else if(tab==='backup'){
     body=`<div class="bg-white rounded-2xl border p-6 max-w-2xl space-y-4">
@@ -3127,14 +3261,60 @@ function bind(){
     S.view='onboard';render()};
 
   const ff=document.getElementById('forgotForm');
-  if(ff)ff.onsubmit=e=>{e.preventDefault();const fd=new FormData(ff);const d=db();
-    const u=d.users.find(x=>x.email===String(fd.get('email')).toLowerCase().trim());
+  if(ff)ff.onsubmit=e=>{e.preventDefault();
+    const fd=new FormData(ff);
     const err=document.getElementById('forgotErr'),ok=document.getElementById('forgotOk');
+    const btn=document.getElementById('forgotBtn');
+    const codeStep=document.getElementById('codeStep');
     err.classList.add('hidden');ok.classList.add('hidden');
-    if(!u){err.textContent='No account';err.classList.remove('hidden');return}
-    if(fd.get('password')!==fd.get('password2')){err.textContent='Passwords do not match';err.classList.remove('hidden');return}
-    u.password=fd.get('password');save(d);ok.textContent='Password updated';ok.classList.remove('hidden')};
-
+    const email=String(fd.get('email')).toLowerCase().trim();
+    const code=(fd.get('code')||'').trim();
+    const password=fd.get('password')||'';
+    const password2=fd.get('password2')||'';
+    if(codeStep && !codeStep.classList.contains('hidden') && code){
+      if(password!==password2){err.textContent='Passwords do not match';err.classList.remove('hidden');return}
+      if(String(password).length<6){err.textContent='Password must be at least 6 characters';err.classList.remove('hidden');return}
+      if(SERVER_MODE){
+        btn.disabled=true;btn.textContent='Updating…';
+        api('/api/auth/reset',{method:'POST',body:{email:email,code:code,password:password}}).then(function(){
+          ok.textContent='Password updated. You can log in.';ok.classList.remove('hidden');
+          setTimeout(function(){S.view='login';render()},1000);
+        }).catch(function(ex){err.textContent=ex.message||'Reset failed';err.classList.remove('hidden');btn.disabled=false;btn.textContent='Update password'});
+        return;
+      }
+      const d=db();const u=d.users.find(x=>x.email===email);
+      if(!u||String(u._recoveryCode||'')!==code){err.textContent='Invalid recovery code';err.classList.remove('hidden');return}
+      u.password=password;delete u._recoveryCode;save(d);
+      ok.textContent='Password updated.';ok.classList.remove('hidden');
+      setTimeout(function(){S.view='login';render()},1000);
+      return;
+    }
+    if(SERVER_MODE){
+      btn.disabled=true;btn.textContent='Sending…';
+      api('/api/auth/forgot',{method:'POST',body:{email:email}}).then(function(data){
+        btn.disabled=false;
+        if(data.recoveryCode){
+          codeStep.classList.remove('hidden');
+          document.getElementById('codeDisplay').textContent=data.recoveryCode;
+          btn.textContent='Update password';
+          ok.textContent=data.message||'Enter code and new password';ok.classList.remove('hidden');
+        }else{
+          ok.textContent=data.message||'Check your email';ok.classList.remove('hidden');
+          btn.textContent='Get recovery code';
+        }
+      }).catch(function(ex){err.textContent=ex.message||'Failed';err.classList.remove('hidden');btn.disabled=false;btn.textContent='Get recovery code'});
+      return;
+    }
+    const d=db();const u=d.users.find(x=>x.email===email);
+    if(!u){err.textContent='No account with that email';err.classList.remove('hidden');return}
+    const rc=String(Math.floor(100000+Math.random()*900000));
+    u._recoveryCode=rc;save(d);
+    codeStep.classList.remove('hidden');
+    document.getElementById('codeDisplay').textContent=rc;
+    btn.textContent='Update password';
+    ok.textContent='Local recovery code created.';ok.classList.remove('hidden');
+  };
+  
   const of=document.getElementById('onboardForm');
   if(of)of.onsubmit=e=>{e.preventDefault();const fd=new FormData(of);const d=db();const u=currentUser();
     if(!u)return;
@@ -3232,14 +3412,42 @@ render();
       else receipt=payMethod.toUpperCase().replace(/\s/g,'')+'-'+String(b.orderN).padStart(4,'0');
     }
     const order={id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items,total,status:'PAID',
-      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos'};
+      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null};
     if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];saveBiz(b);return order;
   }
 
+  
+  function updateCashChange(){
+    const due=cartTotal();
+    const tendered=Number((document.getElementById('cashTendered')||{}).value||0);
+    const change=money(tendered-due);
+    const el=document.getElementById('cashChange');
+    const msg=document.getElementById('cashCalcMsg');
+    if(el){el.textContent=kes(Math.max(0,change));el.className='font-bold text-lg '+(tendered>0&&tendered<due?'text-red-600':'text-emerald-700')}
+    if(msg){if(tendered>0&&tendered<due)msg.classList.remove('hidden');else msg.classList.add('hidden')}
+  }
+  const cashT=document.getElementById('cashTendered');
+  if(cashT){cashT.oninput=updateCashChange;updateCashChange()}
+  document.querySelectorAll('[data-cash-quick]').forEach(b=>b.onclick=()=>{
+    const inp=document.getElementById('cashTendered');if(!inp)return;
+    inp.value=String(money(Number(inp.value||0)+Number(b.getAttribute('data-cash-quick'))));
+    updateCashChange();
+  });
+  document.querySelectorAll('[data-cash-exact]').forEach(b=>b.onclick=()=>{
+    const inp=document.getElementById('cashTendered');if(!inp)return;
+    inp.value=String(cartTotal());updateCashChange();
+  });
   const complete=document.getElementById('btnCompleteSale');
   if(complete)complete.onclick=()=>{
     const phone=(document.getElementById('mpesaPhone')||{}).value||'';
     if(S.payMethod==='M-Pesa'&&phone.replace(/\s/g,'').length<9){alert('Enter customer M-Pesa number');return}
+    if(S.payMethod==='Cash'){
+      const due=cartTotal();
+      const tendered=Number((document.getElementById('cashTendered')||{}).value||0);
+      if(tendered>0 && tendered<due){alert('Amount received is less than total. Need '+kes(due-tendered)+' more.');return}
+      S._cashTendered=tendered||due;
+      S._cashChange=money(Math.max(0,(tendered||due)-due));
+    }
     requireSalesPin(()=>{
       if(S.payMethod==='M-Pesa'){
         const b=biz();const amount=cartTotal();
@@ -3608,9 +3816,23 @@ render();
     toast('Order sent to shop')};
 
   // Admin plan setters
-  document.querySelectorAll('[data-set-plan]').forEach(sel=>{
-    sel.onchange=()=>{const d=db();const b=d.businesses.find(x=>x.id===sel.getAttribute('data-set-plan'));
-      if(!b)return;b.plan=sel.value;save(d);toast('Plan updated for '+b.name)}});
+  document.  document.querySelectorAll('[data-set-plan]').forEach(sel=>{
+    sel.onchange=()=>{
+      const id=sel.getAttribute('data-set-plan');
+      const d=db();const b=d.businesses.find(x=>x.id===id);
+      if(!b)return;
+      const plan=sel.value;
+      b.plan=plan;
+      if(plan!=='FREE'){b.planPaidAt=today();b.planReceipt=b.planReceipt||('ADMIN-'+Date.now())}
+      save(d);
+      if(SERVER_MODE){
+        api('/api/businesses/'+id,{method:'PUT',body:{plan:plan}}).then(function(){
+          toast('Plan updated on server for '+(b.name||''));render();
+        }).catch(function(e){alert(e.message||e);});
+        return;
+      }
+      toast('Plan updated for '+(b.name||''));render();
+    }});
   const pf=document.getElementById('plansForm');
   if(pf)pf.onsubmit=e=>{e.preventDefault();const fd=new FormData(pf);const d=db();
     if(!d.plans)d.plans=JSON.parse(JSON.stringify(DEFAULT_PLANS));
@@ -3620,41 +3842,142 @@ render();
       d.plans[k].bizLimit=Number(fd.get(k+'_limit'))||1;
       d.plans[k].label=d.plans[k].name+(d.plans[k].price?(' · KES '+d.plans[k].price+'/mo'):'');
     });
-    save(d);toast('Payment plans saved');render()};
+    save(d);
+    if(SERVER_MODE){
+      api('/api/admin/plans',{method:'PUT',body:{plans:d.plans}}).then(function(){
+        toast('Payment plans saved on server');render();
+      }).catch(function(err){toast('Saved locally — server: '+(err.message||err));render();});
+      return;
+    }
+    toast('Payment plans saved');render()};
 
   document.querySelectorAll('[data-admin-tab]').forEach(b=>b.onclick=()=>{S.adminTab=b.getAttribute('data-admin-tab');render()});
+  
+  document.querySelectorAll('[data-unlock-pin]').forEach(btn=>btn.onclick=()=>{
+    const id=btn.getAttribute('data-unlock-pin');
+    if(!SERVER_MODE){const d=db();const b=d.businesses.find(x=>x.id===id);if(b){b.pinLocked=false;b.pinFails=0;save(d);render();toast('PIN unlocked');}return}
+    api('/api/admin/pin-unlock',{method:'POST',body:{businessId:id}}).then(function(data){
+      const d=db();const b=d.businesses.find(x=>x.id===id);
+      if(b&&data.business)Object.assign(b,data.business);else if(b){b.pinLocked=false;b.pinFails=0}
+      save(d);syncPull().then(function(){render();toast('PIN unlocked on server')});
+    }).catch(function(e){alert(e.message||e)});
+  });
+  const clearAlerts=document.getElementById('clearAlerts');
+  if(clearAlerts)clearAlerts.onclick=()=>{
+    if(!confirm('Clear all alerts?'))return;
+    if(SERVER_MODE)api('/api/admin/alerts',{method:'DELETE',body:{clearAll:true}}).then(function(){
+      const d=db();d.adminAlerts=[];save(d);render();
+    });
+    else {const d=db();d.adminAlerts=[];save(d);render()}
+  };
+  const unlockPinForm=document.getElementById('unlockPinForm');
+  if(unlockPinForm)unlockPinForm.onsubmit=e=>{
+    e.preventDefault();const fd=new FormData(unlockPinForm);
+    const id=fd.get('businessId');const newPin=fd.get('newPin')||'';
+    if(!id)return;
+    if(SERVER_MODE){
+      api('/api/admin/pin-unlock',{method:'POST',body:{businessId:id,newPin:newPin||undefined}}).then(function(data){
+        const d=db();const b=d.businesses.find(x=>x.id===id);
+        if(b&&data.business)Object.assign(b,data.business);
+        else if(b){b.pinLocked=false;b.pinFails=0;if(newPin)b.salesPin=newPin}
+        save(d);render();toast('PIN unlocked');
+      }).catch(function(err){alert(err.message||err)});
+      return;
+    }
+    const d=db();const b=d.businesses.find(x=>x.id===id);
+    if(b){b.pinLocked=false;b.pinFails=0;if(newPin)b.salesPin=String(newPin);save(d);render();toast('PIN unlocked')}
+  };
+
+  const adminRefresh=document.getElementById('adminRefresh');
+  if(adminRefresh)adminRefresh.onclick=()=>{
+    if(!SERVER_MODE){toast('Local mode — no server');return}
+    adminRefresh.disabled=true;adminRefresh.textContent='Refreshing…';
+    syncPull().then(function(){adminRefresh.disabled=false;adminRefresh.textContent='Refresh from server';render();toast('Admin data refreshed')})
+      .catch(function(e){adminRefresh.disabled=false;adminRefresh.textContent='Refresh from server';toast(e.message||'Refresh failed')});
+  };
   document.querySelectorAll('[data-extend-trial]').forEach(btn=>btn.onclick=()=>{
-    const d=db();const b=d.businesses.find(x=>x.id===btn.getAttribute('data-extend-trial'));
-    if(!b)return;b.trialEndsAt=addDays(trialEndsOn(b),3);b.trialExtended=true;save(d);render();toast('Trial extended +3 days')});
+    const id=btn.getAttribute('data-extend-trial');
+    const d=db();const b=d.businesses.find(x=>x.id===id);
+    if(!b)return;
+    const ends=addDays(trialEndsOn(b),3);
+    b.trialEndsAt=ends;b.trialExtended=true;save(d);
+    if(SERVER_MODE){
+      api('/api/businesses/'+id,{method:'PUT',body:{trialEndsAt:ends,trialExtended:true}}).then(function(){
+        render();toast('Trial extended +3 days on server');
+      }).catch(function(e){alert(e.message||e);});
+      return;
+    }
+    render();toast('Trial extended +3 days')});
   document.querySelectorAll('[data-toggle-suspend]').forEach(btn=>btn.onclick=()=>{
-    const d=db();const b=d.businesses.find(x=>x.id===btn.getAttribute('data-toggle-suspend'));
-    if(!b)return;b.suspended=!b.suspended;save(d);render();toast(b.suspended?'Business suspended':'Business activated')});
+    const id=btn.getAttribute('data-toggle-suspend');
+    const d=db();const b=d.businesses.find(x=>x.id===id);
+    if(!b)return;
+    const next=!b.suspended;
+    b.suspended=next;save(d);
+    if(SERVER_MODE){
+      api('/api/businesses/'+id,{method:'PUT',body:{suspended:next}}).then(function(){
+        render();toast(next?'Business suspended on server':'Business activated on server');
+      }).catch(function(e){b.suspended=!next;save(d);alert(e.message||e);render();});
+      return;
+    }
+    render();toast(next?'Business suspended':'Business activated')});
   document.querySelectorAll('[data-reset-client]').forEach(btn=>btn.onclick=()=>{
     if(!confirm('Reset this client password to 1234?'))return;
-    const d=db();const u=d.users.find(x=>x.id===btn.getAttribute('data-reset-client'));
-    if(!u)return;u.password='1234';save(d);toast('Password reset to 1234')});
+    const id=btn.getAttribute('data-reset-client');
+    const d=db();const u=d.users.find(x=>x.id===id);
+    if(!u)return;
+    if(SERVER_MODE){
+      api('/api/admin/users/reset-password',{method:'POST',body:{userId:id,password:'1234'}}).then(function(){
+        u.password='';save(d);toast('Password reset on server to 1234');
+      }).catch(function(err){alert(err.message||err);});
+      return;
+    }
+    u.password='1234';save(d);toast('Password reset to 1234')});
   document.querySelectorAll('[data-delete-client]').forEach(btn=>btn.onclick=()=>{
     const id=btn.getAttribute('data-delete-client');
     const d=db();
     const u=d.users.find(x=>x.id===id);
     if(!u)return;
     const bizCount=(d.businesses||[]).filter(b=>b.ownerId===id).length;
-    const msg='Delete client "'+(u.email||u.name)+'" and '+bizCount+' business(es)?\n\nThis cannot be undone. Their products, sales and data will be removed.';
+    const msg='Delete client "'+(u.email||u.name)+'" and '+bizCount+' business(es)?\n\nThis permanently removes them from the server database.';
     if(!confirm(msg))return;
-    d.users=d.users.filter(x=>x.id!==id);
-    d.businesses=(d.businesses||[]).filter(b=>b.ownerId!==id);
-    if(d.currentBizId&&!(d.businesses.find(b=>b.id===d.currentBizId)))d.currentBizId=null;
-    if(d.session===id)d.session=null;
-    save(d);render();toast('Client deleted')});
+    const finishLocal=function(){
+      const d2=db();
+      d2.users=(d2.users||[]).filter(x=>x.id!==id);
+      d2.businesses=(d2.businesses||[]).filter(b=>b.ownerId!==id);
+      if(d2.currentBizId&&!(d2.businesses.find(b=>b.id===d2.currentBizId)))d2.currentBizId=null;
+      save(d2);render();toast('Client permanently deleted');
+    };
+    if(SERVER_MODE){
+      api('/api/admin/users',{method:'DELETE',body:{userId:id}}).then(function(){
+        finishLocal();
+        syncPull().then(function(){render();});
+      }).catch(function(err){
+        alert('Server delete failed: '+(err.message||err)+'\nClient was NOT removed from the database.');
+      });
+      return;
+    }
+    finishLocal();
+  });
   document.querySelectorAll('[data-delete-biz]').forEach(btn=>btn.onclick=()=>{
     const id=btn.getAttribute('data-delete-biz');
     const d=db();
     const b=(d.businesses||[]).find(x=>x.id===id);
     if(!b)return;
-    if(!confirm('Delete business "'+b.name+'"? All its products, sales and stock will be removed. The client account stays.'))return;
-    d.businesses=d.businesses.filter(x=>x.id!==id);
-    if(d.currentBizId===id)d.currentBizId=null;
-    save(d);render();toast('Business deleted')});
+    if(!confirm('Delete business "'+b.name+'" permanently from the server? Products and sales will be removed. The client account stays.'))return;
+    const finish=function(){
+      const d2=db();
+      d2.businesses=(d2.businesses||[]).filter(x=>x.id!==id);
+      if(d2.currentBizId===id)d2.currentBizId=null;
+      save(d2);render();toast('Business permanently deleted');
+    };
+    if(SERVER_MODE){
+      api('/api/businesses/'+id,{method:'DELETE'}).then(function(){finish();syncPull().then(function(){render();});})
+        .catch(function(err){alert('Server delete failed: '+(err.message||err));});
+      return;
+    }
+    finish();
+  });
   document.querySelectorAll('[data-del-notice]').forEach(btn=>btn.onclick=()=>{
     const id=btn.getAttribute('data-del-notice');
     const d=db();d.notices=(d.notices||[]).filter(n=>n.id!==id);save(d);
@@ -3665,7 +3988,14 @@ render();
     if(!d.platform)d.platform={};
     ['company','ownerName','email','phone','address','city','country','mpesaTill','paybill','bankName','bankAccount','supportEmail','website','notes'].forEach(k=>d.platform[k]=fd.get(k)||'');
     if(d.platform.email)d.adminEmail=String(d.platform.email).toLowerCase().trim();
-    save(d);toast('Platform details saved');render()};
+    save(d);
+    if(SERVER_MODE){
+      api('/api/admin/platform',{method:'PUT',body:d.platform}).then(function(){
+        toast('Platform details saved on server');render();
+      }).catch(function(err){toast('Saved locally — server: '+(err.message||err));render();});
+      return;
+    }
+    toast('Platform details saved');render()};
   const noticeForm=document.getElementById('noticeForm');
   if(noticeForm)noticeForm.onsubmit=e=>{e.preventDefault();const fd=new FormData(noticeForm);const title=fd.get('title');const body=fd.get('body');
     const applyLocal=function(notice){
