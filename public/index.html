@@ -17,8 +17,16 @@ window.addEventListener('appinstalled',function(){window.__bhPrompt=null;if(wind
 <meta name="theme-color" content="#0b3a8f"/>
 <link rel="icon" href="/icon-192.png"/>
 <link rel="apple-touch-icon" href="/icon-192.png"/>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/vendor/tailwindcdn.js"></script>
+<script src="/vendor/chart.umd.min.js"></script>
+<script>
+/* CDN fallback if local vendor files missing */
+(function(){
+  function load(src){var s=document.createElement('script');s.src=src;document.head.appendChild(s)}
+  if(typeof tailwind==='undefined') load('https://cdn.tailwindcss.com');
+  setTimeout(function(){ if(typeof Chart==='undefined') load('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'); }, 50);
+})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box}body{font-family:Inter,system-ui,sans-serif;background:#f1f5f9;margin:0}
@@ -972,6 +980,16 @@ async function detectServer(){
   return SERVER_MODE;
 }
 
+async function refreshNotices(){
+  if(!SERVER_MODE || !API_TOKEN || isAdmin()) return;
+  try{
+    const n = await api('/api/notices');
+    const d=db();
+    d.notices = n.notices || [];
+    d.platformUpdate = n.platformUpdate || null;
+    save(d);
+  }catch(e){}
+}
 async function syncPull(){
   if(!SERVER_MODE || !API_TOKEN) return;
   try{
@@ -1004,9 +1022,27 @@ async function syncPull(){
     }else{
       const full = await api('/api/businesses');
       const remote = full.businesses || [];
-      // replace this owner's businesses with server copies
       const other = d.businesses.filter(b=>b.ownerId!==me.user.id);
-      d.businesses = other.concat(remote);
+      const localMine = d.businesses.filter(b=>b.ownerId===me.user.id);
+      const localMap = {};
+      localMine.forEach(b=>{ localMap[b.id]=b; });
+      const merged = remote.map(rb=>{
+        const lb = localMap[rb.id];
+        if(lb && lb.updatedAt && rb.updatedAt && lb.updatedAt > rb.updatedAt){
+          // local newer — keep local and push
+          syncPushBiz(lb);
+          return lb;
+        }
+        if(lb && lb.updatedAt && !rb.updatedAt){
+          syncPushBiz(lb);
+          return lb;
+        }
+        return rb;
+      });
+      // local-only businesses not on server yet
+      remote.forEach(rb=>{ delete localMap[rb.id]; });
+      Object.keys(localMap).forEach(id=>{ merged.push(localMap[id]); syncPushBiz(localMap[id]); });
+      d.businesses = other.concat(merged);
       const n = await api('/api/notices');
       d.notices = n.notices || [];
       d.platformUpdate = n.platformUpdate || null;
@@ -1020,18 +1056,52 @@ async function syncPull(){
   }
 }
 
+let _pushQueue = Promise.resolve();
+let _pushPending = {};
 async function syncPushBiz(b){
   if(!SERVER_MODE || !API_TOKEN || !b || !b.id) return;
-  try{
-    await api('/api/businesses/'+b.id, {method:'PUT', body:b});
-  }catch(e){
-    console.warn('syncPushBiz', e);
-    // create if missing
-    if(String(e.message||'').includes('Not found')){
-      try{ await api('/api/businesses', {method:'POST', body:b}); }catch(e2){ console.warn(e2); }
+  b.updatedAt = new Date().toISOString();
+  _pushPending[b.id] = b;
+  _pushQueue = _pushQueue.then(async () => {
+    const payload = _pushPending[b.id];
+    if(!payload) return;
+    delete _pushPending[b.id];
+    try{
+      await api('/api/businesses/'+payload.id, {method:'PUT', body:payload});
+    }catch(e){
+      console.warn('syncPushBiz', e);
+      if(String(e.message||'').includes('Not found')){
+        try{ await api('/api/businesses', {method:'POST', body:payload}); }catch(e2){ console.warn(e2); }
+      } else {
+        // re-queue once on failure
+        _pushPending[payload.id] = payload;
+      }
     }
+  }).catch(function(e){ console.warn('push queue', e); });
+  return _pushQueue;
+}
+async function flushPushes(){
+  try{ await _pushQueue; }catch(e){}
+  const ids = Object.keys(_pushPending);
+  for(const id of ids){
+    const payload = _pushPending[id];
+    delete _pushPending[id];
+    try{ await api('/api/businesses/'+id, {method:'PUT', body:payload}); }catch(e){ console.warn(e); }
   }
 }
+window.addEventListener('beforeunload', function(){
+  if(!SERVER_MODE || !API_TOKEN) return;
+  const ids = Object.keys(_pushPending);
+  ids.forEach(function(id){
+    try{
+      const payload = _pushPending[id];
+      navigator.sendBeacon && navigator.sendBeacon('/api/businesses/'+id, new Blob([JSON.stringify(payload)],{type:'application/json'}));
+    }catch(e){}
+  });
+});
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState==='hidden') flushPushes();
+});
 
 const _saveBizOrig = null; // placeholder patched after saveBiz defined
 
@@ -1121,6 +1191,8 @@ function biz(){
 }
 function setBiz(id){const d=db();d.currentBizId=id;save(d)}
 function saveBiz(b){
+  if(!b)return;
+  b.updatedAt = new Date().toISOString();
   const d=db();
   const i=d.businesses.findIndex(x=>x.id===b.id);
   if(i>=0)d.businesses[i]=b;else d.businesses.push(b);
@@ -1600,6 +1672,13 @@ function render(){
     bind();
   const badge=document.getElementById('serverBadge');
   if(badge){badge.textContent=SERVER_MODE?'Server DB':'Local only';badge.className='text-xs px-2 py-1 rounded-full '+(SERVER_MODE?'bg-emerald-100 text-emerald-800':'bg-slate-100 text-slate-500')}
+    if(S.view==='app'&&(S.appView==='dashboard'||S.appView==='wallet')){
+      const prevN=JSON.stringify((db().notices||[]).map(n=>n.id));
+      refreshNotices().then(function(){
+        const nextN=JSON.stringify((db().notices||[]).map(n=>n.id));
+        if(prevN!==nextN&&S.appView==='dashboard'){render();return;}
+      });
+    }
     if(S.view==='app'&&S.appView==='wallet')requestAnimationFrame(()=>requestAnimationFrame(drawChart));
     if(S.view==='admin'&&(S.adminTab||'overview')==='overview')requestAnimationFrame(()=>{drawAdminCharts();animateCounts()});
     refreshInstallUI();
@@ -1924,7 +2003,7 @@ function viewApp(){
 
 function secDash(b,a){
   const day=today();
-  const notices=(db().notices||[]).slice(-3).reverse();
+  const notices=(db().notices||[]).slice(-5).reverse();
   const trialLeft=daysLeftInTrial(b);
   const trialBanner=!planIsPaid(b)?`<div class="rounded-xl p-3 mb-4 text-sm ${trialLeft<0?'bg-red-50 border border-red-100 text-red-900':trialLeft<=1?'bg-amber-50 border border-amber-100 text-amber-950':'bg-emerald-50 border border-emerald-100 text-emerald-950'}">
     ${trialLeft<0?`<b>Trial ended.</b> Choose a paid plan.`:`<b>Free trial:</b> ${trialLeft} day(s) left · ends ${esc(trialEndsOn(b))} · <button type="button" data-nav="settings" class="underline font-semibold">Plans</button>`}
@@ -2001,10 +2080,20 @@ function secWallet(b,a){
 
 function drawChart(){
   const canvas=document.getElementById('salesChart');
-  if(!canvas||typeof Chart==='undefined')return;
+  if(!canvas)return;
+  if(typeof Chart==='undefined'){
+    // retry shortly if script still loading
+    if(!(drawChart._tries>15)){drawChart._tries=(drawChart._tries||0)+1;setTimeout(drawChart,200)}
+    return;
+  }
+  drawChart._tries=0;
   try{if(chartInst){chartInst.destroy();chartInst=null}}catch(e){}
   const b=biz();if(!b)return;
-  const {labels,income,expenses,profit}=bucketPnL(b,S.chartMode);
+  const wrap=document.getElementById('chartWrap');
+  if(wrap){wrap.style.height='340px';wrap.style.width='100%'}
+  canvas.style.width='100%';canvas.style.height='340px';
+  const {labels,income,expenses,profit}=bucketPnL(b,S.chartMode||'daily');
+  // ensure at least empty axes render
   chartInst=new Chart(canvas,{
     data:{
       labels,
@@ -3567,7 +3656,10 @@ render();
     if(d.currentBizId===id)d.currentBizId=null;
     save(d);render();toast('Business deleted')});
   document.querySelectorAll('[data-del-notice]').forEach(btn=>btn.onclick=()=>{
-    const d=db();d.notices=(d.notices||[]).filter(n=>n.id!==btn.getAttribute('data-del-notice'));save(d);render()});
+    const id=btn.getAttribute('data-del-notice');
+    const d=db();d.notices=(d.notices||[]).filter(n=>n.id!==id);save(d);
+    if(SERVER_MODE)api('/api/admin/notices',{method:'DELETE',body:{id:id}}).catch(function(){});
+    render()});
   const platformForm=document.getElementById('platformForm');
   if(platformForm)platformForm.onsubmit=e=>{e.preventDefault();const fd=new FormData(platformForm);const d=db();
     if(!d.platform)d.platform={};
@@ -3575,11 +3667,29 @@ render();
     if(d.platform.email)d.adminEmail=String(d.platform.email).toLowerCase().trim();
     save(d);toast('Platform details saved');render()};
   const noticeForm=document.getElementById('noticeForm');
-  if(noticeForm)noticeForm.onsubmit=e=>{e.preventDefault();const fd=new FormData(noticeForm);const d=db();
-    if(!d.notices)d.notices=[];
-    d.notices.push({id:uid(),title:fd.get('title'),body:fd.get('body'),date:today()});
-    d.platformUpdate={at:new Date().toISOString(),title:fd.get('title'),body:fd.get('body')};
-    save(d);toast('Notice published — clients see it on next open/refresh');render()};
+  if(noticeForm)noticeForm.onsubmit=e=>{e.preventDefault();const fd=new FormData(noticeForm);const title=fd.get('title');const body=fd.get('body');
+    const applyLocal=function(notice){
+      const d=db();
+      if(!d.notices)d.notices=[];
+      d.notices.push(notice);
+      d.platformUpdate={at:new Date().toISOString(),title:notice.title,body:notice.body};
+      save(d);
+    };
+    if(SERVER_MODE){
+      api('/api/admin/notices',{method:'POST',body:{title:title,body:body}}).then(function(data){
+        applyLocal(data.notice||{id:uid(),title:title,body:body,date:today()});
+        toast('Notice published to all clients');
+        render();
+      }).catch(function(err){
+        applyLocal({id:uid(),title:title,body:body,date:today()});
+        toast('Saved locally — server error: '+(err.message||err));
+        render();
+      });
+      return;
+    }
+    applyLocal({id:uid(),title:title,body:body,date:today()});
+    toast('Notice published');
+    render()};
 
   /* install + admin extras */
   document.querySelectorAll('[data-install]').forEach(b=>b.onclick=()=>bhInstall());
