@@ -1,5 +1,5 @@
 // BusinessHub service worker: always fetch the newest app when online, fall back to the cached copy offline.
-const CACHE = 'bh-shell-v1';
+const CACHE = 'bh-shell-v2';
 const CDN = ['cdn.tailwindcss.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', (e) => {

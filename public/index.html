@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>BusinessHub Kenya</title>
 <link rel="manifest" href="/manifest.webmanifest"/>
-<meta name="theme-color" content="#0d9488"/>
+<meta name="theme-color" content="#0b3a8f"/>
 <link rel="icon" href="/icon-192.png"/>
 <link rel="apple-touch-icon" href="/icon-192.png"/>
 <script src="https://cdn.tailwindcss.com"></script>
@@ -35,6 +35,36 @@
   .sidebar,header,.no-print,#toast,#modal{display:none!important}
   .main-wrap{margin:0!important}body{background:#fff}
   .invoice-print{box-shadow:none!important;border:none!important}
+}
+
+:root{--brand:#1d63d6;--brand2:#3aa51d}
+.lp{background:linear-gradient(135deg,#eef4ff 0%,#f6fbf2 100%);position:relative;overflow:hidden;--brand:#1d63d6;--brand2:#3aa51d}
+.lp-blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.35;animation:lpFloat 14s ease-in-out infinite;pointer-events:none;transition:background .6s}
+@keyframes lpFloat{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-40px) scale(1.15)}}
+.lp-grad-text{background:linear-gradient(90deg,var(--brand),var(--brand2),var(--brand));background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:lpShine 6s linear infinite}
+@keyframes lpShine{to{background-position:200% center}}
+.lp-btn{transition:transform .2s,box-shadow .2s,filter .2s,background .2s}
+.lp-btn:hover{transform:translateY(-2px);filter:saturate(1.15)}
+.lp-primary{background:linear-gradient(90deg,var(--brand),var(--brand2));color:#fff;box-shadow:0 8px 20px -10px var(--brand)}
+.lp-primary:hover{box-shadow:0 12px 26px -8px var(--brand)}
+.lp-card{background:#fff;border:1px solid #e2e8f0;border-top:4px solid var(--c);border-radius:18px;padding:20px;transition:transform .25s,box-shadow .25s,border-color .25s;cursor:default}
+button.lp-card{cursor:pointer}
+.lp-card:hover{transform:translateY(-6px);box-shadow:0 18px 36px -16px var(--c);border-color:var(--c)}
+.lp-ico{width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;background:color-mix(in srgb,var(--c) 14%,white);transition:transform .25s}
+.lp-card:hover .lp-ico{transform:rotate(-8deg) scale(1.12)}
+.lp-logo-card{background:#fff;border-radius:28px;padding:10px;box-shadow:0 24px 50px -24px rgba(11,58,143,.45);transition:transform .3s}
+.lp-logo-card:hover{transform:scale(1.02) rotate(-.6deg)}
+.lp-sw{width:26px;height:26px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 1px #cbd5e1;cursor:pointer;transition:transform .15s,box-shadow .15s;padding:0}
+.lp-sw:hover{transform:scale(1.2)}.lp-sw.on{box-shadow:0 0 0 3px var(--brand)}
+@media(prefers-reduced-motion:reduce){.lp-blob,.lp-grad-text{animation:none}.lp-btn,.lp-card{transition:none}}
+.rp-card{border:1px solid #e2e8f0;border-radius:14px;padding:14px;background:#fff}
+@media print{
+  #reportArea{box-shadow:none!important;border:none!important;padding:0!important;margin:0!important}
+  #reportArea tr{page-break-inside:avoid}
+  #reportArea .rp-cards{display:grid!important;grid-template-columns:repeat(4,1fr)!important}
+  #reportArea .rp-card{border:1px solid #999!important}
+  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  @page{margin:12mm}
 }
 @media(max-width:768px){
   .sidebar{width:100%;min-width:0;height:auto;position:sticky;top:0;flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid #e2e8f0}
@@ -868,6 +898,7 @@ const API_BASE = (typeof location !== 'undefined' && location.protocol !== 'file
   : '';
 let SERVER_MODE = false;
 let API_TOKEN = localStorage.getItem('bh_api_token') || '';
+try{localStorage.removeItem('bh_admin_remember');const _r=JSON.parse(localStorage.getItem('bh_remember')||'null');if(_r&&_r.password)localStorage.setItem('bh_remember',JSON.stringify({email:_r.email}))}catch(e){}
 
 async function api(path, opts){
   opts = opts || {};
@@ -888,6 +919,7 @@ async function detectServer(){
   try{
     const r = await fetch(API_BASE+'/api/health', {cache:'no-store'});
     SERVER_MODE = r.ok;
+    if(SERVER_MODE){try{const d0=db();let ch=false;d0.users.forEach(u=>{if(u.password){u.password='';ch=true}});if(ch)save(d0)}catch(e){}}
   }catch(e){ SERVER_MODE=false; }
   return SERVER_MODE;
 }
@@ -968,7 +1000,7 @@ function money(n){return Math.round((Number(n)||0)*100)/100}
 function kes(n){return 'KES '+money(n).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('show'),2800)}
-function today(){return new Date().toISOString().slice(0,10)}
+function today(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function parseDay(s){return (s||'').slice(0,10)}
 function initials(name){
   const p=String(name||'BH').trim().split(/\s+/).filter(Boolean);
@@ -1450,7 +1482,7 @@ function render(){
   const root=document.getElementById('root');
   try{
     if(S.view==='landing')root.innerHTML=viewLanding();
-    else if(S.view==='login'){root.innerHTML=viewLogin();try{const s=JSON.parse(localStorage.getItem('bh_remember')||'null');if(s&&s.email){const f=document.getElementById('loginForm');if(f){f.email.value=s.email;if(s.password)f.password.value=s.password;const r=document.getElementById('rememberMe');if(r)r.checked=true}}}catch(e){}}
+    else if(S.view==='login'){root.innerHTML=viewLogin();try{const s=JSON.parse(localStorage.getItem('bh_remember')||'null');if(s&&s.email){const f=document.getElementById('loginForm');if(f){f.email.value=s.email;const r=document.getElementById('rememberMe');if(r)r.checked=true}}}catch(e){}}
     else if(S.view==='register')root.innerHTML=viewRegister();
     else if(S.view==='forgot')root.innerHTML=viewForgot();
     else if(S.view==='adminLogin')root.innerHTML=viewAdminLogin();
@@ -1472,33 +1504,59 @@ function render(){
 
 function viewLanding(){
   const stores=db().businesses.filter(b=>b.onlineStore&&b.name);
-  return `<div class="min-h-screen bg-gradient-to-b from-teal-50 to-slate-50">
-  <header class="bg-white border-b px-4 h-14 flex items-center justify-between max-w-5xl mx-auto">
-    <div class="font-bold text-teal-700 flex items-center gap-2"><span class="w-8 h-8 rounded-lg bg-teal-600 text-white flex items-center justify-center text-xs">BH</span>BusinessHub Kenya</div>
-    <div class="flex gap-2 text-sm items-center">
-      <button type="button" data-go="online" class="px-3 py-1.5 text-slate-600">Order online</button>
-      <button type="button" data-go="login" class="px-3 py-1.5">Client log in</button>
-      <button type="button" data-go="register" class="px-4 py-1.5 rounded-xl text-white bg-teal-600 font-medium">Start free</button>
-      <button type="button" data-go="adminLogin" class="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-600">Admin login</button>
-      <button type="button" data-go="adminRegister" class="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-600">Admin register</button>
-      <span id="serverBadge" class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-500">…</span>
+  const feats=[
+    ['🛒','Sell in-store','Fast point-of-sale. Record cash, M-Pesa and bank sales and print receipts.','#1d63d6'],
+    ['📦','Track your stock','Know what is running low. Record purchases and keep supplier details.','#3aa51d'],
+    ['🌐','Online shop','Customers browse and order from your link. You confirm each payment.','#f97316'],
+    ['📊','Printable reports','Daily, weekly, monthly and yearly sales, expenses and profit — ready to print.','#7c3aed'],
+    ['🧾','Invoices & quotations','Create professional documents for your customers in seconds.','#db2777'],
+    ['🏪','Many businesses','Run several shops from one login, each with its own products and PIN.','#0891b2']
+  ];
+  const themes=[['Ocean','#1d63d6','#3aa51d'],['Sunset','#f97316','#db2777'],['Violet','#7c3aed','#06b6d4'],['Forest','#059669','#84cc16'],['Gold','#d97706','#dc2626']];
+  return `<div id="lpRoot" class="lp min-h-screen">
+  <div class="lp-blob" style="width:420px;height:420px;background:var(--brand);top:-120px;left:-100px"></div>
+  <div class="lp-blob" style="width:380px;height:380px;background:var(--brand2);top:240px;right:-120px;animation-delay:-5s"></div>
+  <div class="relative">
+  <header class="bg-white/80 backdrop-blur border-b px-4 h-16 flex items-center justify-between max-w-5xl mx-auto sticky top-0 z-20">
+    <div class="flex items-center gap-2"><img src="/logo-mark.png" alt="BusinessHub" class="h-10"/><span class="font-extrabold text-lg"><span style="color:#0b3a8f">Business</span><span style="color:#3aa51d">Hub</span></span></div>
+    <div class="flex gap-1 sm:gap-2 text-sm items-center">
+      <button type="button" data-go="online" class="lp-btn px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-100">Order online</button>
+      <button type="button" data-go="login" class="lp-btn px-3 py-1.5 rounded-lg hover:bg-slate-100">Client log in</button>
+      <button type="button" data-go="register" class="lp-btn lp-primary px-4 py-1.5 rounded-xl font-medium">Start free</button>
+      <button type="button" data-go="adminLogin" class="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-700">Admin</button>
+      <span id="serverBadge" class="hidden sm:inline text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-500">…</span>
     </div>
   </header>
-  <div class="max-w-5xl mx-auto px-4 py-16">
-    <h1 class="text-4xl font-extrabold text-slate-900 max-w-xl">Run many businesses. Sell in-store & online.</h1>
-    <p class="mt-4 text-slate-600 max-w-lg">Each business has its own products, stock, sales and PIN. Multi-category shop, wallet charts, printable invoices.</p>
-    <div class="mt-8 flex flex-wrap gap-3">
-      <button type="button" data-go="register" class="px-6 py-3 rounded-xl text-white font-semibold bg-teal-600">Create free account</button>
-      <button type="button" data-go="online" class="px-6 py-3 rounded-xl border bg-white font-semibold">Place an order online</button>
-      <button type="button" data-go="login" class="px-6 py-3 rounded-xl border bg-white font-semibold">Log in</button>
+  <section class="max-w-5xl mx-auto px-4 pt-12 pb-10 grid md:grid-cols-2 gap-8 items-center">
+    <div>
+      <p class="text-sm font-semibold tracking-wide" style="color:var(--brand)">MANAGE · GROW · SUCCEED</p>
+      <h1 class="mt-3 text-4xl md:text-5xl font-extrabold text-slate-900 leading-tight">Run your business.<br/><span class="lp-grad-text">Sell in-store &amp; online.</span></h1>
+      <p class="mt-4 text-slate-600 max-w-md">Products, stock, sales, invoices and printable reports for every shop you run — in one simple app.</p>
+      <div class="mt-7 flex flex-wrap gap-3">
+        <button type="button" data-go="register" class="lp-btn lp-primary px-6 py-3 rounded-xl font-semibold">Create free account</button>
+        <button type="button" data-go="online" class="lp-btn px-6 py-3 rounded-xl border bg-white font-semibold">Place an order online</button>
+        <button type="button" data-go="login" class="lp-btn px-6 py-3 rounded-xl border bg-white font-semibold">Log in</button>
+      </div>
+      <div class="mt-6 flex items-center gap-2 text-xs text-slate-500"><span>Try a colour theme:</span>
+        ${themes.map((t,i)=>`<button type="button" title="${t[0]}" data-lptheme="${t[1]},${t[2]}" class="lp-sw ${i===0?'on':''}" style="background:linear-gradient(135deg,${t[1]} 50%,${t[2]} 50%)"></button>`).join('')}
+      </div>
     </div>
-    ${stores.length?`<div class="mt-12"><h2 class="font-semibold mb-3">Shops accepting online orders</h2>
-      <div class="grid sm:grid-cols-2 md:grid-cols-3 gap-3">${stores.slice(0,9).map(b=>`<button type="button" data-online-biz="${b.id}" class="bg-white border rounded-2xl p-4 text-left hover:shadow-md flex gap-3 items-center">
-        ${logoHtml(b.name,b.color,40)}<div><p class="font-semibold">${esc(b.name)}</p><p class="text-xs text-slate-500">${esc(b.categoryLabel||'Shop')}</p></div></button>`).join('')}</div></div>`:''}
+    <div class="lp-logo-card"><img src="/logo.png" alt="BusinessHub — Manage, Grow, Succeed" class="w-full rounded-3xl"/></div>
+  </section>
+  <section class="max-w-5xl mx-auto px-4 pb-10">
+    <h2 class="text-xl font-bold text-slate-900 mb-4">Everything your shop needs</h2>
+    <div class="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
+      ${feats.map(f=>`<div class="lp-card" style="--c:${f[3]}"><div class="lp-ico">${f[0]}</div><h3 class="mt-3 font-semibold text-slate-900">${f[1]}</h3><p class="mt-1 text-sm text-slate-600">${f[2]}</p></div>`).join('')}
+    </div>
+  </section>
+  ${stores.length?`<section class="max-w-5xl mx-auto px-4 pb-14"><h2 class="font-semibold mb-3">Shops accepting online orders</h2>
+    <div class="grid sm:grid-cols-2 md:grid-cols-3 gap-3">${stores.slice(0,9).map(b=>`<button type="button" data-online-biz="${b.id}" class="lp-card text-left flex gap-3 items-center" style="--c:${esc(b.color||'#1d63d6')}">
+      ${logoHtml(b.name,b.color,40)}<div><p class="font-semibold">${esc(b.name)}</p><p class="text-xs text-slate-500">${esc(b.categoryLabel||'Shop')}</p></div></button>`).join('')}</div></section>`:'<div class="pb-10"></div>'}
+  <footer class="text-center text-xs text-slate-400 pb-8">© BusinessHub Kenya</footer>
   </div></div>`;
 }
 function viewLogin(){
-  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm">
+  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="BusinessHub" class="h-14 mx-auto mb-2"/>
   <button type="button" data-go="landing" class="text-xs text-slate-400 mb-4">← Back</button>
   <h1 class="text-2xl font-bold">Log in</h1>
   <form id="loginForm" class="mt-6 space-y-4">
@@ -1507,7 +1565,7 @@ function viewLogin(){
     <div class="flex justify-end"><button type="button" data-go="forgot" class="text-sm text-teal-700 font-medium">Forgot password?</button></div>
     <label class="flex items-center gap-2 text-sm text-slate-600">
       <input type="checkbox" name="remember" id="rememberMe" checked/>
-      Remember email &amp; password on this device
+      Remember my email on this device
     </label>
     <p id="loginErr" class="hidden text-sm text-red-600"></p>
     <button class="w-full py-3 rounded-xl text-white font-semibold bg-teal-600">Log in</button>
@@ -1520,7 +1578,7 @@ function viewLogin(){
   </div></div>`;
 }
 function viewRegister(){
-  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm">
+  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="BusinessHub" class="h-14 mx-auto mb-2"/>
   <button type="button" data-go="landing" class="text-xs text-slate-400 mb-4">← Back</button>
   <h1 class="text-2xl font-bold">Create account</h1>
   <form id="regForm" class="mt-6 space-y-4">
@@ -1535,7 +1593,7 @@ function viewRegister(){
   </div></div>`;
 }
 function viewForgot(){
-  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm">
+  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="BusinessHub" class="h-14 mx-auto mb-2"/>
   <button type="button" data-go="login" class="text-xs text-slate-400 mb-4">← Back</button>
   <h1 class="text-2xl font-bold">Reset password</h1>
   <form id="forgotForm" class="mt-6 space-y-4">
@@ -1579,9 +1637,7 @@ function viewAdminLogin(){
       </p>
     </div>
     <div class="mt-4 space-y-2">
-      <button type="button" data-go="adminRegister" class="w-full py-2.5 rounded-xl border border-slate-600 text-slate-200 text-sm font-medium hover:bg-slate-800">
-        First time? Create admin account
-      </button>
+      <p class="text-center text-xs text-slate-400">The admin account is created on the server (ADMIN_EMAIL / ADMIN_PASSWORD).</p>
       <p class="text-center text-xs text-slate-500">
         <button type="button" data-go="landing" class="hover:underline">← Home</button>
       </p>
@@ -1701,7 +1757,7 @@ function viewApp(){
     ['dashboard','Dashboard'],['wallet','Wallet & trends'],['shop','Shop (sell)'],['stock','Stock'],
     ['products','Products & prices'],['purchases','Purchases'],['customers','Customers & suppliers'],
     ['quotations','Quotations'],['invoices','Invoices'],['expenses','Income & expenses'],
-    ['onlineorders','Online shop'],['settings','Settings']
+    ['reports','Reports'],['onlineorders','Online shop'],['settings','Settings']
   ];
   const side=nav.map(([k,l])=>`<button type="button" class="nav-item ${S.appView===k?'active':''}" data-nav="${k}">${l}</button>`).join('');
   const mine=myBusinesses();
@@ -1719,11 +1775,12 @@ function viewApp(){
     else if(S.appView==='quotations')main=secQuotations(b,accent);
     else if(S.appView==='invoices')main=secInvoices(b,accent);
     else if(S.appView==='expenses')main=secExpenses(b,accent);
+    else if(S.appView==='reports')main=secReports(b,accent);
     else if(S.appView==='onlineorders')main=secOnlineOrders(b,accent);
     else if(S.appView==='settings')main=secSettings(b,accent);
     else main=secDash(b,accent);
   }catch(e){main=`<div class="p-4 text-red-600">${esc(String(e))}</div>`;console.error(e)}
-  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (sell)',stock:'Stock',products:'Products & prices',purchases:'Purchases',customers:'Customers & suppliers',quotations:'Quotations',invoices:'Invoices',expenses:'Income & expenses',onlineorders:'Online shop',settings:'Settings'};
+  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (sell)',stock:'Stock',products:'Products & prices',purchases:'Purchases',customers:'Customers & suppliers',quotations:'Quotations',invoices:'Invoices',expenses:'Income & expenses',reports:'Reports',onlineorders:'Online shop',settings:'Settings'};
   return `<div class="layout">
   <aside class="sidebar">
     <div class="side-brand h-14 flex items-center gap-2 px-3 font-bold text-sm border-b" style="color:${accent}">
@@ -2053,6 +2110,103 @@ function secInvoiceDetail(b,a){
   </div>`;
 }
 
+/* ===== Reports: daily / weekly / monthly / yearly, printable ===== */
+function rpParse(x){const p=String(x||'').slice(0,10).split('-');return new Date(+p[0],(+p[1]||1)-1,+p[2]||1)}
+function rpFmt(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function rpRange(period,anchor){
+  const d=rpParse(anchor);let st,en;
+  if(period==='daily'){st=new Date(d);en=new Date(d)}
+  else if(period==='weekly'){const dow=(d.getDay()+6)%7;st=new Date(d);st.setDate(d.getDate()-dow);en=new Date(st);en.setDate(st.getDate()+6)}
+  else if(period==='monthly'){st=new Date(d.getFullYear(),d.getMonth(),1);en=new Date(d.getFullYear(),d.getMonth()+1,0)}
+  else{st=new Date(d.getFullYear(),0,1);en=new Date(d.getFullYear(),11,31)}
+  return {from:rpFmt(st),to:rpFmt(en),s:st,e:en}
+}
+function rpShift(period,anchor,dir){
+  const d=rpParse(anchor);
+  if(period==='daily')d.setDate(d.getDate()+dir);
+  else if(period==='weekly')d.setDate(d.getDate()+7*dir);
+  else if(period==='monthly'){d.setDate(1);d.setMonth(d.getMonth()+dir)}
+  else{d.setDate(1);d.setFullYear(d.getFullYear()+dir)}
+  return rpFmt(d)
+}
+function rpLabel(period,r){
+  const o={day:'numeric',month:'short',year:'numeric'};
+  if(period==='daily')return r.s.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  if(period==='weekly')return 'Week: '+r.s.toLocaleDateString('en-GB',o)+' – '+r.e.toLocaleDateString('en-GB',o);
+  if(period==='monthly')return r.s.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+  return 'Year '+r.s.getFullYear();
+}
+function secReports(b,a){
+  const period=S.repPeriod||'daily';const anchor=S.repDate||today();
+  const r=rpRange(period,anchor);
+  const cur=b.currency||'KES';
+  const M=n=>cur+' '+(Number(n)||0).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const inR=x=>{const d=String(x.date||'').slice(0,10);return d>=r.from&&d<=r.to};
+  const orders=(b.orders||[]).filter(inR);
+  const sales=orders.filter(o=>o.status==='PAID');
+  const pending=orders.filter(o=>o.status==='PENDING');
+  const exps=(b.expenses||[]).filter(e=>e.type==='EXPENSE'&&inR(e));
+  const incs=(b.expenses||[]).filter(e=>e.type==='INCOME'&&inR(e));
+  const sum=(arr,f)=>arr.reduce((t,x)=>t+(Number(f(x))||0),0);
+  const tSales=sum(sales,o=>o.total),tInc=sum(incs,e=>e.amount),tExp=sum(exps,e=>e.amount),net=tSales+tInc-tExp;
+  // breakdown buckets
+  const keys=[];
+  if(period==='yearly'){for(let m=1;m<=12;m++)keys.push(r.s.getFullYear()+'-'+String(m).padStart(2,'0'))}
+  else if(period!=='daily'){const d=new Date(r.s);while(d<=r.e){keys.push(rpFmt(d));d.setDate(d.getDate()+1)}}
+  const kOf=x=>{const d=String(x.date||'').slice(0,10);return period==='yearly'?d.slice(0,7):d};
+  const bk={};keys.forEach(k=>bk[k]={n:0,sales:0,inc:0,exp:0});
+  sales.forEach(o=>{const k=kOf(o);if(bk[k]){bk[k].n++;bk[k].sales+=Number(o.total)||0}});
+  incs.forEach(e=>{const k=kOf(e);if(bk[k])bk[k].inc+=Number(e.amount)||0});
+  exps.forEach(e=>{const k=kOf(e);if(bk[k])bk[k].exp+=Number(e.amount)||0});
+  const kLabel=k=>period==='yearly'?new Date(+k.slice(0,4),+k.slice(5,7)-1,1).toLocaleDateString('en-GB',{month:'long'}):rpParse(k).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'});
+  // payment methods and products
+  const pm={};sales.forEach(o=>{const k=o.payMethod||o.method||'Other';pm[k]=pm[k]||{n:0,t:0};pm[k].n++;pm[k].t+=Number(o.total)||0});
+  const pr={};sales.forEach(o=>(o.items||[]).forEach(it=>{const k=it.name||'Item';pr[k]=pr[k]||{q:0,t:0};pr[k].q+=Number(it.qty)||0;pr[k].t+=(Number(it.price)||0)*(Number(it.qty)||0)}));
+  const topProducts=Object.entries(pr).sort((x,y)=>y[1].t-x[1].t).slice(0,10);
+  const th='class="text-left text-xs uppercase text-slate-500 border-b py-2 pr-3"',thr='class="text-right text-xs uppercase text-slate-500 border-b py-2 pl-3"';
+  const td='class="py-2 pr-3 border-b border-slate-100"',tdr='class="py-2 pl-3 border-b border-slate-100 text-right whitespace-nowrap"';
+  const tabs=[['daily','Daily'],['weekly','Weekly'],['monthly','Monthly'],['yearly','Yearly']].map(([k,l])=>`<button type="button" data-rep-period="${k}" class="px-4 py-2 rounded-xl text-sm font-medium border ${period===k?'text-white':'bg-white'}" style="${period===k?`background:${a};border-color:${a}`:''}">${l}</button>`).join('');
+  const card=(l,v,c)=>`<div class="rp-card"><p class="text-xs text-slate-500">${l}</p><p class="mt-1 text-lg font-bold" style="color:${c}">${M(v)}</p></div>`;
+  return `<div class="space-y-4">
+  <div class="no-print flex flex-wrap items-center gap-2">
+    ${tabs}
+    <span class="mx-1"></span>
+    <button type="button" data-rep-shift="-1" class="px-3 py-2 rounded-xl border bg-white text-sm" title="Previous">←</button>
+    <input type="date" id="repDate" value="${anchor}" class="border rounded-xl px-3 py-2 text-sm bg-white"/>
+    <button type="button" data-rep-shift="1" class="px-3 py-2 rounded-xl border bg-white text-sm" title="Next">→</button>
+    <button type="button" id="repPrint" class="ml-auto px-5 py-2 rounded-xl text-white text-sm font-semibold" style="background:${a}">🖨 Print report</button>
+  </div>
+  <div id="reportArea" class="bg-white rounded-2xl border p-6">
+    <div class="flex justify-between items-start gap-4 border-b pb-4">
+      <div><h2 class="text-xl font-bold">${esc(b.name)}</h2>
+        <p class="text-sm text-slate-500">${esc([b.address,b.phone].filter(Boolean).join(' · '))}</p></div>
+      <div class="text-right"><p class="font-semibold">${({daily:'Daily',weekly:'Weekly',monthly:'Monthly',yearly:'Yearly'})[period]} sales report</p>
+        <p class="text-sm text-slate-600">${esc(rpLabel(period,r))}</p></div>
+    </div>
+    <div class="rp-cards grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+      ${card('Sales ('+sales.length+')',tSales,'#047857')}${card('Other income',tInc,'#0369a1')}${card('Expenses',tExp,'#be123c')}${card('Net (sales + income − expenses)',net,net>=0?'#047857':'#be123c')}
+    </div>
+    ${pending.length?`<p class="mt-3 text-xs text-amber-700">Not counted above: ${pending.length} unpaid/pending order(s) worth ${M(sum(pending,o=>o.total))}.</p>`:''}
+    ${period!=='daily'?`<h3 class="mt-6 mb-1 font-semibold">${period==='yearly'?'Month by month':'Day by day'}</h3>
+    <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr><th ${th}>${period==='yearly'?'Month':'Day'}</th><th ${thr}>Sales</th><th ${thr}>Amount</th><th ${thr}>Other income</th><th ${thr}>Expenses</th><th ${thr}>Net</th></tr></thead><tbody>
+      ${keys.map(k=>{const x=bk[k];const nn=x.sales+x.inc-x.exp;return `<tr><td ${td}>${kLabel(k)}</td><td ${tdr}>${x.n}</td><td ${tdr}>${M(x.sales)}</td><td ${tdr}>${M(x.inc)}</td><td ${tdr}>${M(x.exp)}</td><td ${tdr}>${M(nn)}</td></tr>`}).join('')}
+      <tr class="font-bold"><td ${td}>Total</td><td ${tdr}>${sales.length}</td><td ${tdr}>${M(tSales)}</td><td ${tdr}>${M(tInc)}</td><td ${tdr}>${M(tExp)}</td><td ${tdr}>${M(net)}</td></tr>
+    </tbody></table></div>`:''}
+    <div class="grid md:grid-cols-2 gap-6 mt-6">
+      <div><h3 class="mb-1 font-semibold">Sales by payment method</h3>
+        ${Object.keys(pm).length?`<table class="w-full text-sm"><thead><tr><th ${th}>Method</th><th ${thr}>Sales</th><th ${thr}>Amount</th></tr></thead><tbody>${Object.entries(pm).map(([k,v])=>`<tr><td ${td}>${esc(k)}</td><td ${tdr}>${v.n}</td><td ${tdr}>${M(v.t)}</td></tr>`).join('')}</tbody></table>`:'<p class="text-sm text-slate-500">No sales in this period.</p>'}</div>
+      <div><h3 class="mb-1 font-semibold">Top products</h3>
+        ${topProducts.length?`<table class="w-full text-sm"><thead><tr><th ${th}>Product</th><th ${thr}>Qty</th><th ${thr}>Amount</th></tr></thead><tbody>${topProducts.map(([k,v])=>`<tr><td ${td}>${esc(k)}</td><td ${tdr}>${v.q}</td><td ${tdr}>${M(v.t)}</td></tr>`).join('')}</tbody></table>`:'<p class="text-sm text-slate-500">No products sold in this period.</p>'}</div>
+    </div>
+    ${period!=='yearly'?`<h3 class="mt-6 mb-1 font-semibold">Sales list</h3>
+    ${sales.length?`<div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr><th ${th}>Date</th><th ${th}>No.</th><th ${th}>Customer</th><th ${th}>Payment</th><th ${thr}>Total</th></tr></thead><tbody>
+      ${sales.slice().sort((x,y)=>String(x.date).localeCompare(String(y.date))).map(o=>`<tr><td ${td}>${esc(String(o.date||'').slice(0,10))}</td><td ${td}>${esc(o.number||'')}</td><td ${td}>${esc(o.customerName||'')}</td><td ${td}>${esc(o.payMethod||o.method||'')}</td><td ${tdr}>${M(o.total)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="text-sm text-slate-500">No sales in this period.</p>'}
+    <h3 class="mt-6 mb-1 font-semibold">Expenses</h3>
+    ${exps.length?`<div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr><th ${th}>Date</th><th ${th}>Description</th><th ${thr}>Amount</th></tr></thead><tbody>
+      ${exps.slice().sort((x,y)=>String(x.date).localeCompare(String(y.date))).map(e=>`<tr><td ${td}>${esc(String(e.date||'').slice(0,10))}</td><td ${td}>${esc(e.description||'')}</td><td ${tdr}>${M(e.amount)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="text-sm text-slate-500">No expenses in this period.</p>'}`:''}
+    <p class="mt-6 text-xs text-slate-400">Generated ${new Date().toLocaleString('en-GB')} · Cash basis: stock purchases appear under expenses.</p>
+  </div></div>`;
+}
 function secExpenses(b,a){
   const rows=(b.expenses||[]).slice().reverse().map(e=>`<tr class="border-t"><td class="px-4 py-3 text-sm">${esc(e.date)}</td>
     <td class="px-4 py-3 text-xs ${e.type==='INCOME'?'text-emerald-600':'text-rose-600'}">${e.type}</td>
@@ -2455,7 +2609,7 @@ function viewAdmin(){
 
   return `<div class="min-h-screen bg-slate-100">
   <header class="bg-slate-900 text-white px-4 h-14 flex items-center justify-between sticky top-0 z-20">
-    <div class="font-bold text-sm md:text-base">BusinessHub · Platform admin</div>
+    <div class="font-bold text-sm md:text-base flex items-center gap-2"><img src="/logo-mark.png" alt="" class="h-8 bg-white rounded-md p-0.5"/>BusinessHub · Platform admin</div>
     <div class="flex items-center gap-3 text-sm">
       <span class="text-slate-300 hidden sm:inline">${esc(p.company||'BusinessHub')}</span>
       <button type="button" id="signOut" class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">Log out</button>
@@ -2594,6 +2748,11 @@ function bind(){
 
   const printInv=document.getElementById('printInv');
   if(printInv)printInv.onclick=()=>window.print();
+  document.querySelectorAll('[data-rep-period]').forEach(el=>el.onclick=()=>{S.repPeriod=el.dataset.repPeriod;render()});
+  document.querySelectorAll('[data-rep-shift]').forEach(el=>el.onclick=()=>{S.repDate=rpShift(S.repPeriod||'daily',S.repDate||today(),+el.dataset.repShift);render()});
+  const repDate=document.getElementById('repDate');if(repDate)repDate.onchange=()=>{if(repDate.value){S.repDate=repDate.value;render()}};
+  const repPrint=document.getElementById('repPrint');if(repPrint)repPrint.onclick=()=>window.print();
+  document.querySelectorAll('[data-lptheme]').forEach(el=>el.onclick=()=>{const t=el.dataset.lptheme.split(',');const root=document.getElementById('lpRoot');if(root){root.style.setProperty('--brand',t[0]);root.style.setProperty('--brand2',t[1])}document.querySelectorAll('[data-lptheme]').forEach(x=>x.classList.toggle('on',x===el))});
 
   const lf=document.getElementById('loginForm');
   if(lf)lf.onsubmit=e=>{e.preventDefault();const fd=new FormData(lf);const d=db();
@@ -2604,10 +2763,10 @@ function bind(){
         API_TOKEN=data.token; localStorage.setItem('bh_api_token',API_TOKEN);
         const d=db();
         let u=d.users.find(x=>x.id===data.user.id);
-        if(!u){u={id:data.user.id,email:data.user.email,password:fd.get('password'),name:data.user.name,role:data.user.role};d.users.push(u)}
-        else {u.password=fd.get('password');u.name=data.user.name}
+        if(!u){u={id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:data.user.role};d.users.push(u)}
+        else {u.password='';u.name=data.user.name}
         d.session=u.id;save(d);
-        try{if(document.getElementById('rememberMe')&&document.getElementById('rememberMe').checked)localStorage.setItem('bh_remember',JSON.stringify({email:email,password:fd.get('password')}))}catch(e){}
+        try{if(document.getElementById('rememberMe')&&document.getElementById('rememberMe').checked)localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
         syncPull().then(function(){
           const mine=db().businesses.filter(b=>b.ownerId===u.id);
           if(!mine.length){S.view='onboard';render()}
@@ -2621,7 +2780,7 @@ function bind(){
       return;
     }
 
-    const u=d.users.find(x=>x.email===email&&x.password===fd.get('password'));
+    const u=d.users.find(x=>x.email===email&&x.password&&x.password===fd.get('password'));
     if(!u){document.getElementById('loginErr').textContent='Invalid email or password';document.getElementById('loginErr').classList.remove('hidden');return}
     if(u.role==='admin'||u.email===(d.adminEmail||'admin@businesshub.ke')){
       document.getElementById('loginErr').textContent='This is a platform admin account. Use Admin login.';
@@ -2637,6 +2796,7 @@ function bind(){
   const alf=document.getElementById('adminLoginForm');
   if(alf)alf.onsubmit=e=>{e.preventDefault();const fd=new FormData(alf);const d=db();
     const email=String(fd.get('email')).toLowerCase().trim();
+    const err=document.getElementById('adminLoginErr');err.classList.add('hidden');
 
     if(SERVER_MODE){
       api('/api/login',{method:'POST',body:{email:email,password:fd.get('password'),adminOnly:true}}).then(function(data){
@@ -2644,17 +2804,15 @@ function bind(){
         API_TOKEN=data.token; localStorage.setItem('bh_api_token',API_TOKEN);
         const d=db();
         let u=d.users.find(x=>x.id===data.user.id);
-        if(!u){u={id:data.user.id,email:data.user.email,password:fd.get('password'),name:data.user.name,role:'admin'};d.users.push(u)}
-        else {u.role='admin';u.password=fd.get('password')}
+        if(!u){u={id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:'admin'};d.users.push(u)}
+        else {u.role='admin';u.password=''}
         d.session=u.id;d.currentBizId=null;save(d);
-        try{localStorage.setItem('bh_admin_remember',JSON.stringify({email:email,password:fd.get('password')}))}catch(e){}
         syncPull().then(function(){S.view='admin';S.adminTab='overview';render();toast('Admin login (server)')});
       }).catch(function(e){err.textContent=e.message||'Login failed';err.classList.remove('hidden')});
       return;
     }
 
-    const err=document.getElementById('adminLoginErr');
-    const u=d.users.find(x=>x.email===email&&x.password===fd.get('password'));
+    const u=d.users.find(x=>x.email===email&&x.password&&x.password===fd.get('password'));
     if(!u){err.textContent='Invalid admin email or password';err.classList.remove('hidden');return}
     if(u.role!=='admin'&&u.email!==(d.adminEmail||'admin@businesshub.ke')&&email!=='admin@businesshub.ke'){
       err.textContent='This account is not a platform admin. Use Client log in.';err.classList.remove('hidden');return}
@@ -2671,7 +2829,7 @@ function bind(){
         API_TOKEN=data.token; localStorage.setItem('bh_api_token',API_TOKEN);
         const d=db();
         d.adminEmail=email;
-        d.users.push({id:data.user.id,email:data.user.email,password:fd.get('password'),name:data.user.name,role:'admin'});
+        d.users.push({id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:'admin'});
         d.session=data.user.id;d.currentBizId=null;save(d);
         syncPull().then(function(){S.view='admin';S.adminTab='profile';render();toast('Admin created on server')});
       }).catch(function(e){err.textContent=e.message||'Failed';err.classList.remove('hidden')});
@@ -2703,9 +2861,9 @@ function bind(){
       api('/api/register',{method:'POST',body:{email:email,password:fd.get('password'),name:fd.get('name')||''}}).then(function(data){
         API_TOKEN=data.token; localStorage.setItem('bh_api_token',API_TOKEN);
         const d=db();
-        d.users.push({id:data.user.id,email:data.user.email,password:fd.get('password'),name:data.user.name,role:'owner'});
+        d.users.push({id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:'owner'});
         d.session=data.user.id;save(d);
-        try{localStorage.setItem('bh_remember',JSON.stringify({email:email,password:fd.get('password')}))}catch(e){}
+        try{localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
         S.view='onboard';render();toast('Account created on server');
       }).catch(function(e){
         document.getElementById('regErr').textContent=e.message||'Register failed';
@@ -3282,6 +3440,6 @@ detectServer().then(function(on){
 }).catch(function(){}).finally(function(){render();});
 
 </script>
-<script>if('serviceWorker' in navigator&&location.protocol==='https:'||location.hostname==='localhost'){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}</script>
+<script>if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost')){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}</script>
 </body>
 </html>
