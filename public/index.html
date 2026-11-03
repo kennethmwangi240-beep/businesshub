@@ -2680,8 +2680,13 @@ function secSettings(b,a){
     <p class="text-xs text-slate-400 mt-2">3-day free trial, then Pro or Business required.</p>
   </div>
   <div class="bg-white rounded-2xl border p-6">
-    <h3 class="font-semibold mb-2">Sales PIN</h3>
-    <button type="button" id="changePinBtn" class="w-full py-2.5 rounded-xl text-white font-semibold" style="background:${a}">${getSalesPin()?'Change PIN':'Create PIN'}</button>
+    <h3 class="font-semibold mb-1">Sales PIN</h3>
+    <p class="text-xs text-slate-500 mb-3">${(biz()&&biz().pinLocked)?'<span class="text-red-600 font-semibold">PIN locked after failed attempts.</span> Contact platform admin to unlock.':(getSalesPin()?'Protects every sale. You can change or reset it below.':'No PIN yet — create one before selling.')}</p>
+    <div class="grid sm:grid-cols-2 gap-2">
+      <button type="button" id="changePinBtn" class="w-full py-3 rounded-xl text-white font-semibold shadow-sm" style="background:${a}">${getSalesPin()?'Change PIN':'Create PIN'}</button>
+      <button type="button" id="resetOwnPinBtn" class="w-full py-3 rounded-xl font-semibold border-2 border-amber-500 text-amber-900 bg-amber-50 hover:bg-amber-100">Reset PIN</button>
+    </div>
+    <p class="text-[11px] text-slate-400 mt-2">Reset PIN: enter current PIN, then choose a new 4–6 digit PIN.</p>
   </div>
   <div class="bg-white rounded-2xl border p-6">
     <h3 class="font-semibold mb-1">Business backup</h3>
@@ -2836,6 +2841,7 @@ function viewAdmin(){
             </td>
             <td class="px-4 py-3 space-x-1">
               <button type="button" data-extend-trial="${b.id}" class="text-xs ad-text ad-border border px-2 py-1 rounded-lg">+3 days trial</button>
+              <button type="button" data-reset-pin="${b.id}" class="text-xs text-amber-800 border border-amber-200 px-2 py-1 rounded-lg">Reset PIN</button>
               <button type="button" data-delete-biz="${b.id}" class="text-xs text-red-700 border border-red-200 px-2 py-1 rounded-lg">Delete</button>
             </td>
           </tr>`;
@@ -2933,18 +2939,29 @@ function viewAdmin(){
             <span class="text-xs text-slate-400">${esc((a.at||'').slice(0,19).replace('T',' '))}</span>
           </div>
           <p class="text-slate-700 mt-1">${esc(a.message||'')}</p>
-          ${a.type==='pin_locked'&&a.businessId?`<button type="button" data-unlock-pin="${a.businessId}" class="mt-2 text-xs text-white px-3 py-1.5 rounded-lg bg-teal-600">Unlock PIN</button>`:''}
+          ${a.businessId?`<div class="flex flex-wrap gap-2 mt-2">
+            <button type="button" data-unlock-pin="${esc(a.businessId)}" class="text-xs text-white px-3 py-1.5 rounded-lg bg-teal-600">Unlock PIN</button>
+            <button type="button" data-reset-pin="${esc(a.businessId)}" class="text-xs text-white px-3 py-1.5 rounded-lg bg-amber-600">Reset PIN</button>
+          </div>`:(a.type==='pin_locked'?`<p class="text-xs text-amber-700 mt-1">No business id — use form below.</p>`:'')}
           ${a.email?`<p class="text-xs text-slate-500 mt-1">${esc(a.email)}</p>`:''}
         </div>`).join('')||'<p class="text-slate-400 text-sm py-8 text-center">No alerts</p>'}
       </div>
       <div class="mt-6 border-t pt-4">
-        <h3 class="font-semibold mb-2">Unlock / reset sales PIN for a business</h3>
-        <form id="unlockPinForm" class="flex flex-wrap gap-2 text-sm">
-          <select name="businessId" class="border rounded-xl px-3 py-2 flex-1 min-w-[160px]">
-            ${(d.businesses||[]).map(b=>`<option value="${b.id}">${esc(b.name)} ${b.pinLocked?'(LOCKED)':''}</option>`).join('')}
-          </select>
-          <input name="newPin" placeholder="New PIN (optional)" inputmode="numeric" maxlength="6" class="border rounded-xl px-3 py-2 w-36"/>
-          <button class="px-4 py-2 rounded-xl text-white bg-teal-600 font-medium">Unlock</button>
+        <h3 class="font-semibold mb-2">Unlock or reset sales PIN</h3>
+        <p class="text-xs text-slate-500 mb-2"><b>Unlock</b> keeps the same PIN. <b>Reset PIN</b> sets a new PIN (required in the box) and unlocks.</p>
+        <form id="unlockPinForm" class="flex flex-wrap gap-2 text-sm items-end">
+          <div class="flex-1 min-w-[160px]">
+            <label class="text-xs text-slate-500">Business</label>
+            <select name="businessId" class="w-full border rounded-xl px-3 py-2">
+              ${(d.businesses||[]).map(b=>`<option value="${b.id}">${esc(b.name)} ${b.pinLocked?'(LOCKED)':''}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">New PIN (for reset)</label>
+            <input name="newPin" placeholder="4–6 digits" inputmode="numeric" maxlength="6" class="border rounded-xl px-3 py-2 w-36"/>
+          </div>
+          <button type="submit" class="px-4 py-2 rounded-xl text-white bg-teal-600 font-medium">Unlock only</button>
+          <button type="button" id="resetPinBtn" class="px-4 py-2 rounded-xl text-white bg-amber-600 font-medium">Reset PIN</button>
         </form>
       </div>
     </div>`;
@@ -3100,6 +3117,31 @@ function viewOnline(){
 }
 
 function bind(){
+  // Event delegation for Unlock PIN (works even if buttons re-render)
+  if(!window.bhUnlockPinClick){
+    window.bhUnlockPinClick=true;
+    document.addEventListener('click', function(ev){
+      const t=ev.target && ev.target.closest && ev.target.closest('[data-unlock-pin],[data-reset-pin]');
+      if(!t)return;
+      if(t.getAttribute('data-unlock-pin')){
+        ev.preventDefault();
+        const id=t.getAttribute('data-unlock-pin');
+        const fn=window.__doUnlockPin||(typeof doUnlockPin==='function'?doUnlockPin:null);
+        if(fn)fn(id,'');
+        return;
+      }
+      if(t.getAttribute('data-reset-pin')){
+        ev.preventDefault();
+        const id=t.getAttribute('data-reset-pin');
+        const np=prompt('Enter NEW sales PIN (4–6 digits):','1234');
+        if(np===null)return;
+        if(!/^\d{4,6}$/.test(String(np).trim())){alert('PIN must be 4–6 digits');return}
+        const fn=window.__doUnlockPin||(typeof doUnlockPin==='function'?doUnlockPin:null);
+        if(fn)fn(id, String(np).trim());
+      }
+    });
+  }
+
   document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribute('data-go')));
   document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>goApp(b.getAttribute('data-nav')));
   document.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{S.color=b.getAttribute('data-color');render()});
@@ -3853,39 +3895,134 @@ render();
 
   document.querySelectorAll('[data-admin-tab]').forEach(b=>b.onclick=()=>{S.adminTab=b.getAttribute('data-admin-tab');render()});
   
-  document.querySelectorAll('[data-unlock-pin]').forEach(btn=>btn.onclick=()=>{
-    const id=btn.getAttribute('data-unlock-pin');
-    if(!SERVER_MODE){const d=db();const b=d.businesses.find(x=>x.id===id);if(b){b.pinLocked=false;b.pinFails=0;save(d);render();toast('PIN unlocked');}return}
-    api('/api/admin/pin-unlock',{method:'POST',body:{businessId:id}}).then(function(data){
-      const d=db();const b=d.businesses.find(x=>x.id===id);
-      if(b&&data.business)Object.assign(b,data.business);else if(b){b.pinLocked=false;b.pinFails=0}
-      save(d);syncPull().then(function(){render();toast('PIN unlocked on server')});
-    }).catch(function(e){alert(e.message||e)});
+  function applyPinUnlock(id, data, newPin){
+    const d=db();
+    let b=(d.businesses||[]).find(x=>x.id===id);
+    if(!b){
+      b={id:id,name:(data&&data.business&&data.business.name)||'Business',pinLocked:false,pinFails:0};
+      d.businesses.push(b);
+    }
+    if(data&&data.business)Object.assign(b,data.business);
+    b.pinLocked=false;b.pinFails=0;b.pinLockedAt=null;
+    if(newPin)b.salesPin=String(newPin);
+    // drop related pin_locked alerts
+    d.adminAlerts=(d.adminAlerts||[]).filter(a=>!(a.type==='pin_locked'&&a.businessId===id));
+    save(d);
+  }
+  function doUnlockPin(id, newPin){
+    if(!id){alert('No business id on this alert');return}
+    toast('Unlocking PIN…');
+    if(!SERVER_MODE){
+      applyPinUnlock(id, null, newPin);
+      render();
+      toast(newPin?'Sales PIN reset':'Sales PIN unlocked');
+      return;
+    }
+    api('/api/admin/pin-unlock',{method:'POST',body:{businessId:id,newPin:newPin||undefined}}).then(function(data){
+      applyPinUnlock(id, data, newPin);
+      toast(newPin?'Sales PIN reset on server':'Sales PIN unlocked on server');
+      render();
+      // refresh in background
+      syncPull().then(function(){render()}).catch(function(){});
+    }).catch(function(e){
+      alert('Unlock failed: '+(e.message||e||'unknown error'));
+    });
+  }
+  window.__doUnlockPin=doUnlockPin;
+  document.querySelectorAll('[data-unlock-pin]').forEach(btn=>{
+    btn.onclick=function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      doUnlockPin(btn.getAttribute('data-unlock-pin'), '');
+    };
   });
+  document.querySelectorAll('[data-reset-pin]').forEach(btn=>{
+    btn.onclick=function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      const id=btn.getAttribute('data-reset-pin');
+      const np=prompt('Enter NEW sales PIN for this business (4–6 digits):','1234');
+      if(np===null)return;
+      if(!/^\d{4,6}$/.test(String(np).trim())){alert('PIN must be 4–6 digits');return}
+      doUnlockPin(id, String(np).trim());
+    };
+  });
+  const resetPinBtn=document.getElementById('resetPinBtn');
+  if(resetPinBtn)resetPinBtn.onclick=function(ev){
+    ev.preventDefault();
+    const form=document.getElementById('unlockPinForm');
+    if(!form)return;
+    const fd=new FormData(form);
+    const id=fd.get('businessId');
+    const newPin=String(fd.get('newPin')||'').trim();
+    if(!id){alert('Select a business');return}
+    if(!/^\d{4,6}$/.test(newPin)){alert('Enter a new PIN (4–6 digits) in the box to reset');return}
+    doUnlockPin(id, newPin);
+  };
+  const resetOwnPinBtn=document.getElementById('resetOwnPinBtn');
+  if(resetOwnPinBtn)resetOwnPinBtn.onclick=function(){
+    const b=biz();
+    if(!b){toast('No business selected');return}
+    if(b.pinLocked){
+      openModal(`<h3 class="text-lg font-bold text-red-700 mb-2">PIN locked</h3>
+        <p class="text-sm text-slate-600 mb-3">Your sales PIN is locked after 2 wrong attempts. Only the <b>platform admin</b> can unlock or reset it (Admin → Alerts → Reset PIN).</p>
+        <button type="button" id="pinCancel" class="w-full py-2.5 rounded-xl border">OK</button>`);
+      document.getElementById('pinCancel').onclick=closeModal;
+      return;
+    }
+    if(!getSalesPin()){
+      // No PIN yet — open create flow
+      document.getElementById('changePinBtn')&&document.getElementById('changePinBtn').click();
+      return;
+    }
+    openModal(`<h3 class="text-lg font-bold mb-1">Reset sales PIN</h3>
+      <p class="text-sm text-slate-500 mb-3">Enter your current PIN, then choose a new 4–6 digit PIN.</p>
+      <label class="text-xs text-slate-500">Current PIN</label>
+      <input id="rstOld" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-2 text-center text-lg tracking-widest"/>
+      <label class="text-xs text-slate-500">New PIN</label>
+      <input id="rstNew1" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-2 text-center text-lg tracking-widest"/>
+      <label class="text-xs text-slate-500">Confirm new PIN</label>
+      <input id="rstNew2" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-3 text-center text-lg tracking-widest"/>
+      <p id="rstErr" class="hidden text-sm text-red-600 mb-2"></p>
+      <button type="button" id="rstSave" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${S.accent()}">Save new PIN</button>
+      <button type="button" id="pinCancel" class="w-full py-2 text-sm text-slate-500 mt-2">Cancel</button>`);
+    document.getElementById('pinCancel').onclick=closeModal;
+    document.getElementById('rstSave').onclick=function(){
+      const err=document.getElementById('rstErr');
+      const old=document.getElementById('rstOld').value.trim();
+      const a=document.getElementById('rstNew1').value.trim();
+      const c=document.getElementById('rstNew2').value.trim();
+      if(old!==getSalesPin()){err.textContent='Current PIN is incorrect';err.classList.remove('hidden');return}
+      if(!/^\d{4,6}$/.test(a)){err.textContent='New PIN must be 4–6 digits';err.classList.remove('hidden');return}
+      if(a!==c){err.textContent='New PINs do not match';err.classList.remove('hidden');return}
+      if(a===old){err.textContent='New PIN must be different from current';err.classList.remove('hidden');return}
+      setSalesPin(a);
+      const bb=biz();
+      if(bb){bb.pinFails=0;bb.pinLocked=false;bb.pinLockedAt=null;saveBiz(bb)}
+      closeModal();
+      toast('Sales PIN reset successfully');
+      render();
+    };
+    setTimeout(function(){const el=document.getElementById('rstOld');if(el)el.focus()},80);
+  };
   const clearAlerts=document.getElementById('clearAlerts');
   if(clearAlerts)clearAlerts.onclick=()=>{
     if(!confirm('Clear all alerts?'))return;
-    if(SERVER_MODE)api('/api/admin/alerts',{method:'DELETE',body:{clearAll:true}}).then(function(){
-      const d=db();d.adminAlerts=[];save(d);render();
-    });
-    else {const d=db();d.adminAlerts=[];save(d);render()}
+    if(SERVER_MODE){
+      api('/api/admin/alerts',{method:'DELETE',body:{clearAll:true}}).then(function(){
+        const d=db();d.adminAlerts=[];save(d);render();toast('Alerts cleared');
+      }).catch(function(e){alert(e.message||e)});
+    } else {const d=db();d.adminAlerts=[];save(d);render()}
   };
   const unlockPinForm=document.getElementById('unlockPinForm');
   if(unlockPinForm)unlockPinForm.onsubmit=e=>{
-    e.preventDefault();const fd=new FormData(unlockPinForm);
-    const id=fd.get('businessId');const newPin=fd.get('newPin')||'';
-    if(!id)return;
-    if(SERVER_MODE){
-      api('/api/admin/pin-unlock',{method:'POST',body:{businessId:id,newPin:newPin||undefined}}).then(function(data){
-        const d=db();const b=d.businesses.find(x=>x.id===id);
-        if(b&&data.business)Object.assign(b,data.business);
-        else if(b){b.pinLocked=false;b.pinFails=0;if(newPin)b.salesPin=newPin}
-        save(d);render();toast('PIN unlocked');
-      }).catch(function(err){alert(err.message||err)});
-      return;
-    }
-    const d=db();const b=d.businesses.find(x=>x.id===id);
-    if(b){b.pinLocked=false;b.pinFails=0;if(newPin)b.salesPin=String(newPin);save(d);render();toast('PIN unlocked')}
+    e.preventDefault();
+    const fd=new FormData(unlockPinForm);
+    const id=fd.get('businessId');
+    const newPin=(fd.get('newPin')||'').trim();
+    if(!id){alert('Select a business');return}
+    if(newPin && !/^\d{4,6}$/.test(newPin)){alert('New PIN must be 4–6 digits');return}
+    doUnlockPin(id, newPin);
   };
 
   const adminRefresh=document.getElementById('adminRefresh');
