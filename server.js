@@ -332,7 +332,7 @@ async function handleApi(req, res, pathname) {
           OWNER_LOCKED.forEach((k) => { nb[k] = b[k]; }); // server keeps control of these
         } else {
           nb = { ...b };
-          ['plan', 'suspended', 'trialEndsAt', 'trialExtended', 'name'].forEach((k) => { if (body[k] !== undefined) nb[k] = body[k]; });
+          ['plan', 'suspended', 'trialEndsAt', 'trialExtended', 'name', 'salesPin', 'pinLocked', 'pinFails', 'pinLockedAt'].forEach((k) => { if (body[k] !== undefined) nb[k] = body[k]; });
           if (body.plan && body.plan !== 'FREE') {
             nb.planPaidAt = today();
             nb.planReceipt = b.planReceipt || 'ADMIN-' + Date.now();
@@ -364,8 +364,14 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, {
       clients: clients.map(publicUser),
       businesses: bizs.map((b) => ({
-        id: b.id, name: b.name, ownerId: b.owner_id, plan: b.plan, suspended: b.suspended === 'true',
-        createdAt: b.createdAt, trialEndsAt: b.trialEndsAt, onlineStore: b.onlineStore
+        id: b.id,
+        name: b.name || 'Unnamed',
+        ownerId: b.owner_id,
+        plan: b.plan || 'FREE',
+        suspended: b.suspended === true || b.suspended === 'true',
+        createdAt: b.createdAt,
+        trialEndsAt: b.trialEndsAt,
+        onlineStore: b.onlineStore !== false && b.onlineStore !== 'false'
       })),
       planCounts, plans: await getCfg('plans', DEFAULT_PLANS), platform: await getCfg('platform', DEFAULT_PLATFORM),
       notices: await getCfg('notices', []),
@@ -389,8 +395,100 @@ async function handleApi(req, res, pathname) {
     const u = await authUser(req);
     if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
     const body = await readBody(req);
-    await pool.query("DELETE FROM users WHERE id=$1 AND role<>'admin'", [String(body.userId)]); // cascades
+    const uidDel = String(body.userId || '');
+    if (!uidDel) return json(res, 400, { error: 'userId required' });
+    const target = (await pool.query('SELECT id, role FROM users WHERE id=$1', [uidDel])).rows[0];
+    if (!target) return json(res, 404, { error: 'User not found' });
+    if (target.role === 'admin') return json(res, 403, { error: 'Cannot delete admin' });
+    // Remove businesses first, then sessions, then user
+    await pool.query('DELETE FROM businesses WHERE owner_id=$1', [uidDel]);
+    await pool.query('DELETE FROM sessions WHERE user_id=$1', [uidDel]);
+    await pool.query("DELETE FROM users WHERE id=$1 AND role<>'admin'", [uidDel]);
+    return json(res, 200, { ok: true, deleted: uidDel });
+  }
+
+
+  if (pathname === '/api/auth/forgot' && method === 'POST') {
+    const body = await readBody(req);
+    const email = String(body.email || '').toLowerCase().trim();
+    if (!email) return json(res, 400, { error: 'Email required' });
+    const u = (await pool.query('SELECT id, email, name, role FROM users WHERE email=$1', [email])).rows[0];
+    if (!u) return json(res, 200, { ok: true, message: 'If that email exists, a recovery code was issued.' });
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const tokens = await getCfg('resetTokens', {});
+    tokens[email] = { code, userId: u.id, expires: Date.now() + 30 * 60 * 1000 };
+    await setCfg('resetTokens', tokens);
+    const alerts = await getCfg('adminAlerts', []);
+    alerts.push({ id: uid(), type: 'password_reset_request', email, userId: u.id, name: u.name || '', at: new Date().toISOString(), message: 'Password recovery requested for ' + email });
+    await setCfg('adminAlerts', alerts.slice(-100));
+    return json(res, 200, { ok: true, message: 'Recovery code generated (valid 30 min).', recoveryCode: code, hint: 'No email SMTP — use this code now or ask admin to reset password.' });
+  }
+
+  if (pathname === '/api/auth/reset' && method === 'POST') {
+    const body = await readBody(req);
+    const email = String(body.email || '').toLowerCase().trim();
+    const code = String(body.code || '').trim();
+    const password = String(body.password || '');
+    if (!email || !code || password.length < MIN_PASSWORD) return json(res, 400, { error: 'Email, recovery code and new password required' });
+    const tokens = await getCfg('resetTokens', {});
+    const t = tokens[email];
+    if (!t || String(t.code) !== code || Date.now() > (t.expires || 0)) return json(res, 400, { error: 'Invalid or expired recovery code' });
+    await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [t.userId, await hashPassword(password)]);
+    delete tokens[email];
+    await setCfg('resetTokens', tokens);
+    return json(res, 200, { ok: true, message: 'Password updated' });
+  }
+
+  if (pathname === '/api/admin/alerts' && method === 'GET') {
+    const u = await authUser(req);
+    if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
+    return json(res, 200, { alerts: await getCfg('adminAlerts', []) });
+  }
+
+  if (pathname === '/api/admin/alerts' && method === 'DELETE') {
+    const u = await authUser(req);
+    if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
+    const body = await readBody(req);
+    let alerts = await getCfg('adminAlerts', []);
+    if (body.clearAll) alerts = [];
+    else alerts = alerts.filter((a) => a.id !== body.id);
+    await setCfg('adminAlerts', alerts);
     return json(res, 200, { ok: true });
+  }
+
+  if (pathname === '/api/admin/pin-lock' && method === 'POST') {
+    const u = await authUser(req);
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    const body = await readBody(req);
+    const bizId = String(body.businessId || '');
+    const row = (await pool.query('SELECT * FROM businesses WHERE id=$1', [bizId])).rows[0];
+    if (!row) return json(res, 404, { error: 'Business not found' });
+    if (!isAdmin(u) && row.owner_id !== u.id) return json(res, 403, { error: 'Forbidden' });
+    const b = bizOut(row);
+    b.pinLocked = true;
+    b.pinFails = Number(body.fails || 2);
+    b.pinLockedAt = new Date().toISOString();
+    await pool.query('UPDATE businesses SET data=$2::jsonb WHERE id=$1', [bizId, JSON.stringify(b)]);
+    const alerts = await getCfg('adminAlerts', []);
+    alerts.push({ id: uid(), type: 'pin_locked', businessId: bizId, businessName: b.name || '', ownerId: row.owner_id, at: new Date().toISOString(), message: 'Sales PIN locked after failed attempts: ' + (b.name || bizId) });
+    await setCfg('adminAlerts', alerts.slice(-100));
+    return json(res, 200, { ok: true, business: b });
+  }
+
+  if (pathname === '/api/admin/pin-unlock' && method === 'POST') {
+    const u = await authUser(req);
+    if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
+    const body = await readBody(req);
+    const bizId = String(body.businessId || '');
+    const row = (await pool.query('SELECT * FROM businesses WHERE id=$1', [bizId])).rows[0];
+    if (!row) return json(res, 404, { error: 'Business not found' });
+    const b = bizOut(row);
+    b.pinLocked = false;
+    b.pinFails = 0;
+    b.pinLockedAt = null;
+    if (body.newPin && /^\d{4,6}$/.test(String(body.newPin))) b.salesPin = String(body.newPin);
+    await pool.query('UPDATE businesses SET data=$2::jsonb WHERE id=$1', [bizId, JSON.stringify(b)]);
+    return json(res, 200, { ok: true, business: b });
   }
 
   if (pathname === '/api/admin/plans' && method === 'PUT') {
