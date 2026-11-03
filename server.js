@@ -509,11 +509,11 @@ async function handleApi(req, res, pathname) {
 /* ---------- static files ---------- */
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json',
-  '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
+  '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
 };
 function sendFile(req, res, file) {
   const ext = path.extname(file).toLowerCase();
-  const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600' };
+  const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': (ext === '.html' || path.basename(file) === 'sw.js' || ext === '.webmanifest') ? 'no-cache' : 'public, max-age=3600' };
   const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && ['.html', '.js', '.css', '.json', '.svg'].includes(ext);
   if (gz) { headers['Content-Encoding'] = 'gzip'; headers['Vary'] = 'Accept-Encoding'; }
   res.writeHead(200, headers);

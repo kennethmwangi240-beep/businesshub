@@ -45,3 +45,14 @@ npm install
 DATABASE_URL=postgres://user:pass@localhost:5432/bh ADMIN_EMAIL=you@example.com ADMIN_PASSWORD=change-me-now node server.js
 ```
 Open http://localhost:3847
+
+## Updating the live app
+1. Change the files (on your computer, or edit on GitHub with the pencil icon).
+2. Commit to the `main` branch. Render rebuilds and redeploys automatically (about 1 minute).
+3. Open the site and check it. Installed copies on client laptops pick up the update the next time they open the app.
+Tips: download a backup (Admin → Backup) before big changes; database tables are created with
+`CREATE TABLE IF NOT EXISTS`, so adding new tables is safe, but renaming or deleting columns needs a careful migration.
+
+## Installing on a client's laptop
+Open the site in Chrome or Edge → click the install icon at the right end of the address bar (or menu → "Install BusinessHub Kenya").
+This adds a desktop shortcut and opens the app in its own window without browser tabs. It needs HTTPS (Render provides it).
