@@ -1,0 +1,12 @@
+{
+  "name": "businesshub-kenya-server",
+  "version": "2.0.0",
+  "description": "BusinessHub Kenya API + static app — PostgreSQL-backed, runs on any Node host",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "import-json": "node migrate-json.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": { "pg": "^8.13.0" }
+}
