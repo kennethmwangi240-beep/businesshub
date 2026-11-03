@@ -4,6 +4,10 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>BusinessHub Kenya</title>
+<link rel="manifest" href="/manifest.webmanifest"/>
+<meta name="theme-color" content="#0d9488"/>
+<link rel="icon" href="/icon-192.png"/>
+<link rel="apple-touch-icon" href="/icon-192.png"/>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
@@ -3278,5 +3282,6 @@ detectServer().then(function(on){
 }).catch(function(){}).finally(function(){render();});
 
 </script>
+<script>if('serviceWorker' in navigator&&location.protocol==='https:'||location.hostname==='localhost'){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}</script>
 </body>
 </html>
