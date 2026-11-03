@@ -3816,7 +3816,7 @@ render();
     toast('Order sent to shop')};
 
   // Admin plan setters
-  document.  document.querySelectorAll('[data-set-plan]').forEach(sel=>{
+  document.querySelectorAll('[data-set-plan]').forEach(sel=>{
     sel.onchange=()=>{
       const id=sel.getAttribute('data-set-plan');
       const d=db();const b=d.businesses.find(x=>x.id===id);
