@@ -53,10 +53,19 @@ Open http://localhost:3847
 Tips: download a backup (Admin → Backup) before big changes; database tables are created with
 `CREATE TABLE IF NOT EXISTS`, so adding new tables is safe, but renaming or deleting columns needs a careful migration.
 
-## Installing on a client's laptop
-Open the site in Chrome or Edge → click the install icon at the right end of the address bar (or menu → "Install BusinessHub Kenya").
-This adds a desktop shortcut and opens the app in its own window without browser tabs. It needs HTTPS (Render provides it).
+## Installing the app (clients and admin)
+There is now an **Install app** button in the client dashboard (top bar, sidebar and a banner on the dashboard), on the home and login pages, and in the admin dashboard header.
+- **Chrome / Edge (laptop or Android):** click **Install app**. A desktop shortcut or home-screen icon is created and the app opens in its own window.
+- **iPhone / iPad:** open in Safari → Share → **Add to Home Screen** (the button shows these steps).
+- If the browser has not offered the native prompt yet, the button shows step-by-step help instead.
+- The admin can install the same way: open the site, go to Admin login, then press **Install admin app** or **Install app**.
+It needs HTTPS (Render provides it). The button hides itself once the app is installed.
 
 ## Forgot the admin password?
 In your host's environment variables set `ADMIN_EMAIL`, `ADMIN_PASSWORD` (new password) and `ADMIN_RESET=true`, redeploy,
 log in, then delete `ADMIN_RESET` and `ADMIN_PASSWORD`.
+
+## What is new in 2.1
+- Install button everywhere, maskable icon and app shortcuts (Shop, Invoices, Stock) in the manifest.
+- Admin dashboard: 7 colour themes + dark mode (remembered on this device), clickable colour stat cards, plan and signup charts, monthly revenue, "needs attention" list for expiring trials, client search and CSV export.
+- Clients: low-stock alert on the dashboard, offline banner, auto re-sync when back online, "new version ready" refresh bar.
