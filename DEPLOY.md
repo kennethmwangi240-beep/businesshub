@@ -56,3 +56,7 @@ Tips: download a backup (Admin → Backup) before big changes; database tables a
 ## Installing on a client's laptop
 Open the site in Chrome or Edge → click the install icon at the right end of the address bar (or menu → "Install BusinessHub Kenya").
 This adds a desktop shortcut and opens the app in its own window without browser tabs. It needs HTTPS (Render provides it).
+
+## Forgot the admin password?
+In your host's environment variables set `ADMIN_EMAIL`, `ADMIN_PASSWORD` (new password) and `ADMIN_RESET=true`, redeploy,
+log in, then delete `ADMIN_RESET` and `ADMIN_PASSWORD`.

@@ -195,6 +195,11 @@ async function init() {
       console.warn(`No admin exists. Set ADMIN_EMAIL and ADMIN_PASSWORD (min ${MIN_PASSWORD} chars) and restart.`);
     }
   }
+  // Recovery: set ADMIN_EMAIL + ADMIN_PASSWORD + ADMIN_RESET=true, redeploy, log in, then remove ADMIN_RESET.
+  if (hasAdmin && process.env.ADMIN_RESET === 'true' && adminEmail && adminPass.length >= MIN_PASSWORD) {
+    const r = await pool.query("UPDATE users SET email=$1, password_hash=$2 WHERE role='admin'", [adminEmail, await hashPassword(adminPass)]);
+    if (r.rowCount) { await pool.query("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role='admin')"); console.log('Admin credentials reset for', adminEmail, '- now remove ADMIN_RESET'); }
+  }
   await pool.query('DELETE FROM sessions WHERE expires_at<now()');
   setInterval(() => pool.query('DELETE FROM sessions WHERE expires_at<now()').catch(() => {}), 3600000).unref();
 }
