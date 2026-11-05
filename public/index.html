@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>BusinessHub</title>
+<title>MyBusinessHub</title>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-title" content="BusinessHub"/>
+<meta name="apple-mobile-web-app-title" content="MyBusinessHub"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
 <script>
 window.__bhPrompt=null;
@@ -15,7 +15,7 @@ window.addEventListener('appinstalled',function(){window.__bhPrompt=null;if(wind
 </script>
 <link rel="manifest" href="/manifest.webmanifest"/>
 <meta name="theme-color" content="#0b3a8f"/>
-<link rel="icon" href="/icon-192.png"/>
+<link rel="icon" type="image/png" href="/favicon.png"/>
 <link rel="apple-touch-icon" href="/icon-192.png"/>
 <script src="/vendor/tailwindcdn.js"></script>
 <script src="/vendor/chart.umd.min.js"></script>
@@ -1497,7 +1497,7 @@ function setSalesPin(pin){const b=biz();if(!b)return;b.salesPin=String(pin);save
 function whatsappShareSale(o,b){
   if(!o)return;
   const phone=(o.phone||'').replace(/\D/g,'');
-  const text=encodeURIComponent('Receipt from '+(b&&b.name||'BusinessHub')+'\n'+(o.number||'')+'\nTotal: KES '+(o.total||0)+(o.servedBy?('\nServed by: '+o.servedBy.name):''));
+  const text=encodeURIComponent('Receipt from '+(b&&b.name||'MyBusinessHub')+'\n'+(o.number||'')+'\nTotal: KES '+(o.total||0)+(o.servedBy?('\nServed by: '+o.servedBy.name):''));
   const url=phone?('https://wa.me/'+(phone.startsWith('254')?phone:('254'+phone.replace(/^0/,'')))+'?text='+text):('https://wa.me/?text='+text);
   window.open(url,'_blank');
 }
@@ -1699,7 +1699,7 @@ async function darajaStkPush(opts){
   const msisdn=normalizeMsisdn(opts.phone);
   const amt=Math.max(1,Math.round(Number(opts.amount)||1));
   if(proxy){
-    const res=await fetch(proxy+'/stkpush',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:msisdn,amount:amt,accountRef:opts.accountRef||'BusinessHub',description:opts.description||'Payment',sandbox})});
+    const res=await fetch(proxy+'/stkpush',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:msisdn,amount:amt,accountRef:opts.accountRef||'MyBusinessHub',description:opts.description||'Payment',sandbox})});
     const data=await res.json().catch(function(){return {}});
     if(!res.ok)throw new Error(data.error||data.errorMessage||'Proxy STK failed');
     return {ok:true,via:'proxy',data:data};
@@ -1717,7 +1717,7 @@ async function darajaStkPush(opts){
       TransactionType:p.transactionType||'CustomerPayBillOnline',
       Amount:amt,PartyA:msisdn,PartyB:shortcode,PhoneNumber:msisdn,
       CallBackURL:p.callbackUrl||'https://mydomain.com/api/mpesa/callback',
-      AccountReference:String(opts.accountRef||'BusinessHub').slice(0,12),
+      AccountReference:String(opts.accountRef||'MyBusinessHub').slice(0,12),
       TransactionDesc:String(opts.description||'Payment').slice(0,13)
     };
     const res=await fetch(base+'/mpesa/stkpush/v1/processrequest',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -2129,7 +2129,7 @@ function viewLanding(){
   <div class="lp-blob" style="width:380px;height:380px;background:var(--brand2);top:240px;right:-120px;animation-delay:-5s"></div>
   <div class="relative">
   <header class="bg-white/80 backdrop-blur border-b px-4 h-16 flex items-center justify-between max-w-5xl mx-auto sticky top-0 z-20">
-    <div class="flex items-center gap-2"><img src="/logo-mark.png" alt="BusinessHub" class="h-10"/><span class="font-extrabold text-lg"><span style="color:#0b3a8f">Business</span><span style="color:#3aa51d">Hub</span></span></div>
+    <div class="flex items-center gap-2"><img src="/logo-mark.png" alt="MyBusinessHub" class="h-10 w-10 rounded-xl object-cover"/><span class="font-extrabold text-lg"><span style="color:#0b3a8f">MyBusiness</span><span style="color:#f59e0b">Hub</span></span></div>
     <div class="flex gap-1 sm:gap-2 text-sm items-center">
       <button type="button" data-go="online" class="lp-btn px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-100">Order online</button>
       <button type="button" data-go="login" class="lp-btn px-3 py-1.5 rounded-lg hover:bg-slate-100">Client log in</button>
@@ -2153,7 +2153,7 @@ function viewLanding(){
         ${themes.map((t,i)=>`<button type="button" title="${t[0]}" data-lptheme="${t[1]},${t[2]}" class="lp-sw ${i===0?'on':''}" style="background:linear-gradient(135deg,${t[1]} 50%,${t[2]} 50%)"></button>`).join('')}
       </div>
     </div>
-    <div class="lp-logo-card"><img src="/logo.png" alt="BusinessHub — Manage, Grow, Succeed" class="w-full rounded-3xl"/></div>
+    <div class="lp-logo-card"><img src="/logo.png" alt="MyBusinessHub — Manage, Grow, Succeed" class="w-full rounded-3xl"/></div>
   </section>
   <section class="max-w-5xl mx-auto px-4 pb-10">
     <h2 class="text-xl font-bold text-slate-900 mb-4">Everything your shop needs</h2>
@@ -2229,7 +2229,7 @@ function viewLogin(){
 
 
 function viewRegister(){
-  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="BusinessHub" class="h-14 mx-auto mb-2"/>
+  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="MyBusinessHub" class="h-14 mx-auto mb-2"/>
   <button type="button" data-go="landing" class="text-xs text-slate-400 mb-4">← Back</button>
   <h1 class="text-2xl font-bold">Create owner account</h1>
   <form id="regForm" class="mt-6 space-y-4">
@@ -2573,7 +2573,7 @@ function viewApp(){
   <aside class="sidebar">
     <div class="side-brand h-14 flex items-center gap-2 px-3 font-bold text-sm border-b" style="color:${accent}">
       ${logoHtml(b.name,accent,32)}
-      <span class="truncate">BusinessHub</span>
+      <span class="truncate">MyBusinessHub</span>
     </div>
     <div class="px-2 pt-2 no-print">
       <select id="bizSwitch" class="w-full border rounded-lg px-2 py-1.5 text-xs bg-white">${bizSwitch}</select>
@@ -3198,6 +3198,94 @@ function secBranches(b,a){
     </div>
   </div>`;
 }
+
+
+function totalSales(b){return money(paidOrders(b).reduce((s,o)=>s+Number(o.total||0),0))}
+function totalExpenses(b){return money(((b&&b.expenses)||[]).filter(e=>e.type==='EXPENSE'||!e.type).reduce((s,e)=>s+Number(e.amount||0),0))}
+function totalIncomeExtra(b){return money(((b&&b.expenses)||[]).filter(e=>e.type==='INCOME').reduce((s,e)=>s+Number(e.amount||0),0))}
+function parseDay(d){try{return d?String(d).slice(0,10):null}catch(e){return null}}
+function aiInsights(b){
+  if(!b)return [];
+  const tips=[];
+  const orders=paidOrders(b);
+  const products=b.products||[];
+  const salesByProd={};
+  orders.forEach(o=>(o.items||[]).forEach(it=>{
+    const k=it.name||it.product_id||'?';
+    salesByProd[k]=(salesByProd[k]||0)+(Number(it.qty)||0);
+  }));
+  const sorted=Object.keys(salesByProd).sort((a,c)=>salesByProd[c]-salesByProd[a]);
+  if(sorted[0])tips.push({type:'sales',title:'Top seller',body:sorted[0]+' sold '+salesByProd[sorted[0]]+' units.'});
+  const low=products.filter(p=>p.active!==false&&(p.stock||0)>0&&(p.stock||0)<=(p.reorder||5));
+  if(low.length)tips.push({type:'stock',title:'Low stock',body:low.slice(0,5).map(p=>p.name+' ('+p.stock+')').join(', ')});
+  const income=money(totalSales(b)+totalIncomeExtra(b));
+  const expenses=totalExpenses(b);
+  tips.push({type:'finance',title:'Profit snapshot',body:'Income '+kes(income)+' · Expenses '+kes(expenses)+' · Net '+kes(money(income-expenses))});
+  if(!orders.length)tips.push({type:'sales',title:'No paid sales yet',body:'Record sales in Shop to unlock richer trends.'});
+  return tips;
+}
+function stockForecast(b){
+  const products=b.products||[];
+  const orders=paidOrders(b);
+  const days=30;
+  const usage={};
+  orders.forEach(o=>{(o.items||[]).forEach(it=>{
+    const id=it.product_id||it.name;
+    usage[id]=(usage[id]||0)+(Number(it.qty)||0);
+  })});
+  return products.filter(p=>p.active!==false).map(p=>{
+    const sold=usage[p.id]||usage[p.name]||0;
+    const daily=sold/days;
+    const stock=Number(p.stock)||0;
+    let daysLeft=daily>0?Math.floor(stock/daily):null;
+    let reorder=daily>0?Math.ceil(daily*14):0;
+    let confidence=sold>=10?'medium':(sold>0?'low':'insufficient data');
+    return {id:p.id,name:p.name,stock,sold30:sold,daily:money(daily),daysLeft,reorderQty:reorder,confidence};
+  }).sort((a,b)=>(a.daysLeft==null?999:a.daysLeft)-(b.daysLeft==null?999:b.daysLeft));
+}
+function answerBizQuestion(b,q){
+  q=(q||'').toLowerCase();
+  if(!b)return 'Select a business first.';
+  if(/today/.test(q)&&/sell|sales/.test(q)){
+    const t=paidOrders(b).filter(o=>o.date===today()).reduce((s,o)=>s+Number(o.total||0),0);
+    return 'Paid sales today: '+kes(money(t))+'.';
+  }
+  if(/profit|earn/.test(q)){
+    const income=money(totalSales(b)+totalIncomeExtra(b));
+    return 'Net (income − expenses): '+kes(money(income-totalExpenses(b)))+'.';
+  }
+  if(/stock|restock/.test(q)){
+    const f=stockForecast(b).filter(x=>x.daysLeft!=null&&x.daysLeft<14).slice(0,8);
+    return f.length?('Restock: '+f.map(x=>x.name+' (~'+x.daysLeft+'d)').join('; ')):'No urgent restock signals.';
+  }
+  const tips=aiInsights(b);
+  return tips[0]?tips[0].body:'Ask about sales, profit, or stock.';
+}
+
+function ensureBranches(b){
+  if(!b)return b;
+  if(!b.branches||!b.branches.length){
+    b.branches=[{id:'main',name:'Main branch',address:b.address||'',phone:b.phone||''}];
+  }
+  if(!b.currentBranchId)b.currentBranchId=b.branches[0].id;
+  return b;
+}
+function ensureLoyalty(b){
+  if(!b)return b;
+  if(!b.loyalty)b.loyalty={pointsPerKes:1,redeemRate:100,customers:{}};
+  return b;
+}
+function ensureDeliveries(b){
+  if(!b)return b;
+  if(!b.deliveries)b.deliveries=[];
+  return b;
+}
+function ensureWorkers(b){
+  if(!b)return b;
+  if(!b.workers)b.workers=[];
+  return b;
+}
+
 function secTeam(b,a){
   ensureBranches(b);
   const workers=b.workers||[];
@@ -3796,9 +3884,9 @@ function viewAdmin(){
 
   return `<div class="ad ${dark?'dark':''} min-h-screen bg-slate-100" style="--ad:${accentC}">
   <header class="text-white px-4 h-14 flex items-center justify-between sticky top-0 z-20" style="background:linear-gradient(90deg,#0f172a,color-mix(in srgb,${accentC} 55%,#0f172a))">
-    <div class="font-bold text-sm md:text-base flex items-center gap-2"><img src="/logo-mark.png" alt="" class="h-8 bg-white rounded-md p-0.5"/>BusinessHub · Platform admin</div>
+    <div class="font-bold text-sm md:text-base flex items-center gap-2"><img src="/logo-mark.png" alt="" class="h-8 w-8 rounded-md object-cover bg-white p-0.5"/>MyBusinessHub · Platform admin</div>
     <div class="flex items-center gap-2 text-sm">
-      <span class="text-slate-300 hidden md:inline">${esc(p.company||'BusinessHub')}</span>
+      <span class="text-slate-300 hidden md:inline">${esc(p.company||'MyBusinessHub')}</span>
       ${installBtn('px-3 py-1.5 rounded-lg','Install app',accentC)}
       <button type="button" id="signOut" class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">Log out</button>
     </div>

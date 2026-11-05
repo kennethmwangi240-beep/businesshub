@@ -1,12 +1,30 @@
 {
-  "name": "BusinessHub",
-  "short_name": "BusinessHub",
+  "name": "MyBusinessHub",
+  "short_name": "MyBizHub",
+  "description": "Manage \u00b7 Grow \u00b7 Succeed \u2014 business finance & POS for Kenya",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f766e",
+  "background_color": "#0a1628",
   "theme_color": "#0d9488",
   "orientation": "portrait-primary",
   "icons": [
-    {"src": "/logo-mark.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"}
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }
