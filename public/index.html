@@ -32,11 +32,11 @@ window.addEventListener('appinstalled',function(){window.__bhPrompt=null;if(wind
 </script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
-*{box-sizing:border-box}body{font-family:Inter,system-ui,sans-serif;background:#f1f5f9;margin:0}
+*{box-sizing:border-box}body{font-family:Inter,system-ui,sans-serif;background:linear-gradient(165deg,#dbeafe 0%,#f0fdf4 35%,#f8fafc 70%,#fef3c7 100%);background-attachment:fixed;margin:0;min-height:100vh}
 .hidden{display:none!important}:root{--accent:#0d9488;--sidebar-w:220px}
 .layout{display:flex;min-height:100vh}
 .sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:40}
-.main-wrap{margin-left:var(--sidebar-w);flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
+.main-wrap{margin-left:var(--sidebar-w);flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh;background:transparent}
 .nav-item{display:block;width:100%;text-align:left;padding:10px 14px;border-radius:8px;font-size:14px;color:#475569;border:0;background:transparent;cursor:pointer}
 .nav-item:hover{background:#f1f5f9}.nav-item.active{background:#ecfdf5;color:var(--accent);font-weight:600}
 .cat-chip{padding:8px 12px;border-radius:999px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;background:#fff;cursor:pointer}
@@ -1669,7 +1669,7 @@ function requireSalesPin(onOk){
 const S={
   view:'landing',appView:'dashboard',filter:'All',search:'',bizCatTab:'all',
   selectedCats:['electrical'],color:'#d97706',chartMode:'daily',viewInvoiceId:null,
-  prodSearch:'',prodSub:'All',stockSearch:'',payMethod:'Cash',cartDiscount:0,receiptWidth:'80',onlineBizId:null,onlineCart:[],adminTab:'overview',
+  prodSearch:'',prodSub:'All',stockSearch:'',payMethod:'Cash',cartDiscount:0,receiptWidth:'80',dashFrom:'',dashTo:'',dashBranch:'all',dashWorker:'all',dashCat:'all',dashPay:'all',onlineBizId:null,onlineCart:[],adminTab:'overview',
   accent(){const b=biz();return (b&&b.color)||this.color}
 };
 let chartInst=null;
@@ -2482,56 +2482,77 @@ function viewWorkerApp(){
   if(d.session){clearWorkerSession();S.view='app';return viewApp()}
   const b=cw.business;const w=cw.worker;const a=b.color||'#0f172a';
   d.currentBizId=b.id;save(d);
-  const myOrders=paidOrders(b).filter(o=>o.servedBy&&o.servedBy.id===w.id);
+  const myOrders=paidOrders(b).filter(o=>o.servedBy&&(o.servedBy.id===w.id||o.servedBy.name===(w.firstName||w.name)));
+  const sum=arr=>arr.reduce((s,o)=>s+Number(o.total||0),0);
+  const qtySold=arr=>{let q=0;arr.forEach(o=>(o.items||[]).forEach(it=>q+=Number(it.qty||0)));return q};
+  const itemsCount=arr=>{const set=new Set();arr.forEach(o=>(o.items||[]).forEach(it=>set.add(it.name||it.product_id)));return set.size};
   const todaySales=myOrders.filter(o=>o.date===today());
   const weekStart=(()=>{const t=new Date();t.setDate(t.getDate()-6);return t.toISOString().slice(0,10)})();
   const weekSales=myOrders.filter(o=>o.date>=weekStart);
   const monthPrefix=today().slice(0,7);
   const monthSales=myOrders.filter(o=>String(o.date||'').startsWith(monthPrefix));
-  const sum=arr=>arr.reduce((s,o)=>s+Number(o.total||0),0);
-  const qty=arr=>{let q=0;arr.forEach(o=>(o.items||[]).forEach(it=>q+=Number(it.qty||0)));return q};
   const shift=currentShift(b);
+  const commissionPct=Number(w.commissionPct||0);
+  const commissionEarned=money(sum(monthSales)*commissionPct/100);
   const allowed=['dashboard','shop','invoices'];
   if(!allowed.includes(S.appView))S.appView='dashboard';
-  let main;
+  let main='';
   if(S.appView==='shop')main=secShop(b,a);
-  else if(S.appView==='invoices')main=secInvoices(b,a);
-  else main=`<div class="space-y-4">
-      <div class="bg-slate-900 text-white rounded-2xl p-5">
+  else if(S.appView==='invoices'){
+    main=secInvoices(b,a);
+    // worker only sees own invoices if filtered - soft filter note
+    main=`<p class="text-xs text-slate-500 mb-2">Your invoices & receipts (print after payment).</p>`+main;
+  }else{
+    main=`<div class="space-y-4">
+      <div class="rounded-2xl p-5 text-white" style="background:linear-gradient(135deg,#0f172a,#1e3a5f)">
         <p class="text-sm text-slate-300">Worker mini dashboard</p>
         <h2 class="text-xl font-bold mt-1">${esc(w.firstName||w.name||'')} ${esc(w.lastName||'')}</h2>
-        <p class="text-sm mt-1 text-slate-300">${esc(b.name)} · ${esc(w.role||'cashier')} · Shift: ${shift?'OPEN':'closed'}</p>
+        <p class="text-sm mt-1 text-slate-300">${esc(b.name)} · ${esc(w.role||'cashier')}</p>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">Today</p><p class="text-lg font-bold">${kes(sum(todaySales))}</p><p class="text-xs text-slate-400">${todaySales.length} sales</p></div>
-        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">This week</p><p class="text-lg font-bold">${kes(sum(weekSales))}</p></div>
-        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">This month</p><p class="text-lg font-bold">${kes(sum(monthSales))}</p></div>
-        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">Qty sold (month)</p><p class="text-lg font-bold">${qty(monthSales)}</p></div>
+        <div class="rounded-2xl border p-4 bg-emerald-50 border-emerald-100"><p class="text-xs text-emerald-800">Own sales today</p><p class="text-lg font-bold text-emerald-900">${kes(sum(todaySales))}</p><p class="text-xs text-emerald-700">${todaySales.length} sale(s)</p></div>
+        <div class="rounded-2xl border p-4 bg-sky-50 border-sky-100"><p class="text-xs text-sky-800">This week</p><p class="text-lg font-bold text-sky-900">${kes(sum(weekSales))}</p></div>
+        <div class="rounded-2xl border p-4 bg-violet-50 border-violet-100"><p class="text-xs text-violet-800">This month</p><p class="text-lg font-bold text-violet-900">${kes(sum(monthSales))}</p></div>
+        <div class="rounded-2xl border p-4 bg-amber-50 border-amber-100"><p class="text-xs text-amber-800">Current shift</p><p class="text-lg font-bold text-amber-900">${shift?'OPEN':'Closed'}</p><p class="text-xs">${shift?esc((shift.openedBy||'').slice(0,20)):'—'}</p></div>
       </div>
-      <div class="bg-white rounded-2xl border p-4 text-sm">
-        <p>Commission rate: <b>${Number(w.commissionPct||0)}%</b> · Est. month commission: <b>${kes(money(sum(monthSales)*Number(w.commissionPct||0)/100))}</b></p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Items sold (month)</p><p class="text-lg font-bold">${itemsCount(monthSales)}</p></div>
+        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Quantities sold</p><p class="text-lg font-bold">${qtySold(monthSales)}</p></div>
+        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Own invoices</p><p class="text-lg font-bold">${myOrders.length}</p></div>
+        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Commission earned</p><p class="text-lg font-bold">${commissionPct?kes(commissionEarned):'—'}</p><p class="text-xs text-slate-400">${commissionPct?commissionPct+'% of month sales':'Not set'}</p></div>
       </div>
-      <button type="button" data-nav="shop" class="w-full py-3 rounded-xl text-white font-semibold bg-slate-900">Open POS</button>
-      <p class="text-xs text-slate-400 text-center">Limited access — no owner settings, stock admin, or reports.</p>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" data-nav="shop" class="px-5 py-3 rounded-xl text-white font-semibold" style="background:${a}">Open shop / POS</button>
+        <button type="button" data-nav="invoices" class="px-5 py-3 rounded-xl border bg-white font-medium">My invoices & receipts</button>
+      </div>
+      <p class="text-xs text-slate-400">After a sale is confirmed, open Invoices to view and print the receipt.</p>
     </div>`;
-  return `<div class="min-h-screen bg-slate-100 flex">
-    <aside class="w-52 bg-slate-900 text-slate-100 flex flex-col hidden md:flex">
-      <div class="p-4 border-b border-white/10"><p class="font-bold text-sm">Worker</p><p class="text-xs text-slate-400 truncate">${esc(w.firstName||w.name||'')}</p></div>
+  }
+  return `<div class="min-h-screen flex" style="background:linear-gradient(180deg,#e0f2fe 0%,#f1f5f9 40%,#f8fafc 100%)">
+    <aside class="w-56 bg-slate-900 text-slate-100 flex flex-col hidden md:flex shrink-0">
+      <div class="p-4 border-b border-white/10">
+        <p class="font-bold text-sm">Worker menu</p>
+        <p class="text-xs text-slate-400 truncate">${esc(w.firstName||w.name||'')}</p>
+      </div>
       <nav class="p-2 flex-1 space-y-1">
-        <button type="button" data-nav="dashboard" class="nav-item w-full text-left text-slate-200 ${S.appView==='dashboard'?'bg-white/15':''}">My dashboard</button>
-        <button type="button" data-nav="shop" class="nav-item w-full text-left text-slate-200 ${S.appView==='shop'?'bg-white/15':''}">POS</button>
-        <button type="button" data-nav="invoices" class="nav-item w-full text-left text-slate-200 ${S.appView==='invoices'?'bg-white/15':''}">Invoices</button>
+        <button type="button" data-nav="dashboard" class="nav-item w-full text-left text-slate-200 ${S.appView==='dashboard'?'bg-white/15':''}">Mini dashboard</button>
+        <button type="button" data-nav="shop" class="nav-item w-full text-left text-slate-200 ${S.appView==='shop'?'bg-white/15':''}">Shop / POS</button>
+        <button type="button" data-nav="invoices" class="nav-item w-full text-left text-slate-200 ${S.appView==='invoices'?'bg-white/15':''}">Invoices & receipts</button>
       </nav>
       <button type="button" id="workerSignOut" class="m-3 py-2 text-sm rounded-lg bg-white/10">Log out</button>
     </aside>
     <div class="flex-1 flex flex-col min-w-0">
-      <header class="bg-white border-b px-4 py-3 flex items-center justify-between">
-        <div class="md:hidden flex gap-2">
-          <button type="button" data-nav="dashboard" class="text-xs border px-2 py-1 rounded-lg">Home</button>
-          <button type="button" data-nav="shop" class="text-xs border px-2 py-1 rounded-lg">POS</button>
+      <header class="bg-white/90 backdrop-blur border-b px-4 py-3 flex items-center justify-between gap-2 sticky top-0 z-10">
+        <div class="flex items-center gap-2 min-w-0">
+          <button type="button" id="workerBackBtn" class="text-sm px-3 py-1.5 rounded-lg border bg-white shrink-0">← Back</button>
+          <p class="font-semibold text-sm truncate">${esc(b.name)}</p>
         </div>
-        <p class="font-semibold text-sm truncate">${esc(b.name)}</p>
-        <button type="button" id="workerSignOut2" class="text-xs text-slate-500">Log out</button>
+        <div class="md:hidden flex gap-1">
+          <button type="button" data-nav="dashboard" class="text-xs border px-2 py-1 rounded-lg bg-white">Home</button>
+          <button type="button" data-nav="shop" class="text-xs border px-2 py-1 rounded-lg bg-white">POS</button>
+          <button type="button" data-nav="invoices" class="text-xs border px-2 py-1 rounded-lg bg-white">Invoices</button>
+        </div>
+        <button type="button" id="workerSignOut2" class="text-xs text-slate-500 shrink-0">Log out</button>
       </header>
       <main class="p-4 max-w-5xl w-full mx-auto">${main}</main>
     </div>
@@ -2620,60 +2641,127 @@ function viewApp(){
 }
 
 function secDash(b,a){
+  ensureBranches(b);
   const day=today();
   const notices=(db().notices||[]).slice(-5).reverse();
   const trialLeft=daysLeftInTrial(b);
-  const trialBanner=!planIsPaid(b)?`<div class="rounded-xl p-3 mb-4 text-sm ${trialLeft<0?'bg-red-50 border border-red-100 text-red-900':trialLeft<=1?'bg-amber-50 border border-amber-100 text-amber-950':'bg-emerald-50 border border-emerald-100 text-emerald-950'}">
+  const from=S.dashFrom||'';
+  const to=S.dashTo||'';
+  const branch=S.dashBranch||'all';
+  const worker=S.dashWorker||'all';
+  const cat=S.dashCat||'all';
+  const pay=S.dashPay||'all';
+  let orders=paidOrders(b);
+  if(from)orders=orders.filter(o=>o.date>=from);
+  if(to)orders=orders.filter(o=>o.date<=to);
+  if(branch!=='all')orders=orders.filter(o=>(o.branchId||'main')===branch);
+  if(worker!=='all')orders=orders.filter(o=>o.servedBy&&(o.servedBy.id===worker||o.servedBy.name===worker));
+  if(pay!=='all')orders=orders.filter(o=>String(o.payMethod||o.method||'').toLowerCase().includes(String(pay).toLowerCase()));
+  if(cat!=='all')orders=orders.filter(o=>(o.items||[]).some(it=>{
+    const p=(b.products||[]).find(x=>x.id===it.product_id||x.name===it.name);
+    return p&&(p.category===cat||(p.categories||[]).includes(cat));
+  }));
+  const sales=money(orders.reduce((s,o)=>s+Number(o.total||0),0));
+  let expensesList=(b.expenses||[]).filter(e=>e.type==='EXPENSE'||!e.type);
+  if(from)expensesList=expensesList.filter(e=>String(e.date||'')>=from);
+  if(to)expensesList=expensesList.filter(e=>String(e.date||'')<=to);
+  const expenses=money(expensesList.reduce((s,e)=>s+Number(e.amount||0),0));
+  let incomeExtra=(b.expenses||[]).filter(e=>e.type==='INCOME');
+  if(from)incomeExtra=incomeExtra.filter(e=>String(e.date||'')>=from);
+  if(to)incomeExtra=incomeExtra.filter(e=>String(e.date||'')<=to);
+  const extraInc=money(incomeExtra.reduce((s,e)=>s+Number(e.amount||0),0));
+  const totalIncome=money(sales+extraInc);
+  const grossProfit=money(sales-expenses);
+  const netProfit=money(totalIncome-expenses);
+  const stockValue=money((b.products||[]).reduce((s,p)=>s+(Number(p.stock)||0)*(Number(p.cost)||Number(p.price)||0)*0.7,0));
+  const purchases=money((b.expenses||[]).filter(e=>e.category==='purchase'||e.type==='PURCHASE'||/purchase/i.test(e.note||e.category||'')).reduce((s,e)=>s+Number(e.amount||0),0));
+  const creditOrders=(b.orders||[]).filter(o=>o.status==='CREDIT'||o.payMethod==='Credit');
+  const debts=money(creditOrders.reduce((s,o)=>s+Number(o.total||0),0));
+  const suppliers=(b.suppliers||[]);
+  const supplierBal=money(suppliers.reduce((s,x)=>s+Number(x.balance||0),0));
+  const lowStock=(b.products||[]).filter(p=>p.active!==false&&(p.stock||0)>0&&(p.stock||0)<=(p.reorder||5)).slice(0,8);
+  const expiryAlerts=(b.products||[]).filter(p=>p.expiry&&String(p.expiry)<=addDays(today(),30)).slice(0,8);
+  const workers=b.workers||[];
+  const workerPerf=workers.map(w=>{
+    const wo=orders.filter(o=>o.servedBy&&(o.servedBy.id===w.id||o.servedBy.name===(w.firstName||w.name)));
+    return {name:(w.firstName||w.name||'')+' '+(w.lastName||''),n:wo.length,total:money(wo.reduce((s,o)=>s+Number(o.total||0),0))};
+  }).sort((a,b)=>b.total-a.total);
+  const branches=b.branches||[{id:'main',name:'Main'}];
+  const branchPerf=branches.map(br=>{
+    const bo=orders.filter(o=>(o.branchId||'main')===br.id);
+    return {name:br.name,n:bo.length,total:money(bo.reduce((s,o)=>s+Number(o.total||0),0))};
+  });
+  const recentInv=(b.orders||[]).slice().reverse().slice(0,6);
+  const tips=typeof aiInsights==='function'?aiInsights(b).slice(0,3):[];
+  const trialBanner=!planIsPaid(b)?`<div class="rounded-xl p-3 mb-4 text-sm ${trialLeft<0?'bg-red-50 border border-red-100 text-red-900':trialLeft<=1?'bg-amber-50 border border-amber-100 text-amber-950':'bg-emerald-50 border border-emerald-100 text-emerald-900'}">
     ${trialLeft<0?`<b>Trial ended.</b> Choose a paid plan.`:`<b>Free trial:</b> ${trialLeft} day(s) left · ends ${esc(trialEndsOn(b))} · <button type="button" data-nav="settings" class="underline font-semibold">Plans</button>`}
   </div>`:'';
-  const noticeHtml=notices.length?`<div class="bg-sky-50 border border-sky-100 rounded-xl p-3 mb-4 text-sm">
-    <p class="text-xs font-semibold text-sky-800 mb-1">Platform updates</p>
-    ${notices.map(n=>`<p class="text-sky-900"><b>${esc(n.title)}</b> — ${esc(n.body)}</p>`).join('')}</div>`:'';
-
-  const income=money(totalSales(b)+totalIncomeExtra(b));
-  const exp=totalExpenses(b);
-  const profit=money(income-exp);
-  const onlinePending=(b.orders||[]).filter(o=>o.source==='online'&&o.status==='PENDING').length;
-  let instDismissed=false;try{instDismissed=Date.now()-Number(localStorage.getItem('bh_inst_dismiss')||0)<6048e5}catch(e){}
-  const installBanner=instDismissed?'':`<div data-install-wrap class="rounded-xl p-3 mb-4 text-sm flex flex-wrap items-center justify-between gap-2 border" style="background:color-mix(in srgb,${a} 10%,white);border-color:color-mix(in srgb,${a} 30%,white)">
-    <div><b>Install MyBusinessHub on this device</b><p class="text-xs text-slate-600">Opens like a normal app from your desktop or home screen. No browser tabs.</p></div>
-    <div class="flex items-center gap-2">${installBtn('px-4 py-2 rounded-xl','Install app',a)}<button type="button" data-inst-dismiss class="text-xs text-slate-500 px-2">Not now</button></div></div>`;
-  const lowItems=(b.products||[]).filter(p=>(p.stock||0)>0&&(p.stock||0)<=5).sort((x,y)=>x.stock-y.stock);
-  const lowBanner=lowItems.length?`<div class="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4 text-sm text-amber-950 flex flex-wrap items-center justify-between gap-2">
-    <div><b>${lowItems.length} item${lowItems.length>1?'s are':' is'} running low:</b> ${lowItems.slice(0,4).map(p=>esc(p.name)+' ('+p.stock+')').join(', ')}${lowItems.length>4?' …':''}</div>
-    <button type="button" data-nav="stock" class="underline font-semibold">Open stock</button></div>`:'';
-  return `${trialBanner}${noticeHtml}${installBanner}${lowBanner}<div class="flex items-center gap-3 mb-4">
-    ${logoHtml(b.name,a,56)}
-    <div><h2 class="text-xl font-bold">${esc(b.name)}</h2><p class="text-sm text-slate-500">${esc(b.categoryLabel||'Business')} · Plan ${(b.plan||'FREE')}</p></div>
-  </div>
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-    <div class="bg-white rounded-2xl border p-4 border-l-4 border-l-emerald-500"><p class="text-xs text-slate-500">Income</p><p class="text-xl font-bold text-emerald-600 mt-1">${kes(income)}</p><p class="text-xs text-slate-400">Today ${kes(salesOnDay(b,day))}</p></div>
-    <div class="bg-white rounded-2xl border p-4 border-l-4 border-l-rose-500"><p class="text-xs text-slate-500">Expenses</p><p class="text-xl font-bold text-rose-600 mt-1">${kes(exp)}</p></div>
-    <div class="bg-white rounded-2xl border p-4 border-l-4" style="border-left-color:${a}"><p class="text-xs text-slate-500">${profit>=0?'Net profit':'Net loss'}</p><p class="text-xl font-bold mt-1">${kes(profit)}</p></div>
-    <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">Online orders pending</p><p class="text-xl font-bold mt-1">${onlinePending}</p></div>
-  </div>
-  <div class="bg-white rounded-2xl border p-4 mb-4 flex flex-wrap items-center justify-between gap-3">
-    <div>
-      <p class="font-semibold text-sm">Your online shop</p>
-      <p class="text-xs text-slate-500">${b.onlineStore!==false?'Customers can order from the public Order online page':'Online shop is closed — open it under Online shop'}</p>
+  const teamBanner=(b.shopMode==='team')?`<div class="bg-slate-900 text-white rounded-2xl p-4 mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div><p class="font-semibold">Team mode</p><p class="text-xs text-slate-300">Workers use separate login. They cannot open your owner dashboard.</p></div>
+      <div class="flex gap-2">
+        <button type="button" data-nav="team" class="text-xs px-3 py-2 rounded-lg bg-white text-slate-900 font-medium">Manage workers</button>
+        <button type="button" id="openWorkerLoginBtn" class="text-xs px-3 py-2 rounded-lg border border-white/40">Open worker login</button>
+      </div>
+    </div>`:'';
+  const workerOpts=workers.map(w=>`<option value="${w.id}" ${worker===w.id?'selected':''}>${esc(w.firstName||w.name||'')}</option>`).join('');
+  const branchOpts=branches.map(br=>`<option value="${br.id}" ${branch===br.id?'selected':''}>${esc(br.name)}</option>`).join('');
+  const cats=[...new Set((b.categories||[]).concat((b.products||[]).map(p=>p.category).filter(Boolean)))];
+  return `<div class="space-y-4">
+    ${teamBanner}${trialBanner}
+    <div class="rounded-2xl border p-3 bg-white/90 flex flex-wrap gap-2 items-end text-sm">
+      <div><label class="text-xs text-slate-500">From</label><input type="date" id="dashFrom" value="${esc(from)}" class="border rounded-lg px-2 py-1.5 block"/></div>
+      <div><label class="text-xs text-slate-500">To</label><input type="date" id="dashTo" value="${esc(to)}" class="border rounded-lg px-2 py-1.5 block"/></div>
+      <div><label class="text-xs text-slate-500">Branch</label><select id="dashBranch" class="border rounded-lg px-2 py-1.5 block"><option value="all">All</option>${branchOpts}</select></div>
+      <div><label class="text-xs text-slate-500">Worker</label><select id="dashWorker" class="border rounded-lg px-2 py-1.5 block"><option value="all">All</option>${workerOpts}</select></div>
+      <div><label class="text-xs text-slate-500">Category</label><select id="dashCat" class="border rounded-lg px-2 py-1.5 block"><option value="all">All</option>${cats.map(c=>`<option value="${esc(c)}" ${cat===c?'selected':''}>${esc(c)}</option>`).join('')}</select></div>
+      <div><label class="text-xs text-slate-500">Payment</label><select id="dashPay" class="border rounded-lg px-2 py-1.5 block"><option value="all">All</option>${PAY_METHODS.map(m=>`<option value="${m}" ${pay===m?'selected':''}>${m}</option>`).join('')}</select></div>
+      <button type="button" id="dashApply" class="px-3 py-1.5 rounded-lg text-white text-sm font-medium" style="background:${a}">Apply</button>
     </div>
-    <button type="button" data-nav="onlineorders" class="px-4 py-2 rounded-xl text-white text-sm font-semibold" style="background:${a}">Manage online shop</button>
-  </div>
-  <div class="flex flex-wrap gap-2 mb-6 no-print">
-    <button type="button" data-nav="shop" class="px-5 py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Open POS shop</button>
-    <button type="button" data-nav="wallet" class="px-5 py-2.5 rounded-xl border bg-white font-medium">Charts</button>
-    <button type="button" data-nav="onlineorders" class="px-5 py-2.5 rounded-xl border bg-white font-medium">Online shop</button>
-  </div>
-  <div class="bg-white rounded-2xl border p-4">
-    <h3 class="font-semibold mb-2">Recent sales</h3>
-    ${(b.orders||[]).slice(-6).reverse().map(o=>`<div class="flex flex-wrap justify-between gap-2 text-sm py-2 border-b border-slate-50">
-      <button type="button" data-open-inv="${o.id}" class="font-medium hover:underline" style="color:${a}">${esc(o.number)}</button>
-      <span class="text-xs ${o.status==='PAID'?'text-emerald-600':'text-amber-600'}">${o.status}</span>
-      <span class="text-xs text-slate-500">${esc(o.payMethod||o.method||'')}${o.receipt?' · '+esc(o.receipt):''}</span>
-      <span class="font-medium">${kes(o.total)}</span>
-    </div>`).join('')||'<p class="text-sm text-slate-400">No sales yet in this business</p>'}
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="rounded-2xl p-4 border bg-gradient-to-br from-emerald-50 to-white border-emerald-100"><p class="text-xs text-emerald-800">Total sales</p><p class="text-xl font-bold text-emerald-900">${kes(sales)}</p></div>
+      <div class="rounded-2xl p-4 border bg-gradient-to-br from-sky-50 to-white border-sky-100"><p class="text-xs text-sky-800">Total income</p><p class="text-xl font-bold text-sky-900">${kes(totalIncome)}</p></div>
+      <div class="rounded-2xl p-4 border bg-gradient-to-br from-rose-50 to-white border-rose-100"><p class="text-xs text-rose-800">Total expenses</p><p class="text-xl font-bold text-rose-900">${kes(expenses)}</p></div>
+      <div class="rounded-2xl p-4 border bg-gradient-to-br from-violet-50 to-white border-violet-100"><p class="text-xs text-violet-800">Net profit</p><p class="text-xl font-bold text-violet-900">${kes(netProfit)}</p></div>
+      <div class="rounded-2xl p-4 border bg-white"><p class="text-xs text-slate-500">Gross profit</p><p class="text-lg font-bold">${kes(grossProfit)}</p></div>
+      <div class="rounded-2xl p-4 border bg-white"><p class="text-xs text-slate-500">Stock value (est.)</p><p class="text-lg font-bold">${kes(stockValue)}</p></div>
+      <div class="rounded-2xl p-4 border bg-white"><p class="text-xs text-slate-500">Purchases</p><p class="text-lg font-bold">${kes(purchases)}</p></div>
+      <div class="rounded-2xl p-4 border bg-white"><p class="text-xs text-slate-500">Outstanding debts</p><p class="text-lg font-bold">${kes(debts)}</p></div>
+      <div class="rounded-2xl p-4 border bg-white"><p class="text-xs text-slate-500">Supplier balances</p><p class="text-lg font-bold">${kes(supplierBal)}</p></div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-3">
+      <div class="rounded-2xl border p-4 bg-white">
+        <h3 class="font-semibold mb-2">Worker performance</h3>
+        ${workerPerf.length?workerPerf.slice(0,8).map(w=>`<div class="flex justify-between text-sm border-b py-1.5"><span>${esc(w.name)}</span><span>${w.n} · ${kes(w.total)}</span></div>`).join(''):'<p class="text-sm text-slate-400">No worker sales in filter</p>'}
+      </div>
+      <div class="rounded-2xl border p-4 bg-white">
+        <h3 class="font-semibold mb-2">Branch performance</h3>
+        ${branchPerf.map(br=>`<div class="flex justify-between text-sm border-b py-1.5"><span>${esc(br.name)}</span><span>${br.n} · ${kes(br.total)}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-3">
+      <div class="rounded-2xl border p-4 bg-white">
+        <div class="flex justify-between items-center mb-2"><h3 class="font-semibold">Recent invoices</h3><button type="button" data-nav="invoices" class="text-xs underline">All</button></div>
+        ${recentInv.map(o=>`<button type="button" data-open-inv="${o.id}" class="w-full text-left text-sm border-b py-2 flex justify-between hover:bg-slate-50"><span>${esc(o.number)} · ${esc(o.payMethod||'')}</span><span>${kes(o.total)}</span></button>`).join('')||'<p class="text-slate-400 text-sm">No invoices</p>'}
+      </div>
+      <div class="rounded-2xl border p-4 bg-white">
+        <h3 class="font-semibold mb-2">Low stock & expiry</h3>
+        ${lowStock.length?lowStock.map(p=>`<p class="text-sm text-amber-800">⚠ ${esc(p.name)} · ${p.stock} left</p>`).join(''):'<p class="text-sm text-slate-400">No low stock</p>'}
+        ${expiryAlerts.length?'<hr class="my-2"/>'+expiryAlerts.map(p=>`<p class="text-sm text-red-700">📅 ${esc(p.name)} · exp ${esc(p.expiry)}</p>`).join(''):''}
+      </div>
+    </div>
+    <div class="rounded-2xl border p-4 bg-gradient-to-br from-indigo-50 to-white">
+      <div class="flex justify-between mb-2"><h3 class="font-semibold">AI insights</h3><button type="button" data-nav="ai" class="text-xs underline">Open AI</button></div>
+      ${tips.map(t=>`<p class="text-sm mb-1"><b>${esc(t.title)}:</b> ${esc(t.body)}</p>`).join('')||'<p class="text-sm text-slate-400">No insights yet</p>'}
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <button type="button" data-nav="shop" class="px-5 py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Open POS</button>
+      <button type="button" data-nav="wallet" class="px-5 py-2.5 rounded-xl border bg-white font-medium">Sales & expense charts</button>
+      <button type="button" data-nav="onlineorders" class="px-5 py-2.5 rounded-xl border bg-white font-medium">Online shop</button>
+    </div>
+    ${notices.length?`<div class="rounded-2xl border p-4 bg-amber-50 border-amber-100"><h3 class="font-semibold text-sm mb-2">Notices</h3>${notices.map(n=>`<p class="text-sm mb-1"><b>${esc(n.title||'')}</b> ${esc(n.body||n.message||'')}</p>`).join('')}</div>`:''}
   </div>`;
 }
+
 
 function secWallet(b,a){
   const income=money(totalSales(b)+totalIncomeExtra(b));
@@ -3156,21 +3244,38 @@ function secOnlineOrders(b,a){
 function secShifts(b,a){
   if(!b.shifts)b.shifts=[];
   const open=currentShift(b);
-  const recent=(b.shifts||[]).slice().reverse().slice(0,15);
+  const workers=b.workers||[];
+  const recent=(b.shifts||[]).slice().reverse().slice(0,20);
+  const workerOpts=workers.map(w=>`<option value="${esc((w.firstName||w.name||'')+' '+(w.lastName||'')).trim()}">${esc(w.firstName||w.name||'')} ${esc(w.lastName||'')}</option>`).join('');
   return `<div class="space-y-4">
-    <div class="bg-white rounded-2xl border p-4">
+    <div class="bg-white rounded-2xl border p-4" style="background:linear-gradient(180deg,#fff 0%,#f0fdf4 100%)">
       <h3 class="font-semibold mb-1">Cashier shifts</h3>
-      <p class="text-xs text-slate-500 mb-3">Start a shift before selling. Closing records cash expected vs sales.</p>
+      <p class="text-xs text-slate-500 mb-3">Shift records show the <b>worker name</b> who opened the till.</p>
       ${open?`<div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-sm mb-3">
-        <b>Shift open</b> · started ${esc((open.startedAt||'').slice(0,16).replace('T',' '))}
-        · by ${esc(open.openedBy||'—')}
+        <b>Shift open</b> · <span class="font-semibold text-emerald-900">${esc(open.openedBy||'—')}</span>
+        · started ${esc((open.startedAt||'').slice(0,16).replace('T',' '))}
         <button type="button" id="closeShiftBtn" class="ml-2 text-xs border px-2 py-1 rounded-lg">Close shift</button>
-      </div>`:`<button type="button" id="openShiftBtn" class="px-4 py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Start shift</button>`}
+      </div>`:`
+      <div class="flex flex-wrap gap-2 items-end mb-3">
+        <div><label class="text-xs text-slate-500">Worker name</label>
+          <select id="shiftWorkerName" class="border rounded-xl px-3 py-2 text-sm block min-w-[180px]">
+            <option value="">— select worker —</option>
+            ${workerOpts}
+            <option value="Owner">Owner</option>
+          </select>
+        </div>
+        <button type="button" id="openShiftBtn" class="px-4 py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Start shift</button>
+      </div>`}
       <h4 class="text-sm font-medium mt-4 mb-2">Recent shifts</h4>
-      <div class="text-sm space-y-1">${recent.map(s=>`<div class="border-b py-2 flex justify-between gap-2"><span>${esc(s.status)} · ${esc(s.openedBy||'')}</span><span class="text-xs text-slate-400">${esc((s.startedAt||'').slice(0,16))}${s.endedAt?' → '+esc(s.endedAt.slice(0,16)):''}</span></div>`).join('')||'<p class="text-slate-400">No shifts yet</p>'}</div>
+      <div class="text-sm space-y-1">${recent.map(s=>`<div class="border-b py-2 flex justify-between gap-2">
+        <span><b class="text-slate-800">${esc(s.openedBy||'Unknown')}</b> · ${esc(s.status)}</span>
+        <span class="text-xs text-slate-400">${esc((s.startedAt||'').slice(0,16).replace('T',' '))}${s.endedAt?' → '+esc(String(s.endedAt).slice(0,16).replace('T',' ')):''}</span>
+      </div>`).join('')||'<p class="text-slate-400">No shifts yet</p>'}</div>
     </div>
   </div>`;
 }
+
+
 function secAI(b,a){
   const tips=aiInsights(b);
   const forecast=stockForecast(b).slice(0,15);
@@ -4163,7 +4268,13 @@ function bind(){
     toast(b.requireShiftForSale?'Shift required before sales':'Shift optional');
   };
 
-  document.getElementById('workerSignOut')&&(document.getElementById('workerSignOut').onclick=()=>{clearWorkerSession();S.view='login';S.loginMode='worker';render();toast('Worker logged out')});
+  document.getElementById('workerSignOut')&&(document.getElementById('workerSignOut').onclick=()=>{clearWorkerSession();S.view='workerLogin';render();toast('Worker logged out')});
+  document.getElementById('workerSignOut2')&&(document.getElementById('workerSignOut2').onclick=()=>{clearWorkerSession();S.view='workerLogin';render();toast('Worker logged out')});
+  const workerBackBtn=document.getElementById('workerBackBtn');
+  if(workerBackBtn)workerBackBtn.onclick=()=>{
+    if(S.appView&&S.appView!=='dashboard'){S.appView='dashboard';S.viewInvoiceId=null;render();return}
+    if(confirm('Leave worker portal and open worker login?')){clearWorkerSession();S.view='workerLogin';render()}
+  };
   document.getElementById('workerSignOut2')&&(document.getElementById('workerSignOut2').onclick=()=>{clearWorkerSession();S.view='login';S.loginMode='worker';render();toast('Worker logged out')});
 
 document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribute('data-go')));
@@ -5199,9 +5310,15 @@ render();
   if(openShiftBtn)openShiftBtn.onclick=()=>{
     const b=biz();if(!b)return;if(!b.shifts)b.shifts=[];
     if(currentShift(b)){toast('Shift already open');return}
-    const who=(currentWorker()&&currentWorker().worker&&currentWorker().worker.name)||(currentUser()&&currentUser().name)||'Owner';
+    const sel=document.getElementById('shiftWorkerName');
+    let who=(sel&&sel.value)||'';
+    if(!who){
+      const cw=currentWorker();
+      who=(cw&&cw.worker&&((cw.worker.firstName||'')+' '+(cw.worker.lastName||'')).trim())||(cw&&cw.worker&&cw.worker.name)||(currentUser()&&currentUser().name)||'Owner';
+    }
+    who=String(who).trim()||'Owner';
     b.shifts.push({id:uid(),status:'open',startedAt:new Date().toISOString(),openedBy:who,openingFloat:0});
-    saveBiz(b);pushAudit('shift_open',who);toast('Shift started');render();
+    saveBiz(b);pushAudit('shift_open',who);toast('Shift started for '+who);render();
   };
   const closeShiftBtn=document.getElementById('closeShiftBtn');
   if(closeShiftBtn)closeShiftBtn.onclick=()=>{
@@ -5234,6 +5351,16 @@ render();
     S.view='workerLogin';S.appView='dashboard';render();
   };
 
+  const dashApply=document.getElementById('dashApply');
+  if(dashApply)dashApply.onclick=()=>{
+    S.dashFrom=(document.getElementById('dashFrom')||{}).value||'';
+    S.dashTo=(document.getElementById('dashTo')||{}).value||'';
+    S.dashBranch=(document.getElementById('dashBranch')||{}).value||'all';
+    S.dashWorker=(document.getElementById('dashWorker')||{}).value||'all';
+    S.dashCat=(document.getElementById('dashCat')||{}).value||'all';
+    S.dashPay=(document.getElementById('dashPay')||{}).value||'all';
+    render();
+  };
   const adminRefresh=document.getElementById('adminRefresh');
   if(adminRefresh)adminRefresh.onclick=()=>{
     if(!SERVER_MODE){toast('Local mode — no server');return}
