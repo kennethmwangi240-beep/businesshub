@@ -84,11 +84,11 @@ const pool = new Pool({
 pool.on('error', (e) => console.error('pg pool error', e.message));
 
 const DEFAULT_PLANS = {
-  FREE: { name: 'Free', price: 0, price: 0, annual: 0, bizLimit: 1, workers: 1, products: 50, branches: 1, onlineStore: false, ai: false, label: 'Free · trial / limited' },
-  STARTER: { name: 'Starter', price: 800, quarterly: 2200, annual: 8000, bizLimit: 1, workers: 3, products: 500, branches: 1, onlineStore: false, ai: false, label: 'Starter · KES 800/mo' },
-  PRO: { name: 'Professional', price: 1500, quarterly: 4000, annual: 15000, bizLimit: 3, workers: 10, products: 5000, branches: 3, onlineStore: true, ai: true, label: 'Professional · KES 1,500/mo' },
-  BUSINESS: { name: 'Business', price: 4500, quarterly: 12000, annual: 45000, bizLimit: 10, workers: 50, products: 50000, branches: 10, onlineStore: true, ai: true, label: 'Business · KES 4,500/mo' },
-  ENTERPRISE: { name: 'Enterprise', price: 0, quarterly: 0, annual: 0, bizLimit: 99, workers: 999, products: 999999, branches: 99, onlineStore: true, ai: true, label: 'Enterprise · custom' }
+  FREE: { name: 'Free', price: 0, installFee: 1000, price: 0, annual: 0, bizLimit: 1, workers: 1, products: 50, branches: 1, onlineStore: false, ai: false, label: 'Free · trial / limited' },
+  STARTER: { name: 'Starter', price: 800, installFee: 1000, quarterly: 2200, annual: 8000, bizLimit: 1, workers: 3, products: 500, branches: 1, onlineStore: false, ai: false, label: 'Starter · KES 800/mo' },
+  PRO: { name: 'Professional', price: 1500, installFee: 1000, quarterly: 4000, annual: 15000, bizLimit: 3, workers: 10, products: 5000, branches: 3, onlineStore: true, ai: true, label: 'Professional · KES 1,500/mo' },
+  BUSINESS: { name: 'Business', price: 4500, installFee: 1000, quarterly: 12000, annual: 45000, bizLimit: 10, workers: 50, products: 50000, branches: 10, onlineStore: true, ai: true, label: 'Business · KES 4,500/mo' },
+  ENTERPRISE: { name: 'Enterprise', price: 0, installFee: 1000, quarterly: 0, annual: 0, bizLimit: 99, workers: 999, products: 999999, branches: 99, onlineStore: true, ai: true, label: 'Enterprise · custom' }
 };
 function mergePlans(stored) {
   const base = JSON.parse(JSON.stringify(DEFAULT_PLANS));
@@ -500,6 +500,12 @@ async function handleApi(req, res, pathname) {
     delete tokens[email];
     await setCfg('resetTokens', tokens);
     return json(res, 200, { ok: true, message: 'Password updated' });
+  }
+
+  if (pathname === '/api/admin/audit' && method === 'GET') {
+    const u = await authUser(req);
+    if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
+    return json(res, 200, { logs: await getCfg('auditLogs', []) });
   }
 
   if (pathname === '/api/admin/alerts' && method === 'GET') {
