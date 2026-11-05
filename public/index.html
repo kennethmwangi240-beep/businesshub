@@ -55,7 +55,10 @@ if(window.refreshInstallUI)refreshInstallUI();if(window.toast)toast('MyBusinessH
 .pay-opt{border:2px solid #e2e8f0;border-radius:12px;padding:10px;cursor:pointer;text-align:center;font-size:13px;font-weight:500}
 .pay-opt.on{border-color:var(--accent);background:#ecfdf5;color:var(--accent)}
 .logo-mark{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;flex-shrink:0}
+.receipt-print{font-family:ui-monospace,monospace}
 @media print{
+  .receipt-print{box-shadow:none!important;border:none!important;max-width:80mm!important}
+
   .sidebar,header,.no-print,#toast,#modal{display:none!important}
   .main-wrap{margin:0!important}body{background:#fff}
   .invoice-print{box-shadow:none!important;border:none!important}
@@ -82,7 +85,10 @@ button.lp-card{cursor:pointer}
 .lp-sw:hover{transform:scale(1.2)}.lp-sw.on{box-shadow:0 0 0 3px var(--brand)}
 @media(prefers-reduced-motion:reduce){.lp-blob,.lp-grad-text{animation:none}.lp-btn,.lp-card{transition:none}}
 .rp-card{border:1px solid #e2e8f0;border-radius:14px;padding:14px;background:#fff}
+.receipt-print{font-family:ui-monospace,monospace}
 @media print{
+  .receipt-print{box-shadow:none!important;border:none!important;max-width:80mm!important}
+
   #reportArea{box-shadow:none!important;border:none!important;padding:0!important;margin:0!important}
   #reportArea tr{page-break-inside:avoid}
   #reportArea .rp-cards{display:grid!important;grid-template-columns:repeat(4,1fr)!important}
@@ -134,7 +140,10 @@ button.lp-card{cursor:pointer}
 #netBar.show{display:block}
 #updBar{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:120;background:#0f172a;color:#fff;border-radius:14px;padding:10px 14px;font-size:13px;display:none;gap:12px;align-items:center;box-shadow:0 12px 30px -10px rgba(0,0,0,.5)}
 #updBar.show{display:flex}
-@media print{#netBar,#updBar{display:none!important}}
+.receipt-print{font-family:ui-monospace,monospace}
+@media print{
+  .receipt-print{box-shadow:none!important;border:none!important;max-width:80mm!important}
+#netBar,#updBar{display:none!important}}
 
 .sidebar{pointer-events:auto;z-index:50}
 .sidebar .nav-item,.nav-item{pointer-events:auto;cursor:pointer;position:relative;z-index:1}
@@ -151,6 +160,20 @@ button.lp-card{cursor:pointer}
 [data-theme="dark"] header,[data-theme="dark"] .border-b{background:#020617!important;border-color:#1e293b!important;color:#e2e8f0}
 [data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:#0f172a;border-color:#334155;color:#e2e8f0}
 [data-theme="dark"] .text-slate-500,[data-theme="dark"] .text-slate-600{color:#94a3b8!important}
+
+html[data-theme="dark"],html[data-theme="dark"] body{background:#0b1220!important;color:#e2e8f0!important}
+html[data-theme="dark"] .main-wrap,html[data-theme="dark"] .layout{background:#0b1220!important}
+html[data-theme="dark"] .sidebar{background:#020617!important;border-color:#1e293b!important;color:#e2e8f0!important}
+html[data-theme="dark"] .bg-white,html[data-theme="dark"] .bg-slate-50,html[data-theme="dark"] .bg-white\/90,html[data-theme="dark"] .bg-white\/95{background:#1e293b!important}
+html[data-theme="dark"] .border,html[data-theme="dark"] .border-b,html[data-theme="dark"] .border-t{border-color:#334155!important}
+html[data-theme="dark"] header{background:#020617!important;color:#e2e8f0!important}
+html[data-theme="dark"] input,html[data-theme="dark"] select,html[data-theme="dark"] textarea{background:#0f172a!important;border-color:#475569!important;color:#f1f5f9!important}
+html[data-theme="dark"] .text-slate-500,html[data-theme="dark"] .text-slate-600,html[data-theme="dark"] .text-slate-400{color:#94a3b8!important}
+html[data-theme="dark"] .nav-item{color:#cbd5e1!important}
+html[data-theme="dark"] .nav-item.active{background:#134e4a!important;color:#5eead4!important}
+html[data-theme="light"] body{background:linear-gradient(165deg,#dbeafe 0%,#f0fdf4 35%,#f8fafc 70%,#fef3c7 100%)!important;background-attachment:fixed!important}
+html[data-theme="teal"] body{background:linear-gradient(165deg,#ccfbf1 0%,#f0fdfa 50%,#ecfeff 100%)!important}
+html[data-theme="warm"] body{background:linear-gradient(165deg,#ffedd5 0%,#fef3c7 40%,#fff7ed 100%)!important}
 </style>
 </head>
 <body>
@@ -1840,6 +1863,22 @@ function viewPaywall(b){
   </div></div>`;
 }
 
+
+function maybeClientAutoBackup(){
+  try{
+    const b=biz();if(!b||b.autoBackup===false)return;
+    const last=b.lastAutoBackupAt?Date.parse(b.lastAutoBackupAt):0;
+    const twoDays=2*24*60*60*1000;
+    if(last&&(Date.now()-last)<twoDays)return;
+    const u=currentUser();if(!u||!u.email)return;
+    // fire and forget server backup
+    api('/api/businesses/'+b.id+'/backup',{method:'POST',body:{email:u.email,sendEmail:false,auto:true}}).then(()=>{
+      b.lastAutoBackupAt=new Date().toISOString();
+      saveBiz(b);
+    }).catch(()=>{});
+  }catch(e){}
+}
+
 function downloadJSON(filename, obj){
   const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
@@ -2009,6 +2048,13 @@ function isWorkerMode(){
   try{return !!(currentWorker()&&!db().session)}catch(e){return false}
 }
 
+function applyTheme(t){
+  t=t||'light';
+  S.theme=t;
+  try{localStorage.setItem('bh_theme',t)}catch(e){}
+  document.documentElement.setAttribute('data-theme',t);
+  document.body&&document.body.setAttribute('data-theme',t);
+}
 function goApp(s){
   try{
     S.viewInvoiceId=null;
@@ -2092,7 +2138,7 @@ function animateCounts(){
 }
 
 function render(){
-  try{document.documentElement.setAttribute('data-theme',S.theme||localStorage.getItem('bh_theme')||'light')}catch(e){}
+  try{applyTheme(S.theme||localStorage.getItem('bh_theme')||'light')}catch(e){try{document.documentElement.setAttribute('data-theme','light')}catch(e2){}}
   const d=db();
   // Worker session (no owner session) → restricted worker UI only
   if(!d.session && currentWorker()){
@@ -2507,10 +2553,16 @@ function viewWorkerApp(){
   const menuAll=[
     ['dashboard','Mini dashboard',perms.dashboard],
     ['shop','Shop / POS',perms.shop],
-    ['invoices','Invoices & receipts',perms.invoices],
+    ['invoices','Invoices & receipts',!!perms.invoices],
     ['onlineorders','Online orders',perms.onlineorders],
     ['delivery','Delivery',perms.delivery],
-    ['stock','Stock',perms.stock]
+    ['stock','Stock',perms.stock],
+    ['products','Products',perms.products],
+    ['customers','Customers',perms.customers],
+    ['purchases','Purchases',perms.purchases],
+    ['expenses','Expenses',perms.expenses],
+    ['shifts','Shifts',perms.shifts],
+    ['reports','Reports',perms.reports]
   ].filter(x=>x[2]);
   const allowed=menuAll.map(x=>x[0]);
   if(!allowed.length)allowed.push('dashboard');
@@ -2529,10 +2581,16 @@ function viewWorkerApp(){
   const commissionEarned=money(sum(monthSales)*commissionPct/100);
   let main='';
   if(S.appView==='shop'&&perms.shop)main=secShop(b,a);
-  else if(S.appView==='invoices'&&perms.invoices)main=`<p class="text-xs text-slate-500 mb-2">Open an invoice to <b>view and print</b> the receipt after payment.</p>`+secInvoices(b,a);
+  else if(S.appView==='invoices'&&perms.invoices)main=`<p class="text-xs text-slate-500 mb-2">Open any sale to <b>view invoice + receipt</b> and print.</p>`+secInvoices(b,a);
   else if(S.appView==='onlineorders'&&perms.onlineorders)main=secOnlineOrders(b,a);
   else if(S.appView==='delivery'&&perms.delivery)main=secDelivery(b,a);
   else if(S.appView==='stock'&&perms.stock)main=secStock(b,a);
+  else if(S.appView==='products'&&perms.products)main=secProducts(b,a);
+  else if(S.appView==='customers'&&perms.customers)main=secCustomers(b,a);
+  else if(S.appView==='purchases'&&perms.purchases)main=secPurchases(b,a);
+  else if(S.appView==='expenses'&&perms.expenses)main=secExpenses(b,a);
+  else if(S.appView==='shifts'&&perms.shifts)main=secShifts(b,a);
+  else if(S.appView==='reports'&&perms.reports)main=secReports(b,a);
   else main=`<div class="space-y-4">
       <div class="rounded-2xl p-5 text-white" style="background:linear-gradient(135deg,#0f172a,#1e3a5f)">
         <p class="text-sm text-slate-300">Worker mini dashboard</p>
@@ -2652,6 +2710,7 @@ function viewApp(){
     <header class="h-14 bg-white border-b flex items-center justify-between px-4 sticky top-0 z-20 no-print">
       <h1 class="font-semibold text-lg truncate">${S.viewInvoiceId?'Invoice':(titles[S.appView]||'Dashboard')}</h1>
       <div class="flex items-center gap-2">
+        <button type="button" id="themeToggle" class="text-xs px-2.5 py-1.5 rounded-lg border bg-white" title="Theme">◐ Theme</button>
         ${installBtn('text-xs px-3 py-1.5 rounded-lg','Install app',accent)}
         <span class="text-xs px-2 py-1 rounded-full bg-slate-100">${cartCount()} in cart</span>
         <button type="button" data-nav="shop" class="text-xs px-3 py-1.5 rounded-lg text-white font-medium" style="background:${accent}">Shop</button>
@@ -3075,10 +3134,37 @@ async function startCameraBarcodeScan(onCode){
 
 
 function genBarcode(){
-  // EAN-13 style numeric (not GS1 certified — local use)
-  let s='2'+String(Date.now()).slice(-11);
-  return s.slice(0,13);
+  // Generate 12 digits + EAN-13 check digit (local barcodes, not GS1-registered)
+  let s='200'+String(Date.now()).slice(-9);
+  s=s.slice(0,12);
+  let sum=0;
+  for(let i=0;i<12;i++)sum+=parseInt(s[i],10)*(i%2===0?1:3);
+  const check=(10-(sum%10))%10;
+  return s+String(check);
 }
+function barcodeSvg(code, opts){
+  code=String(code||'').replace(/\D/g,'');
+  if(!code)return '';
+  const h=opts&&opts.height||48;
+  // Simple pattern: map each digit to bar widths (visual barcode, scannable by many phone apps when printed clear)
+  const patterns=['00110','10001','01001','11000','00101','10100','01100','00011','10010','01010'];
+  let bars='101'; // start
+  for(let i=0;i<code.length;i++){
+    const d=parseInt(code[i],10);
+    const p=patterns[isNaN(d)?0:d];
+    bars+=p+(i%2===0?'0':'1');
+  }
+  bars+='101';
+  const unit=2;
+  let x=0;let rects='';
+  for(let i=0;i<bars.length;i++){
+    if(bars[i]==='1')rects+=`<rect x="${x}" y="0" width="${unit}" height="${h}" fill="#000"/>`;
+    x+=unit;
+  }
+  const w=x;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h+16}" viewBox="0 0 ${w} ${h+16}" role="img" aria-label="${esc(code)}">${rects}<text x="${w/2}" y="${h+12}" text-anchor="middle" font-size="11" font-family="monospace">${esc(code)}</text></svg>`;
+}
+
 function stockValueOf(b){
   return money((b.products||[]).reduce((s,p)=>{
     const cost=Number(p.cost)!=null&&p.cost!==''?Number(p.cost):(Number(p.price)||0)*0.7;
@@ -3220,7 +3306,7 @@ function secProducts(b,a){
     <td class="px-2 py-2">${productThumb(p,40)}</td>
     <td class="px-2 py-2"><input data-pname="${p.id}" value="${esc(p.name)}" class="w-full min-w-[120px] border rounded-lg px-2 py-1 text-sm"/></td>
     <td class="px-2 py-2"><input data-psku="${p.id}" value="${esc(p.sku||'')}" class="w-24 border rounded-lg px-2 py-1 text-xs" placeholder="SKU"/></td>
-    <td class="px-2 py-2"><input data-pbarcode="${p.id}" value="${esc(p.barcode||'')}" class="w-28 border rounded-lg px-2 py-1 text-xs" placeholder="Barcode"/></td>
+    <td class="px-2 py-2"><input data-pbarcode="${p.id}" value="${esc(p.barcode||'')}" class="w-28 border rounded-lg px-2 py-1 text-xs" placeholder="Barcode"/>${p.barcode?`<div class="mt-1 overflow-x-auto">${barcodeSvg(p.barcode,{height:28})}</div>`:''}</td>
     <td class="px-2 py-2"><input data-psub="${p.id}" value="${esc(p.sub||'')}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Sub"/></td>
     <td class="px-2 py-2"><input type="number" data-price="${p.id}" value="${p.price}" class="w-20 border rounded-lg px-2 py-1 text-sm"/></td>
     <td class="px-2 py-2"><input type="number" data-pcost="${p.id}" value="${p.cost!=null?p.cost:''}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Cost"/></td>
@@ -3232,6 +3318,10 @@ function secProducts(b,a){
   return `<div class="space-y-4">
   <div class="bg-white rounded-2xl border p-4">
     <h3 class="font-semibold mb-2">Register product</h3>
+    <div class="flex flex-wrap gap-2 mb-3 p-3 rounded-xl border bg-slate-50">
+      <input id="prodBarcodeScan" class="flex-1 min-w-[160px] border rounded-xl px-3 py-2 text-sm" placeholder="Scan existing barcode to load / edit"/>
+      <button type="button" id="prodCameraScan" class="px-3 py-2 rounded-xl border-2 border-teal-600 bg-teal-50 text-sm font-semibold">📷 Scan</button>
+    </div>
     <form id="regProductForm" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
       <input name="name" required placeholder="Product name *" class="border rounded-xl px-3 py-2"/>
       <input name="category" placeholder="Category" list="catList" class="border rounded-xl px-3 py-2"/>
@@ -3323,8 +3413,9 @@ function secInvoiceDetail(b,a){
     <td class="py-2 text-right">${kes(it.price)}</td><td class="py-2 text-right font-medium">${kes(it.price*it.qty)}</td></tr>`).join('');
   return `<div class="no-print mb-4 flex gap-2">
     <button type="button" data-nav="invoices" class="px-4 py-2 rounded-xl border bg-white text-sm">← Back</button>
-    <button type="button" id="printInv" class="px-4 py-2 rounded-xl text-white text-sm font-medium" style="background:${a}">Print invoice</button>
-    ${o.status==='PAID'?`<button type="button" id="refundInv" class="px-4 py-2 rounded-xl border text-sm text-red-700">Refund / return</button>`:''}
+    <button type="button" id="printInv" class="px-4 py-2 rounded-xl text-white text-sm font-medium" style="background:${a}">Print invoice + receipt</button>
+    <button type="button" id="printReceiptOnly" class="px-4 py-2 rounded-xl border text-sm font-medium">Print receipt only</button>
+    ${o.status==='PAID'||o.status==='CREDIT'?`<button type="button" id="refundInv" class="px-4 py-2 rounded-xl border text-sm text-red-700">Refund / return</button>`:''}
   </div>
   <div class="invoice-print bg-white rounded-2xl border p-6 md:p-10 max-w-2xl mx-auto">
     <div class="flex justify-between gap-4 mb-8">
@@ -3353,7 +3444,27 @@ function secInvoiceDetail(b,a){
     <div class="flex justify-end"><div class="text-lg font-bold">Total ${kes(o.total)}</div></div>
     ${b.payinfo?`<div class="mt-8 pt-4 border-t text-sm text-slate-600"><p class="text-xs text-slate-400 uppercase mb-1">Payment instructions</p><p>${esc(b.payinfo)}</p></div>`:''}
     <p class="mt-8 text-xs text-slate-400 text-center">Thank you · ${esc(b.name)}</p>
-  </div>`;
+  </div>
+  <div class="receipt-print bg-white rounded-2xl border p-6 max-w-sm mx-auto mt-6" id="receiptBlock">
+    <div class="text-center border-b pb-3 mb-3">
+      <p class="font-bold text-lg">${esc(b.name)}</p>
+      <p class="text-xs text-slate-500">${esc(b.address||'')} ${esc(b.phone||'')}</p>
+      <p class="text-sm mt-1 font-medium">RECEIPT</p>
+      <p class="text-xs">${esc(o.number)} · ${esc(o.date)}</p>
+    </div>
+    <div class="text-sm space-y-1 mb-3">
+      ${(o.items||[]).map(it=>`<div class="flex justify-between gap-2"><span>${esc(it.name)} ×${it.qty}</span><span>${kes(it.price*it.qty)}</span></div>`).join('')}
+    </div>
+    <div class="border-t pt-2 text-sm">
+      ${o.discountPct?`<div class="flex justify-between"><span>Discount</span><span>${o.discountPct}%</span></div>`:''}
+      <div class="flex justify-between font-bold text-base"><span>TOTAL</span><span>${kes(o.total)}</span></div>
+      <p class="text-xs mt-1">Paid: ${esc(o.payMethod||o.method||'—')} ${o.receipt?'· '+esc(o.receipt):''}</p>
+      ${o.servedBy?`<p class="text-xs font-semibold mt-2">SERVED BY: ${esc(o.servedBy.name)}</p>`:''}
+      ${o.cashTendered?`<p class="text-xs">Cash: ${kes(o.cashTendered)} · Change: ${kes(o.cashChange||0)}</p>`:''}
+    </div>
+    <div class="text-center mt-4 text-xs text-slate-400">Thank you · ${esc(b.name)}</div>
+  </div>
+`;
 }
 
 /* ===== Reports: daily / weekly / monthly / yearly, printable ===== */
@@ -3752,7 +3863,13 @@ function secTeam(b,a){
             <label class="flex items-center gap-1"><input type="checkbox" name="perm_invoices" checked/> Invoices & receipts</label>
             <label class="flex items-center gap-1"><input type="checkbox" name="perm_onlineorders"/> Online orders</label>
             <label class="flex items-center gap-1"><input type="checkbox" name="perm_delivery"/> Delivery</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_stock"/> View stock</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_stock"/> Stock</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_products"/> Products</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_customers"/> Customers</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_purchases"/> Purchases</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_expenses"/> Expenses</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_shifts"/> Shifts</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_reports"/> Reports</label>
           </div>
         </div>
         <button class="sm:col-span-2 py-2.5 rounded-xl text-white font-medium" style="background:${a}">Add worker with login</button>
@@ -3896,6 +4013,8 @@ function secSettings(b,a){
     <select id="themeSelect" class="w-full border rounded-xl px-3 py-2.5 text-sm">
       <option value="light" ${(S.theme||'light')==='light'?'selected':''}>Light</option>
       <option value="dark" ${S.theme==='dark'?'selected':''}>Dark</option>
+      <option value="teal" ${S.theme==='teal'?'selected':''}>Teal soft</option>
+      <option value="warm" ${S.theme==='warm'?'selected':''}>Warm soft</option>
     </select>
   </div>
   <div class="bg-white rounded-2xl border p-6">
@@ -3942,6 +4061,14 @@ function secSettings(b,a){
     </form>
   </div>
   <div class="bg-white rounded-2xl border p-6">
+    <h3 class="font-semibold mb-1">Automatic backup</h3>
+    <p class="text-xs text-slate-500 mb-2">Server saves a full copy every <b>2 days</b> into your BusinessHub folder. You can also force a backup below.</p>
+    <label class="flex items-center gap-2 text-sm mb-2 p-3 rounded-xl bg-slate-50 border">
+      <input type="checkbox" id="autoBackupToggle" ${(b.autoBackup!==false)?'checked':''}/>
+      Enable auto-backup for this business (every 2 days)
+    </label>
+    <p class="text-xs text-slate-500 mb-3">Last auto-backup: <b id="lastAutoBackupLabel">${esc(b.lastAutoBackupAt?String(b.lastAutoBackupAt).slice(0,16).replace('T',' '):'Never')}</b></p>
+    <button type="button" id="forceAutoBackup" class="w-full py-2.5 rounded-xl border font-semibold bg-white mb-4">Run backup now (server)</button>
     <h3 class="font-semibold mb-1">Business backup</h3>
     <p class="text-xs text-slate-500 mb-3">Save a full copy of <b>${esc(b.name)}</b> (products, stock, sales, customers, expenses). Store the file safely. Restore later on this device or another.</p>
     <div class="flex flex-col gap-2">
@@ -4551,7 +4678,13 @@ function bind(){
           invoices:!!fd.get('perm_invoices'),
           onlineorders:!!fd.get('perm_onlineorders'),
           delivery:!!fd.get('perm_delivery'),
-          stock:!!fd.get('perm_stock')
+          stock:!!fd.get('perm_stock'),
+          products:!!fd.get('perm_products'),
+          customers:!!fd.get('perm_customers'),
+          purchases:!!fd.get('perm_purchases'),
+          expenses:!!fd.get('perm_expenses'),
+          shifts:!!fd.get('perm_shifts'),
+          reports:!!fd.get('perm_reports')
         }
       });
       saveBiz(b);pushAudit('worker_added',username);toast('Worker added with separate login');render();
@@ -4645,6 +4778,14 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
 
   const printInv=document.getElementById('printInv');
   if(printInv)printInv.onclick=()=>window.print();
+  const printReceiptOnly=document.getElementById('printReceiptOnly');
+  if(printReceiptOnly)printReceiptOnly.onclick=()=>{
+    const inv=document.querySelector('.invoice-print');
+    const rec=document.querySelector('.receipt-print');
+    if(inv)inv.classList.add('no-print');
+    window.print();
+    setTimeout(()=>{if(inv)inv.classList.remove('no-print')},500);
+  };
   const refundInv=document.getElementById('refundInv');
   if(refundInv)refundInv.onclick=()=>{
     if(!confirm('Mark this sale as REFUNDED and restore stock?'))return;
@@ -5707,17 +5848,16 @@ render();
   
   const themeToggle=document.getElementById('themeToggle');
   if(themeToggle)themeToggle.onclick=()=>{
-    S.theme=(S.theme==='dark')?'light':'dark';
-    try{localStorage.setItem('bh_theme',S.theme)}catch(e){}
-    document.documentElement.setAttribute('data-theme',S.theme);
-    toast(S.theme==='dark'?'Dark mode':'Light mode');
+    const next=(S.theme==='dark')?'light':'dark';
+    applyTheme(next);
+    toast(next==='dark'?'Dark mode':'Light mode');
+    render();
   };
   const themeSelect=document.getElementById('themeSelect');
   if(themeSelect)themeSelect.onchange=()=>{
-    S.theme=themeSelect.value||'light';
-    try{localStorage.setItem('bh_theme',S.theme)}catch(e){}
-    document.documentElement.setAttribute('data-theme',S.theme);
+    applyTheme(themeSelect.value||'light');
     toast('Theme: '+S.theme);
+    render();
   };
   const workerMenuToggle=document.getElementById('workerMenuToggle');
   if(workerMenuToggle)workerMenuToggle.onclick=()=>{S.workerMenuOpen=!S.workerMenuOpen;render()};
@@ -5832,6 +5972,50 @@ render();
     const b=biz();let n=0;
     (b.products||[]).forEach(p=>{if(!p.barcode){p.barcode=genBarcode();n++}});
     saveBiz(b);toast(n+' barcode(s) generated');render();
+  };
+
+  
+  const prodBarcodeScan=document.getElementById('prodBarcodeScan');
+  if(prodBarcodeScan)prodBarcodeScan.onkeydown=e=>{
+    if(e.key!=='Enter')return;
+    e.preventDefault();
+    const code=prodBarcodeScan.value.trim();
+    const p=findProductByBarcode(biz(),code);
+    if(p){
+      toast('Found: '+p.name+' · stock '+(p.stock||0));
+      S.prodSearch=p.name;prodBarcodeScan.value='';render();
+    }else{
+      // prefill register form barcode
+      const form=document.getElementById('regProductForm');
+      if(form&&form.barcode){form.barcode.value=code;toast('New code ready — fill name and save')}
+      prodBarcodeScan.value='';
+    }
+  };
+  const prodCameraScan=document.getElementById('prodCameraScan');
+  if(prodCameraScan)prodCameraScan.onclick=()=>startCameraBarcodeScan(code=>{
+    const p=findProductByBarcode(biz(),code);
+    if(p){S.prodSearch=p.name;toast('Found: '+p.name);render();return}
+    const form=document.getElementById('regProductForm');
+    if(form&&form.barcode){form.barcode.value=code;toast('Scanned code set on new product form')}
+  });
+
+  
+  const autoBackupToggle=document.getElementById('autoBackupToggle');
+  if(autoBackupToggle)autoBackupToggle.onchange=()=>{
+    const b=biz();if(!b)return;b.autoBackup=!!autoBackupToggle.checked;saveBiz(b);
+    toast(b.autoBackup?'Auto-backup every 2 days: ON':'Auto-backup off for this business');
+  };
+  const forceAutoBackup=document.getElementById('forceAutoBackup');
+  if(forceAutoBackup)forceAutoBackup.onclick=async()=>{
+    const b=biz();const u=currentUser();
+    if(!b||!u)return;
+    forceAutoBackup.disabled=true;forceAutoBackup.textContent='Saving…';
+    try{
+      await api('/api/businesses/'+b.id+'/backup',{method:'POST',body:{email:u.email,sendEmail:false}});
+      b.lastAutoBackupAt=new Date().toISOString();saveBiz(b);
+      toast('Backup saved on server');render();
+    }catch(e){alert(e.message||e)}
+    finally{forceAutoBackup.disabled=false;forceAutoBackup.textContent='Run backup now (server)'}
   };
 
   const adminRefresh=document.getElementById('adminRefresh');
