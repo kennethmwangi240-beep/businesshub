@@ -1406,6 +1406,107 @@ const UNIT_OPTIONS=[
   {id:'unit',label:'Unit',suffix:'unit',step:1,whole:true}
 ];
 
+
+/** How many base measure units in 1 product unit (e.g. 1 pc = 100 m). */
+function productPackQty(p){
+  const n=Number(p&&p.packQty);
+  return n>0?n:1;
+}
+function productPackUnit(p){
+  if(p&&p.packUnit)return unitMeta(p.packUnit).id;
+  return unitMeta(p&&p.unit||'pc').id;
+}
+function productPriceUnit(p){
+  return unitMeta(p&&p.unit||'pc').id;
+}
+/** Fixed conversion factors between compatible units (to grams/metres/ml). */
+const UNIT_TO_BASE={
+  m:1, cm:0.01, sqm:1,
+  g:1, kg:1000,
+  ml:1, l:1000,
+  pc:1, pack:1, set:1, dozen:12, unit:1, job:1, hr:1, day:1
+};
+function unitToBase(u){
+  const id=unitMeta(u).id;
+  return UNIT_TO_BASE[id]!=null?UNIT_TO_BASE[id]:1;
+}
+function unitsCompatible(a,b){
+  const A=unitMeta(a).id,B=unitMeta(b).id;
+  if(A===B)return true;
+  const groups=[['m','cm'],['g','kg'],['ml','l'],['pc','dozen','pack','set','unit']];
+  return groups.some(g=>g.includes(A)&&g.includes(B));
+}
+/**
+ * Product lists price P for `unit` covering packQty of packUnit (default packQty=1, packUnit=unit).
+ * Example: price 2000, unit pc, packQty 100, packUnit m → 2000 for 100 metres in one piece.
+ * Returns { unitPrice, lineTotal, baseUnit } for selling `qty` of `sellUnit`.
+ */
+function calcCartPricing(p, sellUnit, qty){
+  p=p||{};
+  const listPrice=Number(p.price)||0;
+  const priceUnit=productPriceUnit(p);
+  const packQ=productPackQty(p);
+  const packU=productPackUnit(p);
+  const sellU=unitMeta(sellUnit||priceUnit).id;
+  qty=normalizeQty(sellU,qty);
+  // Amount of "measure" covered by one list-price unit
+  // 1 priceUnit costs listPrice and contains packQ packU
+  // Convert everything to a common base of packU / priceUnit
+  let unitPrice=listPrice; // price per 1 sellU
+  let ok=true;
+  if(sellU===priceUnit){
+    unitPrice=listPrice;
+  }else if(packQ>1&&(sellU===packU||unitsCompatible(sellU,packU))){
+    // listPrice buys packQ of packU
+    const packBase=unitToBase(packU);
+    const sellBase=unitToBase(sellU);
+    const measurePerPriceUnit=packQ*packBase; // in base units of packU family
+    const measureWanted=qty*sellBase;
+    // price per one base measure
+    const pricePerBase=listPrice/measurePerPriceUnit;
+    unitPrice=pricePerBase*sellBase; // price per 1 sellU
+  }else if(unitsCompatible(sellU,priceUnit)){
+    const priceBase=unitToBase(priceUnit);
+    const sellBase=unitToBase(sellU);
+    unitPrice=listPrice*(sellBase/priceBase);
+  }else{
+    // incompatible: keep list price per sell unit (same number) but flag
+    unitPrice=listPrice;
+    ok=false;
+  }
+  unitPrice=money(unitPrice);
+  const lineTotal=money(unitPrice*qty);
+  return {unitPrice,lineTotal,qty,sellUnit:sellU,listPrice,priceUnit,packQ,packU,ok};
+}
+function cartLineFromProduct(p, sellUnit, qty){
+  const sell=sellUnit||productPriceUnit(p);
+  const pr=calcCartPricing(p,sell,qty!=null?qty:unitStep(sell));
+  return {
+    id:p.id,
+    name:p.name,
+    unit:pr.sellUnit,
+    qty:pr.qty,
+    price:pr.unitPrice, // price per selected unit (auto)
+    listPrice:pr.listPrice,
+    priceUnit:pr.priceUnit,
+    packQty:pr.packQ,
+    packUnit:pr.packU,
+    lineTotal:pr.lineTotal
+  };
+}
+function refreshCartLinePrice(row,p){
+  if(!row)return;
+  p=p||{};
+  const pr=calcCartPricing(p,row.unit||p.unit||'pc',row.qty);
+  row.price=pr.unitPrice;
+  row.listPrice=pr.listPrice;
+  row.priceUnit=pr.priceUnit;
+  row.packQty=pr.packQ;
+  row.packUnit=pr.packU;
+  row.lineTotal=pr.lineTotal;
+  row.qty=pr.qty;
+}
+
 function unitSelectHtml(name, selected, attrs){
   const sel=selected||'pc';
   const extra=attrs||'';
@@ -1454,6 +1555,64 @@ function fmtQty(u,qty){
   return (Number.isInteger(q)?q:q)+' '+suf;
 }
 function pricePerLabel(u){return 'per '+unitSuffix(u)}
+/** Relative size to a dimension base for automatic unit conversion */
+const UNIT_FACTOR={
+  mm:{d:'len',f:0.001},cm:{d:'len',f:0.01},m:{d:'len',f:1},
+  g:{d:'mass',f:1},kg:{d:'mass',f:1000},
+  ml:{d:'vol',f:1},l:{d:'vol',f:1000},
+  sqm:{d:'area',f:1},
+  pc:{d:'count',f:1},pack:{d:'count',f:1},set:{d:'count',f:1},dozen:{d:'count',f:12},
+  unit:{d:'count',f:1},job:{d:'count',f:1},hr:{d:'time',f:1},day:{d:'time',f:24}
+};
+function unitFactor(u){const id=unitMeta(u).id;return UNIT_FACTOR[id]||{d:'count',f:1}}
+/** How many `to` units equal `qty` of `from` units (null if incompatible) */
+function convertAmount(qty, fromU, toU){
+  const a=unitFactor(fromU),b=unitFactor(toU);
+  if(a.d!==b.d||!b.f)return null;
+  return (Number(qty)||0)*a.f/b.f;
+}
+/**
+ * Registered product price is for 1× product.unit.
+ * Optional packSize + packSizeUnit: e.g. unit=pc, packSize=100, packSizeUnit=m, price=2000
+ * means 1 piece = 100 metres = KES 2000.
+ * Returns unit price in cartUnit (price for 1 cartUnit).
+ */
+function unitPriceIn(p, cartUnit){
+  if(!p)return 0;
+  const price=Number(p.price)||0;
+  const reg=unitMeta(p.unit||'pc').id;
+  const want=unitMeta(cartUnit||reg).id;
+  if(want===reg)return price;
+  const packSize=Math.max(0.0001,Number(p.packSize)||1);
+  const packU=unitMeta(p.packSizeUnit||reg).id;
+  // Pack breakdown: 1 registered unit contains packSize of packSizeUnit
+  if(packSize!==1||packU!==reg){
+    if(want===packU)return money(price/packSize);
+    const packToWant=convertAmount(1,packU,want);
+    if(packToWant!=null&&packToWant>0)return money((price/packSize)/packToWant);
+    // want is reg already handled; try reg→want via dimension
+  }
+  const regToWant=convertAmount(1,reg,want);
+  if(regToWant!=null&&regToWant>0)return money(price/regToWant);
+  // cannot convert — keep registered unit price (user should use registered unit)
+  return price;
+}
+function cartLineUnitPrice(c,p){
+  const prod=p||((biz()||{}).products||[]).find(x=>x.id===c.id);
+  if(prod)return unitPriceIn(prod,c.unit||prod.unit||'pc');
+  return Number(c.price)||0;
+}
+function cartLineTotal(c,p){
+  return money(cartLineUnitPrice(c,p)*normalizeQty(c.unit||'pc',c.qty));
+}
+function packLabel(p){
+  const packSize=Number(p.packSize)||1;
+  const reg=unitSuffix(p.unit||'pc');
+  if(packSize>1&&p.packSizeUnit&&unitMeta(p.packSizeUnit).id!==unitMeta(p.unit||'pc').id){
+    return kes(p.price)+' ('+packSize+unitSuffix(p.packSizeUnit)+') per '+reg;
+  }
+  return kes(p.price)+' per '+reg;
+}
 
 const PAY_METHODS=['Cash','M-Pesa','Bank transfer','Card','Credit'];
 const DEFAULT_PLANS={
@@ -2113,7 +2272,7 @@ function normalizeProductUnits(b){
 }
 
 function cartCount(){const b=biz();return ((b&&b.cart)||[]).reduce((s,c)=>s+(c.qty||0),0)}
-function cartSubtotal(){let t=0;((biz()||{}).cart||[]).forEach(c=>t+=c.price*c.qty);return money(t)}
+function cartSubtotal(){const b=biz();let t=0;((b&&b.cart)||[]).forEach(c=>{const p=(b.products||[]).find(x=>x.id===c.id);t+=cartLineTotal(c,p)});return money(t)}
 function cartTotal(){const sub=cartSubtotal();const disc=Math.min(100,Math.max(0,Number(S.cartDiscount||0)));return money(sub*(1-disc/100))}
 function go(v){S.view=v;S.viewInvoiceId=null;render()}
 
@@ -3027,20 +3186,28 @@ function secShop(b,a){
   }).join('')||'<p class="col-span-full text-center text-slate-400 py-10">No products in this category</p>';
   const cart=b.cart||[];
   const cartRows=!cart.length?'<p class="text-sm text-slate-400 py-6 text-center">Tap items to add</p>':
-    cart.map(c=>`<div class="flex flex-col gap-2 py-3 border-b border-slate-100">
-      <div class="flex items-start justify-between gap-2">
-        <div class="min-w-0 flex-1"><p class="text-sm font-medium truncate">${esc(c.name)}</p><p class="text-xs text-slate-500">${kes(c.price)} ${esc(pricePerLabel(c.unit||'pc'))} · line ${kes((c.price||0)*(c.qty||0))}</p></div>
+    cart.map(c=>{
+      const p=(b.products||[]).find(x=>x.id===c.id)||{};
+      refreshCartLinePrice(c,p);
+      const listU=c.priceUnit||p.unit||'pc';
+      const packQ=Number(c.packQty||p.packQty||1);
+      const packU=c.packUnit||p.packUnit||listU;
+      const listHint=packQ>1?`${kes(c.listPrice||p.price)} (${packQ}${unitSuffix(packU)}) per ${unitSuffix(listU)}`:`${kes(c.listPrice||p.price)} ${pricePerLabel(listU)}`;
+      return `<div class="flex flex-col gap-2 py-3 border-b border-slate-100">
+      <div class="min-w-0"><p class="text-sm font-medium truncate">${esc(c.name)}</p>
+        <p class="text-xs text-slate-500">Registered: ${listHint}</p>
+        <p class="text-xs text-teal-800 font-medium">Selling at ${kes(c.price)} ${pricePerLabel(c.unit||'pc')} · line total ${kes(c.lineTotal!=null?c.lineTotal:(c.price||0)*(c.qty||0))}</p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <label class="text-xs text-slate-500 shrink-0">Unit</label>
-        <select data-cunit="${c.id}" class="text-sm border-2 border-teal-600 rounded-xl px-2 py-1.5 bg-white font-medium min-w-[120px]" title="Select unit">
+        <select data-cunit="${c.id}" class="text-sm border-2 border-teal-600 rounded-xl px-2 py-1.5 bg-white font-medium min-w-[120px]" title="Select sell unit">
           ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(c.unit||'pc')===u.id?'selected':''}>${esc(u.label)}</option>`).join('')}
         </select>
         <label class="text-xs text-slate-500 shrink-0">Qty</label>
         <button type="button" data-dec="${c.id}" class="w-8 h-8 rounded-lg border">−</button>
         <input type="number" data-cqty="${c.id}" value="${c.qty}" step="${unitStep(c.unit||'pc')}" min="0" class="w-16 text-center text-sm font-semibold border rounded-lg py-1.5"/>
         <button type="button" data-inc="${c.id}" class="w-8 h-8 rounded-lg border">+</button>
-      </div></div>`).join('');
+      </div></div>`}).join('');
   const payOpts=PAY_METHODS.map(m=>`<button type="button" data-pay="${m}" class="pay-opt ${S.payMethod===m?'on':''}">${m}</button>`).join('');
   const shiftOpen=currentShift(b);
   const shiftWarn=(!shiftOpen&&b.requireShiftForSale)?`<div class="bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl p-2 mb-2">Open a cashier shift before selling (Workers → Shifts or Shifts menu).</div>`:'';
@@ -3146,8 +3313,9 @@ function addProductToCartByBarcode(code){
   if((p.stock||0)<=0){toast(p.name+' is out of stock');return null}
   if(!b.cart)b.cart=[];
   const line=b.cart.find(c=>c.id===p.id);
-  if(line)line.qty+=1;
-  else b.cart.push({id:p.id,name:p.name,price:Number(p.price)||0,qty:normalizeQty(p.unit||'pc',1),unit:p.unit||'pc'});
+  const u=productPriceUnit(p);
+  if(line){line.qty=normalizeQty(u,(Number(line.qty)||0)+unitStep(u));line.unit=u;refreshCartLinePrice(line,p)}
+  else b.cart.push(cartLineFromProduct(p,u,unitStep(u)));
   saveBiz(b);
   toast('✓ '+p.name);
   try{if(window.navigator&&navigator.vibrate)navigator.vibrate(30)}catch(e){}
@@ -3418,7 +3586,10 @@ function secProducts(b,a){
     <td class="px-2 py-2"><select data-punit="${p.id}" class="border rounded-lg px-1 py-1 text-xs max-w-[100px]">
       ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(p.unit||'pc')===u.id||String(p.unit||'').includes(u.suffix)?'selected':''}>${esc(u.suffix)}</option>`).join('')}
     </select></td>
-    <td class="px-2 py-2"><input type="number" data-price="${p.id}" value="${p.price}" class="w-20 border rounded-lg px-2 py-1 text-sm"/></td>
+    <td class="px-2 py-2"><input type="number" data-ppack="${p.id}" value="${p.packQty!=null?p.packQty:1}" step="0.01" class="w-16 border rounded-lg px-1 py-1 text-xs" title="Pack size"/><select data-ppacku="${p.id}" class="border rounded-lg px-1 py-1 text-xs max-w-[70px]">
+      ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(p.packUnit||p.unit||'pc')===u.id?'selected':''}>${esc(u.suffix)}</option>`).join('')}
+    </select></td>
+    <td class="px-2 py-2"><input type="number" data-price="${p.id}" value="${p.price}" class="w-20 border rounded-lg px-2 py-1 text-sm" title="Unit price"/></td>
     <td class="px-2 py-2"><input type="number" data-pcost="${p.id}" value="${p.cost!=null?p.cost:''}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Cost"/></td>
     <td class="px-2 py-2"><input type="number" data-stock="${p.id}" value="${p.stock||0}" class="w-16 border rounded-lg px-2 py-1 text-sm"/></td>
     <td class="px-2 py-2"><input data-pbatch="${p.id}" value="${esc(p.batch||'')}" class="w-20 border rounded-lg px-2 py-1 text-xs"/></td>
@@ -3442,7 +3613,12 @@ function secProducts(b,a){
       <select name="unit" class="border rounded-xl px-3 py-2">
         ${UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('')}
       </select>
-      <input name="price" type="number" step="0.01" placeholder="Sell price (per unit)" class="border rounded-xl px-3 py-2"/>
+      <input name="price" type="number" step="0.01" placeholder="Unit price (for 1 unit above)" class="border rounded-xl px-3 py-2"/>
+      <input name="packQty" type="number" step="0.01" min="0" placeholder="Pack size (e.g. 100 if 1 pc = 100m)" class="border rounded-xl px-3 py-2"/>
+      <select name="packUnit" class="border rounded-xl px-3 py-2">
+        <option value="">Pack measure unit (optional)</option>
+        ${UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('')}
+      </select>
       <input name="cost" type="number" step="0.01" placeholder="Cost (per unit)" class="border rounded-xl px-3 py-2"/>
       <input name="stock" type="number" step="0.01" placeholder="Opening stock (in unit)" class="border rounded-xl px-3 py-2"/>
       <input name="reorder" type="number" placeholder="Reorder level" class="border rounded-xl px-3 py-2"/>
@@ -3466,7 +3642,7 @@ function secProducts(b,a){
   <input id="prodSearch" type="search" placeholder="Search name, SKU, barcode, category…" value="${esc(S.prodSearch||'')}" class="w-full border rounded-xl px-3 py-2 bg-white"/>
   <div class="bg-white rounded-2xl border overflow-x-auto"><table class="w-full text-sm min-w-[900px]">
     <thead class="bg-slate-50 text-left text-slate-500 text-xs"><tr>
-      <th class="px-2 py-3">Img</th><th class="px-2 py-3">Name</th><th class="px-2 py-3">SKU</th><th class="px-2 py-3">Barcode</th><th class="px-2 py-3">Sub</th><th class="px-2 py-3">Unit</th><th class="px-2 py-3">Price</th><th class="px-2 py-3">Cost</th><th class="px-2 py-3">Stock</th><th class="px-2 py-3">Batch</th><th class="px-2 py-3">Expiry</th><th></th>
+      <th class="px-2 py-3">Img</th><th class="px-2 py-3">Name</th><th class="px-2 py-3">SKU</th><th class="px-2 py-3">Barcode</th><th class="px-2 py-3">Sub</th><th class="px-2 py-3">Unit</th><th class="px-2 py-3">Pack</th><th class="px-2 py-3">Unit price</th><th class="px-2 py-3">Cost</th><th class="px-2 py-3">Stock</th><th class="px-2 py-3">Batch</th><th class="px-2 py-3">Expiry</th><th></th>
     </tr></thead>
     <tbody>${rows||'<tr><td colspan="11" class="p-8 text-center text-slate-400">Empty catalog</td></tr>'}</tbody>
   </table></div>
@@ -5167,11 +5343,12 @@ render();
   document.querySelectorAll('[data-add]').forEach(btn=>btn.onclick=()=>{
     const b=biz();if(!b)return;
     const p=b.products.find(x=>x.id===btn.getAttribute('data-add'));if(!p||(p.stock||0)<=0)return;
-    const u=p.unit||'pc';const step=unitStep(u);
+    const u=productPriceUnit(p);const step=unitStep(u);
     const row=(b.cart||[]).find(c=>c.id===p.id);
     const next=normalizeQty(u,(row?Number(row.qty):0)+step);
     if(next>(Number(p.stock)||0)){toast('Only '+p.stock+' '+unitSuffix(u)+' in stock');return}
-    if(row){row.qty=next;row.unit=u}else{if(!b.cart)b.cart=[];b.cart.push({id:p.id,name:p.name,price:p.price,qty:normalizeQty(u,step),unit:u})}
+    if(row){row.qty=next;row.unit=u;refreshCartLinePrice(row,p)}
+    else{if(!b.cart)b.cart=[];b.cart.push(cartLineFromProduct(p,u,step))}
     saveBiz(b);render();toast('Added to cart')});
   document.querySelectorAll('[data-inc]').forEach(btn=>btn.onclick=()=>{
     const b=biz();const row=(b.cart||[]).find(c=>c.id===btn.getAttribute('data-inc'));if(!row)return;
@@ -5180,7 +5357,7 @@ render();
     const step=unitStep(u);
     const next=normalizeQty(u,(Number(row.qty)||0)+step);
     if(p&&next>(Number(p.stock)||0)){toast('Only '+p.stock+' '+unitSuffix(u)+' in stock');return}
-    row.qty=next;row.unit=u;saveBiz(b);render()});
+    row.qty=next;row.unit=u;refreshCartLinePrice(row,p||{});saveBiz(b);render()});
   document.querySelectorAll('[data-dec]').forEach(btn=>btn.onclick=()=>{
     const b=biz();const id=btn.getAttribute('data-dec');const row=(b.cart||[]).find(c=>c.id===id);
     if(!row)return;
@@ -5189,6 +5366,7 @@ render();
     const step=unitStep(u);
     row.qty=normalizeQty(u,(Number(row.qty)||0)-step);
     if(row.qty<=0)b.cart=b.cart.filter(c=>c.id!==id);
+    else refreshCartLinePrice(row,p||{});
     saveBiz(b);render()});
   document.querySelectorAll('[data-cqty]').forEach(inp=>{
     inp.onchange=inp.onblur=()=>{
@@ -5198,7 +5376,7 @@ render();
       let q=normalizeQty(u,inp.value);
       if(p&&q>(Number(p.stock)||0)){q=normalizeQty(u,p.stock);toast('Max stock '+p.stock+' '+unitSuffix(u))}
       if(q<=0){b.cart=b.cart.filter(c=>c.id!==row.id)}
-      else{row.qty=q;row.unit=u}
+      else{row.qty=q;row.unit=u;refreshCartLinePrice(row,p||{})}
       saveBiz(b);render();
     };
   });
@@ -5215,7 +5393,7 @@ render();
     for(const c of b.cart){const p=b.products.find(x=>x.id===c.id);if(!p||(p.stock||0)<c.qty){alert('Not enough stock for '+(c.name||''));return null}}
     let total=cartTotal();const subtotal=cartSubtotal();const discountPct=Number(S.cartDiscount||0);
     b.orderN=(b.orderN||0)+1;
-    const items=b.cart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id,unit:c.unit||'pc'}));
+    const items=b.cart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id,unit:c.unit||'pc',listPrice:c.listPrice,packQty:c.packQty,packUnit:c.packUnit}));
     b.cart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,(p.stock||0)-c.qty)});
     const fulfillEl=document.querySelector('input[name="fulfill"]:checked');
     const fulfillment=(fulfillEl&&fulfillEl.value)||'pickup';
@@ -6095,8 +6273,10 @@ render();
     const barcode=String(fd.get('barcode')||'').trim()||genBarcode();
     const stock=Number(fd.get('stock'))||0;
     const unit=String(fd.get('unit')||'pc').trim()||'pc';
+    const packQty=Number(fd.get('packQty'))||1;
+    const packUnit=String(fd.get('packUnit')||unit).trim()||unit;
     const p={
-      id:uid(),name,sku,barcode,unit,
+      id:uid(),name,sku,barcode,unit,packQty,packUnit,
       category:String(fd.get('category')||'').trim()||(b.categories&&b.categories[0])||'General',
       sub:String(fd.get('sub')||'').trim()||'Custom',
       price:Number(fd.get('price'))||0,
@@ -6174,14 +6354,11 @@ render();
     sel.onchange=()=>{
       const b=biz();const row=(b.cart||[]).find(c=>c.id===sel.getAttribute('data-cunit'));
       if(!row)return;
-      const oldU=row.unit||'pc';
-      const newU=sel.value||'pc';
-      row.unit=newU;
-      row.qty=normalizeQty(newU,row.qty);
-      // keep price as price-per-unit from product if available
-      const p=(b.products||[]).find(x=>x.id===row.id);
-      if(p&&p.price!=null)row.price=Number(p.price)||row.price;
-      saveBiz(b);toast('Unit: '+unitLabel(newU));render();
+      const p=(b.products||[]).find(x=>x.id===row.id)||{};
+      row.unit=sel.value||productPriceUnit(p);
+      row.qty=normalizeQty(row.unit,row.qty);
+      refreshCartLinePrice(row,p);
+      saveBiz(b);toast('Unit '+unitLabel(row.unit)+' · '+kes(row.price)+' each');render();
     };
   });
   document.querySelectorAll('[data-iunit]').forEach(sel=>{
