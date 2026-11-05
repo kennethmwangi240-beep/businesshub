@@ -10,8 +10,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
 <script>
 window.__bhPrompt=null;
+try{document.documentElement.setAttribute('data-theme',localStorage.getItem('bh_theme')||'light')}catch(e){}
+
 window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__bhPrompt=e;if(window.refreshInstallUI)refreshInstallUI()});
-window.addEventListener('appinstalled',function(){window.__bhPrompt=null;if(window.refreshInstallUI)refreshInstallUI();if(window.toast)toast('MyBusinessHub installed on this device')});
+window.addEventListener('appinstalled',function(){window.__bhPrompt=null;
+try{document.documentElement.setAttribute('data-theme',localStorage.getItem('bh_theme')||'light')}catch(e){}
+if(window.refreshInstallUI)refreshInstallUI();if(window.toast)toast('MyBusinessHub installed on this device')});
 </script>
 <link rel="manifest" href="/manifest.webmanifest"/>
 <meta name="theme-color" content="#0a1628"/>
@@ -136,6 +140,17 @@ button.lp-card{cursor:pointer}
 .sidebar .nav-item,.nav-item{pointer-events:auto;cursor:pointer;position:relative;z-index:1}
 .layout{position:relative}
 .main-wrap{position:relative;z-index:1}
+
+[data-theme="dark"] body{background:#0f172a!important;color:#e2e8f0}
+[data-theme="dark"] .sidebar{background:#020617;border-color:#1e293b;color:#e2e8f0}
+[data-theme="dark"] .main-wrap{background:#0f172a}
+[data-theme="dark"] .bg-white,[data-theme="dark"] .rounded-2xl.border{background:#1e293b!important;border-color:#334155!important;color:#e2e8f0}
+[data-theme="dark"] .nav-item{color:#cbd5e1}
+[data-theme="dark"] .nav-item:hover{background:#1e293b}
+[data-theme="dark"] .nav-item.active{background:#134e4a;color:#5eead4}
+[data-theme="dark"] header,[data-theme="dark"] .border-b{background:#020617!important;border-color:#1e293b!important;color:#e2e8f0}
+[data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:#0f172a;border-color:#334155;color:#e2e8f0}
+[data-theme="dark"] .text-slate-500,[data-theme="dark"] .text-slate-600{color:#94a3b8!important}
 </style>
 </head>
 <body>
@@ -1669,7 +1684,7 @@ function requireSalesPin(onOk){
 const S={
   view:'landing',appView:'dashboard',filter:'All',search:'',bizCatTab:'all',
   selectedCats:['electrical'],color:'#d97706',chartMode:'daily',viewInvoiceId:null,
-  prodSearch:'',prodSub:'All',stockSearch:'',payMethod:'Cash',cartDiscount:0,receiptWidth:'80',dashFrom:'',dashTo:'',dashBranch:'all',dashWorker:'all',dashCat:'all',dashPay:'all',onlineBizId:null,onlineCart:[],adminTab:'overview',
+  prodSearch:'',prodSub:'All',stockSearch:'',payMethod:'Cash',cartDiscount:0,receiptWidth:'80',dashFrom:'',dashTo:'',dashBranch:'all',dashWorker:'all',dashCat:'all',dashPay:'all',theme:(function(){try{return localStorage.getItem('bh_theme')||'light'}catch(e){return 'light'}})(),onlineBizId:null,onlineCart:[],adminTab:'overview',
   accent(){const b=biz();return (b&&b.color)||this.color}
 };
 let chartInst=null;
@@ -1999,8 +2014,11 @@ function goApp(s){
     S.viewInvoiceId=null;
     const key=s||'dashboard';
     if(isWorkerMode()){
-      const allowed=['dashboard','shop','invoices'];
-      S.appView=allowed.includes(key)?key:'dashboard';
+      const cw=currentWorker();
+      const p=(cw&&cw.worker&&cw.worker.permissions)||{dashboard:true,shop:true,invoices:true};
+      const allowed=Object.keys(p).filter(k=>p[k]);
+      if(!allowed.length)allowed.push('dashboard');
+      S.appView=allowed.includes(key)?key:allowed[0];
       S.view='worker';
     }else{
       S.appView=key;
@@ -2022,6 +2040,8 @@ function refreshInstallUI(){document.querySelectorAll('[data-install],[data-inst
 async function bhInstall(){
   if(window.__bhPrompt){
     const ev=window.__bhPrompt;window.__bhPrompt=null;
+try{document.documentElement.setAttribute('data-theme',localStorage.getItem('bh_theme')||'light')}catch(e){}
+
     try{ev.prompt();const r=await ev.userChoice;if(r&&r.outcome==='accepted')toast('Installing MyBusinessHub…')}catch(e){}
     refreshInstallUI();return;
   }
@@ -2072,6 +2092,7 @@ function animateCounts(){
 }
 
 function render(){
+  try{document.documentElement.setAttribute('data-theme',S.theme||localStorage.getItem('bh_theme')||'light')}catch(e){}
   const d=db();
   // Worker session (no owner session) → restricted worker UI only
   if(!d.session && currentWorker()){
@@ -2482,6 +2503,18 @@ function viewWorkerApp(){
   if(d.session){clearWorkerSession();S.view='app';return viewApp()}
   const b=cw.business;const w=cw.worker;const a=b.color||'#0f172a';
   d.currentBizId=b.id;save(d);
+  const perms=Object.assign({dashboard:true,shop:true,invoices:true},w.permissions||{});
+  const menuAll=[
+    ['dashboard','Mini dashboard',perms.dashboard],
+    ['shop','Shop / POS',perms.shop],
+    ['invoices','Invoices & receipts',perms.invoices],
+    ['onlineorders','Online orders',perms.onlineorders],
+    ['delivery','Delivery',perms.delivery],
+    ['stock','Stock',perms.stock]
+  ].filter(x=>x[2]);
+  const allowed=menuAll.map(x=>x[0]);
+  if(!allowed.length)allowed.push('dashboard');
+  if(!allowed.includes(S.appView))S.appView=allowed[0];
   const myOrders=paidOrders(b).filter(o=>o.servedBy&&(o.servedBy.id===w.id||o.servedBy.name===(w.firstName||w.name)));
   const sum=arr=>arr.reduce((s,o)=>s+Number(o.total||0),0);
   const qtySold=arr=>{let q=0;arr.forEach(o=>(o.items||[]).forEach(it=>q+=Number(it.qty||0)));return q};
@@ -2494,65 +2527,53 @@ function viewWorkerApp(){
   const shift=currentShift(b);
   const commissionPct=Number(w.commissionPct||0);
   const commissionEarned=money(sum(monthSales)*commissionPct/100);
-  const allowed=['dashboard','shop','invoices'];
-  if(!allowed.includes(S.appView))S.appView='dashboard';
   let main='';
-  if(S.appView==='shop')main=secShop(b,a);
-  else if(S.appView==='invoices'){
-    main=secInvoices(b,a);
-    // worker only sees own invoices if filtered - soft filter note
-    main=`<p class="text-xs text-slate-500 mb-2">Your invoices & receipts (print after payment).</p>`+main;
-  }else{
-    main=`<div class="space-y-4">
+  if(S.appView==='shop'&&perms.shop)main=secShop(b,a);
+  else if(S.appView==='invoices'&&perms.invoices)main=`<p class="text-xs text-slate-500 mb-2">Open an invoice to <b>view and print</b> the receipt after payment.</p>`+secInvoices(b,a);
+  else if(S.appView==='onlineorders'&&perms.onlineorders)main=secOnlineOrders(b,a);
+  else if(S.appView==='delivery'&&perms.delivery)main=secDelivery(b,a);
+  else if(S.appView==='stock'&&perms.stock)main=secStock(b,a);
+  else main=`<div class="space-y-4">
       <div class="rounded-2xl p-5 text-white" style="background:linear-gradient(135deg,#0f172a,#1e3a5f)">
         <p class="text-sm text-slate-300">Worker mini dashboard</p>
         <h2 class="text-xl font-bold mt-1">${esc(w.firstName||w.name||'')} ${esc(w.lastName||'')}</h2>
         <p class="text-sm mt-1 text-slate-300">${esc(b.name)} · ${esc(w.role||'cashier')}</p>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div class="rounded-2xl border p-4 bg-emerald-50 border-emerald-100"><p class="text-xs text-emerald-800">Own sales today</p><p class="text-lg font-bold text-emerald-900">${kes(sum(todaySales))}</p><p class="text-xs text-emerald-700">${todaySales.length} sale(s)</p></div>
-        <div class="rounded-2xl border p-4 bg-sky-50 border-sky-100"><p class="text-xs text-sky-800">This week</p><p class="text-lg font-bold text-sky-900">${kes(sum(weekSales))}</p></div>
-        <div class="rounded-2xl border p-4 bg-violet-50 border-violet-100"><p class="text-xs text-violet-800">This month</p><p class="text-lg font-bold text-violet-900">${kes(sum(monthSales))}</p></div>
-        <div class="rounded-2xl border p-4 bg-amber-50 border-amber-100"><p class="text-xs text-amber-800">Current shift</p><p class="text-lg font-bold text-amber-900">${shift?'OPEN':'Closed'}</p><p class="text-xs">${shift?esc((shift.openedBy||'').slice(0,20)):'—'}</p></div>
+        <div class="rounded-2xl border p-4 bg-emerald-50"><p class="text-xs">Own sales today</p><p class="text-lg font-bold">${kes(sum(todaySales))}</p></div>
+        <div class="rounded-2xl border p-4 bg-sky-50"><p class="text-xs">This week</p><p class="text-lg font-bold">${kes(sum(weekSales))}</p></div>
+        <div class="rounded-2xl border p-4 bg-violet-50"><p class="text-xs">This month</p><p class="text-lg font-bold">${kes(sum(monthSales))}</p></div>
+        <div class="rounded-2xl border p-4 bg-amber-50"><p class="text-xs">Current shift</p><p class="text-lg font-bold">${shift?'OPEN':'Closed'}</p><p class="text-xs">${shift?esc(shift.openedBy||''):'—'}</p></div>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Items sold (month)</p><p class="text-lg font-bold">${itemsCount(monthSales)}</p></div>
-        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Quantities sold</p><p class="text-lg font-bold">${qtySold(monthSales)}</p></div>
+        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Items sold</p><p class="text-lg font-bold">${itemsCount(monthSales)}</p></div>
+        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Quantities</p><p class="text-lg font-bold">${qtySold(monthSales)}</p></div>
         <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Own invoices</p><p class="text-lg font-bold">${myOrders.length}</p></div>
-        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Commission earned</p><p class="text-lg font-bold">${commissionPct?kes(commissionEarned):'—'}</p><p class="text-xs text-slate-400">${commissionPct?commissionPct+'% of month sales':'Not set'}</p></div>
+        <div class="rounded-2xl border p-4 bg-white"><p class="text-xs text-slate-500">Commission</p><p class="text-lg font-bold">${commissionPct?kes(commissionEarned):'—'}</p></div>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button type="button" data-nav="shop" class="px-5 py-3 rounded-xl text-white font-semibold" style="background:${a}">Open shop / POS</button>
-        <button type="button" data-nav="invoices" class="px-5 py-3 rounded-xl border bg-white font-medium">My invoices & receipts</button>
+        ${perms.shop?`<button type="button" data-nav="shop" class="px-5 py-3 rounded-xl text-white font-semibold" style="background:${a}">Open POS</button>`:''}
+        ${perms.invoices?`<button type="button" data-nav="invoices" class="px-5 py-3 rounded-xl border bg-white font-medium">Invoices & print receipts</button>`:''}
       </div>
-      <p class="text-xs text-slate-400">After a sale is confirmed, open Invoices to view and print the receipt.</p>
     </div>`;
-  }
-  return `<div class="min-h-screen flex" style="background:linear-gradient(180deg,#e0f2fe 0%,#f1f5f9 40%,#f8fafc 100%)">
-    <aside class="w-56 bg-slate-900 text-slate-100 flex flex-col hidden md:flex shrink-0">
+  const sideNav=menuAll.map(([k,l])=>`<button type="button" data-nav="${k}" class="nav-item w-full text-left text-slate-200 ${S.appView===k?'bg-white/15 font-semibold':''}">${l}</button>`).join('');
+  return `<div class="min-h-screen flex" style="background:linear-gradient(180deg,#e0f2fe 0%,#f1f5f9 50%)">
+    <aside id="workerSidebar" class="w-56 bg-slate-900 text-slate-100 flex flex-col shrink-0 fixed md:relative inset-y-0 left-0 z-30 ${S.workerMenuOpen?'':'hidden md:flex'} md:flex">
       <div class="p-4 border-b border-white/10">
         <p class="font-bold text-sm">Worker menu</p>
         <p class="text-xs text-slate-400 truncate">${esc(w.firstName||w.name||'')}</p>
       </div>
-      <nav class="p-2 flex-1 space-y-1">
-        <button type="button" data-nav="dashboard" class="nav-item w-full text-left text-slate-200 ${S.appView==='dashboard'?'bg-white/15':''}">Mini dashboard</button>
-        <button type="button" data-nav="shop" class="nav-item w-full text-left text-slate-200 ${S.appView==='shop'?'bg-white/15':''}">Shop / POS</button>
-        <button type="button" data-nav="invoices" class="nav-item w-full text-left text-slate-200 ${S.appView==='invoices'?'bg-white/15':''}">Invoices & receipts</button>
-      </nav>
+      <nav class="p-2 flex-1 space-y-1 overflow-y-auto">${sideNav}</nav>
       <button type="button" id="workerSignOut" class="m-3 py-2 text-sm rounded-lg bg-white/10">Log out</button>
     </aside>
-    <div class="flex-1 flex flex-col min-w-0">
-      <header class="bg-white/90 backdrop-blur border-b px-4 py-3 flex items-center justify-between gap-2 sticky top-0 z-10">
+    <div class="flex-1 flex flex-col min-w-0 md:ml-0">
+      <header class="bg-white/95 border-b px-4 py-3 flex items-center justify-between gap-2 sticky top-0 z-10">
         <div class="flex items-center gap-2 min-w-0">
-          <button type="button" id="workerBackBtn" class="text-sm px-3 py-1.5 rounded-lg border bg-white shrink-0">← Back</button>
+          <button type="button" id="workerMenuToggle" class="md:hidden px-2 py-1.5 rounded-lg border text-sm">☰</button>
+          <button type="button" id="workerBackBtn" class="text-sm px-3 py-1.5 rounded-lg border bg-white">← Back</button>
           <p class="font-semibold text-sm truncate">${esc(b.name)}</p>
         </div>
-        <div class="md:hidden flex gap-1">
-          <button type="button" data-nav="dashboard" class="text-xs border px-2 py-1 rounded-lg bg-white">Home</button>
-          <button type="button" data-nav="shop" class="text-xs border px-2 py-1 rounded-lg bg-white">POS</button>
-          <button type="button" data-nav="invoices" class="text-xs border px-2 py-1 rounded-lg bg-white">Invoices</button>
-        </div>
-        <button type="button" id="workerSignOut2" class="text-xs text-slate-500 shrink-0">Log out</button>
+        <button type="button" id="workerSignOut2" class="text-xs text-slate-500">Log out</button>
       </header>
       <main class="p-4 max-w-5xl w-full mx-auto">${main}</main>
     </div>
@@ -2888,9 +2909,15 @@ function secShop(b,a){
         <input id="cartDiscount" type="number" min="0" max="100" step="0.5" value="${disc}" class="w-20 border rounded-lg px-2 py-1"/>
         <span class="text-xs text-slate-500">Subtotal ${kes(sub)} → <b>${kes(tot)}</b></span>
       </div>
-      <div class="mt-2">
-        <label class="text-xs text-slate-500">Scan / enter barcode</label>
-        <input id="barcodeScan" class="w-full border rounded-xl px-3 py-2 mt-1 text-sm" placeholder="Barcode then Enter"/>
+      <div class="mt-2 p-3 rounded-xl border bg-slate-50">
+        <label class="text-xs font-medium text-slate-600">Barcode scan</label>
+        <div class="flex gap-2 mt-1">
+          <input id="barcodeScan" class="flex-1 border rounded-xl px-3 py-2 text-sm" placeholder="USB scanner or type code → Enter" autocomplete="off" inputmode="none"/>
+          <button type="button" id="cameraScanBtn" class="px-3 py-2 rounded-xl border-2 border-teal-600 bg-teal-50 text-teal-900 text-sm font-semibold whitespace-nowrap" title="Open camera">📷 Scan</button>
+        </div>
+        <label class="flex items-center gap-2 text-xs mt-2 text-slate-500">
+          <input type="checkbox" id="scanContinuous" ${S.scanContinuous?'checked':''}/> Continuous scan (keep adding)
+        </label>
       </div>
       <div class="mt-2 text-xs text-slate-500">Receipt size:
         <select id="receiptWidth" class="border rounded-lg px-2 py-1 ml-1">
@@ -2934,52 +2961,315 @@ function secShop(b,a){
   </div></div>`;
 }
 
-function secStock(b,a){
-  const q=(S.stockSearch||'').toLowerCase();
-  let list=(b.products||[]).slice().sort((x,y)=>(x.stock||0)-(y.stock||0));
-  if(q)list=list.filter(p=>((p.name||'')+(p.sub||'')).toLowerCase().indexOf(q)>=0);
-  const rows=list.map(p=>{
-    const st=p.stock||0;
-    return `<tr class="border-t"><td class="px-4 py-3 text-sm font-medium">${esc(p.name)}</td>
-      <td class="px-4 py-3 text-xs text-slate-400">${esc(p.sub||'')}</td>
-      <td class="px-4 py-3"><input type="number" data-stock="${p.id}" value="${st}" class="w-24 border rounded-lg px-2 py-1 text-sm"/></td>
-      <td class="px-4 py-3 text-sm ${st<=5?'stock-low':'stock-ok'}">${st<=0?'Out':st<=5?'Low':'OK'}</td></tr>`;
-  }).join('');
-  return `<div class="flex flex-wrap justify-between gap-2 mb-4">
-    <p class="text-sm text-slate-500">Stock for <b>${esc(b.name)}</b> · ${list.length} shown</p>
-    <button type="button" id="saveStock" class="text-sm text-white px-4 py-2 rounded-xl" style="background:${a}">Save stock</button></div>
-  <input id="stockSearch" type="search" placeholder="Search products in stock…" value="${esc(S.stockSearch||'')}" class="w-full border rounded-xl px-4 py-2.5 mb-3 bg-white"/>
-  <div class="bg-white rounded-2xl border overflow-x-auto"><table class="w-full text-sm"><thead class="bg-slate-50 text-left text-slate-500"><tr>
-    <th class="px-4 py-3">Item</th><th class="px-4 py-3">Category</th><th class="px-4 py-3">Qty</th><th class="px-4 py-3">Status</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="4" class="p-8 text-center text-slate-400">No products match</td></tr>'}</tbody></table></div>`;
+
+function ensureMovements(b){if(!b.stockMovements)b.stockMovements=[];return b}
+function genSKU(b,name){
+  const base=String(name||'ITEM').replace(/[^A-Za-z0-9]/g,'').slice(0,6).toUpperCase()||'ITEM';
+  const n=((b.products||[]).length+1).toString().padStart(4,'0');
+  return base+'-'+n;
 }
+
+function findProductByBarcode(b, code){
+  code=String(code||'').trim();
+  if(!code||!b)return null;
+  return (b.products||[]).find(x=>
+    String(x.barcode||'').trim()===code ||
+    String(x.sku||'').trim()===code ||
+    String(x.id)===code
+  )||null;
+}
+function addProductToCartByBarcode(code){
+  const b=biz();
+  const p=findProductByBarcode(b, code);
+  if(!p){toast('No product for: '+code);return null}
+  if(p.active===false){toast('Product inactive');return null}
+  if((p.stock||0)<=0){toast(p.name+' is out of stock');return null}
+  if(!b.cart)b.cart=[];
+  const line=b.cart.find(c=>c.id===p.id);
+  if(line)line.qty+=1;
+  else b.cart.push({id:p.id,name:p.name,price:Number(p.price)||0,qty:1});
+  saveBiz(b);
+  toast('✓ '+p.name);
+  try{if(window.navigator&&navigator.vibrate)navigator.vibrate(30)}catch(e){}
+  return p;
+}
+async function loadHtml5Qrcode(){
+  if(window.Html5Qrcode)return window.Html5Qrcode;
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload=()=>resolve(window.Html5Qrcode);
+    s.onerror=()=>reject(new Error('Could not load camera scanner library'));
+    document.head.appendChild(s);
+  });
+}
+async function startCameraBarcodeScan(onCode){
+  const finish=()=>{try{if(window.__bhScanner){window.__bhScanner.stop().catch(()=>{});window.__bhScanner=null}}catch(e){}
+    try{if(window.__bhScanStream){window.__bhScanStream.getTracks().forEach(t=>t.stop());window.__bhScanStream=null}}catch(e){}
+    closeModal();
+  };
+  openModal(`<h3 class="text-lg font-bold mb-2">Camera barcode scan</h3>
+    <div id="qr-reader" class="rounded-xl overflow-hidden bg-black min-h-[240px] mb-2"></div>
+    <p id="scanStatus" class="text-xs text-slate-500 mb-2">Starting camera… Allow camera permission if asked.</p>
+    <button type="button" id="stopScanBtn" class="w-full py-2.5 rounded-xl border font-medium">Stop camera</button>
+    <p class="text-[11px] text-slate-400 mt-2">Works best in Chrome / Edge on phone. Hold steady over the barcode.</p>`);
+  document.getElementById('stopScanBtn').onclick=finish;
+
+  // Prefer html5-qrcode (wider support)
+  try{
+    const Html5Qrcode=await loadHtml5Qrcode();
+    const scanner=new Html5Qrcode('qr-reader');
+    window.__bhScanner=scanner;
+    const status=document.getElementById('scanStatus');
+    if(status)status.textContent='Camera on — point at barcode or QR';
+    await scanner.start(
+      {facingMode:'environment'},
+      {fps:10,qrbox:{width:250,height:150},aspectRatio:1.5},
+      (decoded)=>{
+        if(!decoded)return;
+        finish();
+        onCode(String(decoded).trim());
+      },
+      ()=>{}
+    );
+    return finish;
+  }catch(e1){
+    console.warn('html5-qrcode failed',e1);
+  }
+
+  // Fallback: BarcodeDetector API
+  if(window.BarcodeDetector&&navigator.mediaDevices){
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});
+      window.__bhScanStream=stream;
+      const wrap=document.getElementById('qr-reader');
+      const video=document.createElement('video');
+      video.srcObject=stream;video.setAttribute('playsinline','true');video.muted=true;video.style.width='100%';
+      wrap.innerHTML='';wrap.appendChild(video);await video.play();
+      const detector=new BarcodeDetector({formats:['ean_13','ean_8','code_128','code_39','qr_code','upc_a','upc_e','codabar','itf']});
+      let stopped=false;
+      document.getElementById('stopScanBtn').onclick=()=>{stopped=true;finish()};
+      const status=document.getElementById('scanStatus');
+      if(status)status.textContent='Camera on (BarcodeDetector) — point at barcode';
+      const loop=async()=>{
+        if(stopped)return;
+        try{
+          const codes=await detector.detect(video);
+          if(codes&&codes[0]&&codes[0].rawValue){
+            stopped=true;finish();onCode(String(codes[0].rawValue).trim());return;
+          }
+        }catch(e){}
+        requestAnimationFrame(loop);
+      };
+      loop();
+      return finish;
+    }catch(e2){
+      console.warn(e2);
+    }
+  }
+
+  const status=document.getElementById('scanStatus');
+  if(status)status.innerHTML='<span class="text-red-600">Camera unavailable.</span> Use HTTPS, allow camera permission, or type/USB-scan the barcode.';
+  return finish;
+}
+
+
+function genBarcode(){
+  // EAN-13 style numeric (not GS1 certified — local use)
+  let s='2'+String(Date.now()).slice(-11);
+  return s.slice(0,13);
+}
+function stockValueOf(b){
+  return money((b.products||[]).reduce((s,p)=>{
+    const cost=Number(p.cost)!=null&&p.cost!==''?Number(p.cost):(Number(p.price)||0)*0.7;
+    return s+(Number(p.stock)||0)*cost;
+  },0));
+}
+function recordMovement(b,opts){
+  ensureMovements(b);
+  b.stockMovements.unshift({
+    id:uid(),
+    at:new Date().toISOString(),
+    type:opts.type||'ADJUST',
+    productId:opts.productId,
+    productName:opts.productName||'',
+    qty:Number(opts.qty)||0,
+    fromBranch:opts.fromBranch||'',
+    toBranch:opts.toBranch||'',
+    batch:opts.batch||'',
+    note:opts.note||'',
+    by:opts.by||((currentUser()&&currentUser().email)||(currentWorker()&&currentWorker().worker&&currentWorker().worker.name)||'system')
+  });
+  b.stockMovements=b.stockMovements.slice(0,500);
+}
+
+function secStock(b,a){
+  ensureBranches(b);
+  ensureMovements(b);
+  const tab=S.invTab||'overview';
+  const tabs=[['overview','Overview'],['receive','Receive'],['issue','Issue'],['transfer','Transfer'],['adjust','Adjust'],['movements','History'],['valuation','Valuation']];
+  const tabNav=tabs.map(([k,l])=>`<button type="button" data-inv-tab="${k}" class="text-xs px-3 py-1.5 rounded-lg border ${tab===k?'text-white font-semibold':''}" style="${tab===k?'background:'+a+';border-color:'+a:''}">${l}</button>`).join('');
+  const products=(b.products||[]).filter(p=>p.active!==false);
+  const low=products.filter(p=>(p.stock||0)<=(p.reorder||5));
+  const expiring=products.filter(p=>p.expiry&&String(p.expiry)<=addDays(today(),30));
+  const prodOpts=products.map(p=>`<option value="${p.id}">${esc(p.name)} (stock ${p.stock||0})</option>`).join('');
+  const branchOpts=(b.branches||[]).map(br=>`<option value="${br.id}">${esc(br.name)}</option>`).join('');
+  let body='';
+  if(tab==='overview'){
+    const q=(S.stockSearch||'').toLowerCase();
+    let list=products.slice().sort((x,y)=>(x.stock||0)-(y.stock||0));
+    if(q)list=list.filter(p=>((p.name||'')+(p.sku||'')+(p.barcode||'')+(p.sub||'')).toLowerCase().includes(q));
+    body=`<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <div class="rounded-xl border p-3 bg-white"><p class="text-xs text-slate-500">Products</p><p class="text-xl font-bold">${products.length}</p></div>
+      <div class="rounded-xl border p-3 bg-amber-50"><p class="text-xs">Low stock</p><p class="text-xl font-bold text-amber-900">${low.length}</p></div>
+      <div class="rounded-xl border p-3 bg-red-50"><p class="text-xs">Near expiry</p><p class="text-xl font-bold text-red-800">${expiring.length}</p></div>
+      <div class="rounded-xl border p-3 bg-emerald-50"><p class="text-xs">Stock value</p><p class="text-xl font-bold text-emerald-900">${kes(stockValueOf(b))}</p></div>
+    </div>
+    <div class="flex flex-col sm:flex-row gap-2 mb-3">
+      <input id="stockSearch" value="${esc(S.stockSearch||'')}" placeholder="Search name, SKU, barcode…" class="flex-1 border rounded-xl px-3 py-2 text-sm"/>
+      <div class="flex gap-2">
+        <input id="stockBarcodeScan" class="border rounded-xl px-3 py-2 text-sm w-40" placeholder="Scan barcode"/>
+        <button type="button" id="stockCameraScan" class="px-3 py-2 rounded-xl border-2 border-teal-600 bg-teal-50 text-sm font-semibold">📷 Scan</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto bg-white rounded-xl border">
+      <table class="w-full text-sm min-w-[720px]"><thead class="text-left text-slate-500 text-xs bg-slate-50"><tr>
+        <th class="px-3 py-2">Product</th><th class="px-3 py-2">SKU</th><th class="px-3 py-2">Barcode</th><th class="px-3 py-2">Stock</th><th class="px-3 py-2">Batch</th><th class="px-3 py-2">Expiry</th><th class="px-3 py-2">Reorder</th>
+      </tr></thead><tbody>
+      ${list.map(p=>`<tr class="border-t ${(p.stock||0)<=(p.reorder||5)?'bg-amber-50/50':''}">
+        <td class="px-3 py-2 font-medium">${esc(p.name)}<p class="text-xs text-slate-400">${esc(p.sub||p.category||'')}</p></td>
+        <td class="px-3 py-2 text-xs">${esc(p.sku||'—')}</td>
+        <td class="px-3 py-2 text-xs">${esc(p.barcode||'—')}</td>
+        <td class="px-3 py-2 font-semibold">${p.stock||0}</td>
+        <td class="px-3 py-2 text-xs">${esc(p.batch||'—')}</td>
+        <td class="px-3 py-2 text-xs">${esc(p.expiry||'—')}</td>
+        <td class="px-3 py-2 text-xs">${p.reorder||5}</td>
+      </tr>`).join('')||'<tr><td colspan="7" class="px-3 py-8 text-center text-slate-400">No products</td></tr>'}
+      </tbody></table>
+    </div>`;
+  } else if(tab==='receive'||tab==='issue'||tab==='adjust'){
+    const title=tab==='receive'?'Stock receiving':tab==='issue'?'Stock issuing':'Stock adjustment';
+    const hint=tab==='receive'?'Increase stock (purchases, returns in).':tab==='issue'?'Decrease stock (damage, internal use).':'Set absolute stock or +/- adjustment.';
+    body=`<div class="bg-white rounded-xl border p-4 max-w-lg">
+      <h4 class="font-semibold mb-1">${title}</h4>
+      <p class="text-xs text-slate-500 mb-3">${hint}</p>
+      <form id="stockMoveForm" data-move="${tab}" class="space-y-2 text-sm">
+        <div><label class="text-xs text-slate-500">Product</label><select name="productId" required class="w-full border rounded-xl px-3 py-2">${prodOpts}</select></div>
+        <div><label class="text-xs text-slate-500">Quantity ${tab==='adjust'?'(use + or − e.g. 5 or -3, or set absolute below)':''}</label>
+          <input name="qty" type="number" step="1" required class="w-full border rounded-xl px-3 py-2" placeholder="${tab==='adjust'?'e.g. 5 or -2':''}"/></div>
+        ${tab==='adjust'?`<label class="flex items-center gap-2 text-xs"><input type="checkbox" name="absolute"/> Set absolute stock to this quantity</label>`:''}
+        <div><label class="text-xs text-slate-500">Batch / lot</label><input name="batch" class="w-full border rounded-xl px-3 py-2"/></div>
+        <div><label class="text-xs text-slate-500">Note</label><input name="note" class="w-full border rounded-xl px-3 py-2"/></div>
+        <button class="w-full py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Record ${tab}</button>
+      </form>
+    </div>`;
+  } else if(tab==='transfer'){
+    body=`<div class="bg-white rounded-xl border p-4 max-w-lg">
+      <h4 class="font-semibold mb-1">Stock transfer</h4>
+      <p class="text-xs text-slate-500 mb-3">Move quantity between branches (logged in history).</p>
+      <form id="stockTransferForm" class="space-y-2 text-sm">
+        <div><label class="text-xs text-slate-500">Product</label><select name="productId" required class="w-full border rounded-xl px-3 py-2">${prodOpts}</select></div>
+        <div><label class="text-xs text-slate-500">Qty</label><input name="qty" type="number" min="1" required class="w-full border rounded-xl px-3 py-2"/></div>
+        <div><label class="text-xs text-slate-500">From branch</label><select name="fromBranch" class="w-full border rounded-xl px-3 py-2">${branchOpts}</select></div>
+        <div><label class="text-xs text-slate-500">To branch</label><select name="toBranch" class="w-full border rounded-xl px-3 py-2">${branchOpts}</select></div>
+        <div><label class="text-xs text-slate-500">Note</label><input name="note" class="w-full border rounded-xl px-3 py-2"/></div>
+        <button class="w-full py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Transfer</button>
+      </form>
+    </div>`;
+  } else if(tab==='movements'){
+    const moves=(b.stockMovements||[]).slice(0,100);
+    body=`<div class="bg-white rounded-xl border overflow-x-auto">
+      <table class="w-full text-sm min-w-[640px]"><thead class="text-left text-xs text-slate-500 bg-slate-50"><tr>
+        <th class="px-3 py-2">When</th><th class="px-3 py-2">Type</th><th class="px-3 py-2">Product</th><th class="px-3 py-2">Qty</th><th class="px-3 py-2">Batch</th><th class="px-3 py-2">Note</th><th class="px-3 py-2">By</th>
+      </tr></thead><tbody>
+      ${moves.map(m=>`<tr class="border-t"><td class="px-3 py-2 text-xs">${esc((m.at||'').slice(0,16).replace('T',' '))}</td>
+        <td class="px-3 py-2 text-xs font-medium">${esc(m.type)}</td><td class="px-3 py-2">${esc(m.productName)}</td>
+        <td class="px-3 py-2">${m.qty}</td><td class="px-3 py-2 text-xs">${esc(m.batch||'—')}</td>
+        <td class="px-3 py-2 text-xs">${esc(m.note||'')}${m.fromBranch?` · ${esc(m.fromBranch)}→${esc(m.toBranch||'')}`:''}</td>
+        <td class="px-3 py-2 text-xs">${esc(m.by||'')}</td></tr>`).join('')||'<tr><td colspan="7" class="px-3 py-8 text-center text-slate-400">No movements yet</td></tr>'}
+      </tbody></table>
+    </div>`;
+  } else if(tab==='valuation'){
+    const rows=products.map(p=>{
+      const cost=Number(p.cost)!=null&&p.cost!==''?Number(p.cost):(Number(p.price)||0)*0.7;
+      const val=money((Number(p.stock)||0)*cost);
+      return {name:p.name,sku:p.sku,stock:p.stock||0,cost,val};
+    }).sort((a,b)=>b.val-a.val);
+    body=`<div class="bg-white rounded-xl border p-4 mb-3"><p class="text-sm">Total stock value (cost-based): <b class="text-lg">${kes(stockValueOf(b))}</b></p>
+      <p class="text-xs text-slate-500">Uses product cost if set; otherwise 70% of sell price.</p></div>
+      <div class="overflow-x-auto bg-white rounded-xl border"><table class="w-full text-sm"><thead class="text-left text-xs text-slate-500 bg-slate-50"><tr>
+        <th class="px-3 py-2">Product</th><th class="px-3 py-2">SKU</th><th class="px-3 py-2">Stock</th><th class="px-3 py-2">Unit cost</th><th class="px-3 py-2">Value</th>
+      </tr></thead><tbody>
+      ${rows.map(r=>`<tr class="border-t"><td class="px-3 py-2">${esc(r.name)}</td><td class="px-3 py-2 text-xs">${esc(r.sku||'—')}</td>
+        <td class="px-3 py-2">${r.stock}</td><td class="px-3 py-2">${kes(r.cost)}</td><td class="px-3 py-2 font-medium">${kes(r.val)}</td></tr>`).join('')}
+      </tbody></table></div>`;
+  }
+  return `<div class="space-y-4">
+    <div class="flex flex-wrap gap-1">${tabNav}</div>
+    ${body}
+  </div>`;
+}
+
+
 function secProducts(b,a){
   const q=(S.prodSearch||'').toLowerCase();
   let list=b.products||[];
-  if(q)list=list.filter(p=>(p.name||'').toLowerCase().includes(q));
+  if(q)list=list.filter(p=>((p.name||'')+(p.sku||'')+(p.barcode||'')+(p.sub||'')+(p.category||'')).toLowerCase().includes(q));
+  const cats=[...new Set((b.categories||[]).concat(list.map(p=>p.category).filter(Boolean)))];
   const rows=list.map(p=>`<tr class="border-t align-top">
-    <td class="px-2 py-2">${productThumb(p,48)}</td>
-    <td class="px-2 py-2"><input data-pname="${p.id}" value="${esc(p.name)}" class="w-full border rounded-lg px-2 py-1 text-sm"/></td>
-    <td class="px-2 py-2"><input data-pimage="${p.id}" value="${esc(p.image||'')}" placeholder="Image URL" class="w-36 border rounded-lg px-2 py-1 text-xs"/></td>
-    <td class="px-2 py-2"><input data-psub="${p.id}" value="${esc(p.sub||'')}" class="w-24 border rounded-lg px-2 py-1 text-sm"/></td>
-    <td class="px-2 py-2"><input type="number" data-price="${p.id}" value="${p.price}" class="w-24 border rounded-lg px-2 py-1 text-sm"/></td>
-    <td class="px-2 py-2"><input type="number" data-stock="${p.id}" value="${p.stock||0}" class="w-20 border rounded-lg px-2 py-1 text-sm"/></td>
-    <td class="px-2 py-2"><button type="button" data-del-prod="${p.id}" class="text-xs text-red-600">Remove</button></td>
+    <td class="px-2 py-2">${productThumb(p,40)}</td>
+    <td class="px-2 py-2"><input data-pname="${p.id}" value="${esc(p.name)}" class="w-full min-w-[120px] border rounded-lg px-2 py-1 text-sm"/></td>
+    <td class="px-2 py-2"><input data-psku="${p.id}" value="${esc(p.sku||'')}" class="w-24 border rounded-lg px-2 py-1 text-xs" placeholder="SKU"/></td>
+    <td class="px-2 py-2"><input data-pbarcode="${p.id}" value="${esc(p.barcode||'')}" class="w-28 border rounded-lg px-2 py-1 text-xs" placeholder="Barcode"/></td>
+    <td class="px-2 py-2"><input data-psub="${p.id}" value="${esc(p.sub||'')}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Sub"/></td>
+    <td class="px-2 py-2"><input type="number" data-price="${p.id}" value="${p.price}" class="w-20 border rounded-lg px-2 py-1 text-sm"/></td>
+    <td class="px-2 py-2"><input type="number" data-pcost="${p.id}" value="${p.cost!=null?p.cost:''}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Cost"/></td>
+    <td class="px-2 py-2"><input type="number" data-stock="${p.id}" value="${p.stock||0}" class="w-16 border rounded-lg px-2 py-1 text-sm"/></td>
+    <td class="px-2 py-2"><input data-pbatch="${p.id}" value="${esc(p.batch||'')}" class="w-20 border rounded-lg px-2 py-1 text-xs"/></td>
+    <td class="px-2 py-2"><input type="date" data-pexpiry="${p.id}" value="${esc(p.expiry||'')}" class="border rounded-lg px-1 py-1 text-xs"/></td>
+    <td class="px-2 py-2"><button type="button" data-del-prod="${p.id}" class="text-xs text-red-600">×</button></td>
   </tr>`).join('');
-  return `<div class="flex flex-wrap justify-between gap-2 mb-4">
-    <p class="text-sm text-slate-500">${(b.products||[]).length} products · editable catalog for this business</p>
+  return `<div class="space-y-4">
+  <div class="bg-white rounded-2xl border p-4">
+    <h3 class="font-semibold mb-2">Register product</h3>
+    <form id="regProductForm" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
+      <input name="name" required placeholder="Product name *" class="border rounded-xl px-3 py-2"/>
+      <input name="category" placeholder="Category" list="catList" class="border rounded-xl px-3 py-2"/>
+      <datalist id="catList">${cats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+      <input name="sub" placeholder="Subcategory / variant" class="border rounded-xl px-3 py-2"/>
+      <input name="sku" placeholder="SKU (auto if empty)" class="border rounded-xl px-3 py-2"/>
+      <input name="barcode" placeholder="Barcode (auto if empty)" class="border rounded-xl px-3 py-2"/>
+      <input name="price" type="number" step="0.01" placeholder="Sell price" class="border rounded-xl px-3 py-2"/>
+      <input name="cost" type="number" step="0.01" placeholder="Cost price" class="border rounded-xl px-3 py-2"/>
+      <input name="stock" type="number" placeholder="Opening stock" class="border rounded-xl px-3 py-2"/>
+      <input name="reorder" type="number" placeholder="Reorder level" class="border rounded-xl px-3 py-2"/>
+      <input name="batch" placeholder="Batch / lot" class="border rounded-xl px-3 py-2"/>
+      <input name="expiry" type="date" class="border rounded-xl px-3 py-2"/>
+      <input name="serial" placeholder="Serial number(s)" class="border rounded-xl px-3 py-2"/>
+      <input name="image" placeholder="Image URL" class="border rounded-xl px-3 py-2 sm:col-span-2"/>
+      <button class="py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Add product</button>
+    </form>
+    <p class="text-xs text-slate-400 mt-2">SKU and barcode auto-generate if left blank. Categories from onboarding stay intact.</p>
+  </div>
+  <div class="flex flex-wrap justify-between gap-2">
+    <p class="text-sm text-slate-500">${(b.products||[]).length} products · full catalog</p>
     <div class="flex gap-2">
-      <button type="button" id="addProd" class="text-sm border px-3 py-2 rounded-xl bg-white">+ Add</button>
+      <button type="button" id="genMissingSku" class="text-sm border px-3 py-2 rounded-xl bg-white">Generate missing SKUs</button>
+      <button type="button" id="genMissingBarcode" class="text-sm border px-3 py-2 rounded-xl bg-white">Generate missing barcodes</button>
       <button type="button" id="autoImages" class="text-sm border px-3 py-2 rounded-xl bg-white">Auto-add images</button>
       <button type="button" id="saveAllProd" class="text-sm text-white px-3 py-2 rounded-xl" style="background:${a}">Save catalog</button>
     </div>
   </div>
-  <input id="prodSearch" type="search" placeholder="Search products by name or category…" value="${esc(S.prodSearch||'')}" class="w-full border rounded-xl px-3 py-2 mb-3 bg-white"/>
-  <div class="bg-white rounded-2xl border overflow-x-auto"><table class="w-full text-sm min-w-[600px]">
-    <thead class="bg-slate-50 text-left text-slate-500"><tr><th class="px-2 py-3">Img</th><th class="px-2 py-3">Name</th><th class="px-2 py-3">Image URL</th><th class="px-2 py-3">Sub</th><th class="px-2 py-3">Price</th><th class="px-2 py-3">Stock</th><th></th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="7" class="p-8 text-center text-slate-400">Empty catalog</td></tr>'}</tbody></table></div>
-  <p class="text-xs text-slate-400 mt-2">Paste an image link (https://…) for a product photo. Without a link, a category icon is shown in the online shop.</p>`;
+  <input id="prodSearch" type="search" placeholder="Search name, SKU, barcode, category…" value="${esc(S.prodSearch||'')}" class="w-full border rounded-xl px-3 py-2 bg-white"/>
+  <div class="bg-white rounded-2xl border overflow-x-auto"><table class="w-full text-sm min-w-[900px]">
+    <thead class="bg-slate-50 text-left text-slate-500 text-xs"><tr>
+      <th class="px-2 py-3">Img</th><th class="px-2 py-3">Name</th><th class="px-2 py-3">SKU</th><th class="px-2 py-3">Barcode</th><th class="px-2 py-3">Sub</th><th class="px-2 py-3">Price</th><th class="px-2 py-3">Cost</th><th class="px-2 py-3">Stock</th><th class="px-2 py-3">Batch</th><th class="px-2 py-3">Expiry</th><th></th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="11" class="p-8 text-center text-slate-400">Empty catalog</td></tr>'}</tbody>
+  </table></div>
+  </div>`;
 }
+
 
 function secPurchases(b,a){
   const sups=(b.customers||[]).filter(c=>c.type==='SUPPLIER'||c.type==='BOTH');
@@ -3175,70 +3465,61 @@ function secExpenses(b,a){
 
 function secOnlineOrders(b,a){
   const online=(b.orders||[]).filter(o=>o.source==='online').slice().reverse();
-  const pending=online.filter(o=>o.status==='PENDING').length;
-  const paid=online.filter(o=>o.status==='PAID').length;
-  const activeProds=(b.products||[]).filter(p=>p.active!==false&&(p.stock||0)>0).length;
+  const statuses=['NEW','CONFIRMED','PROCESSING','READY','DISPATCHED','DELIVERED','CANCELLED','PENDING','PAID'];
+  const filter=S.onlineOrderFilter||'all';
+  const list=filter==='all'?online:online.filter(o=>String(o.orderStatus||o.status).toUpperCase()===filter);
   const storeOn=b.onlineStore!==false;
-  const rows=online.map(o=>`<tr class="border-t">
-    <td class="px-4 py-3"><button type="button" data-open-inv="${o.id}" style="color:${a}" class="font-medium">${esc(o.number)}</button></td>
-    <td class="px-4 py-3 text-sm">${esc(o.customerName||'')}<br/><span class="text-xs text-slate-400">${esc(o.phone||'')}</span></td>
-    <td class="px-4 py-3 text-xs">${esc(o.fulfillment||'pickup')}</td>
-    <td class="px-4 py-3 text-xs ${o.status==='PAID'?'text-emerald-600':'text-amber-600'}">${o.status}</td>
-    <td class="px-4 py-3 text-right font-medium">${kes(o.total)}</td>
-    <td class="px-4 py-3 space-x-1">
-      ${o.status==='PENDING'?`<button type="button" data-accept-online="${o.id}" class="text-xs text-white px-2 py-1 rounded-lg" style="background:${a}">Mark paid</button>
-      <button type="button" data-cancel-online="${o.id}" class="text-xs text-red-600 border border-red-200 px-2 py-1 rounded-lg">Cancel</button>`:''}
-    </td>
-  </tr>`).join('');
+  const deliveryFee=Number(b.deliveryFee||0);
+  const counts={};
+  online.forEach(o=>{const s=String(o.orderStatus||o.status||'NEW').toUpperCase();counts[s]=(counts[s]||0)+1});
+  const statusBtns=['all','NEW','CONFIRMED','PROCESSING','READY','DISPATCHED','DELIVERED','CANCELLED'].map(s=>
+    `<button type="button" data-oo-filter="${s}" class="text-xs px-2 py-1 rounded-lg border ${filter===s?'text-white':''}" style="${filter===s?'background:'+a+';border-color:'+a:''}">${s==='all'?'All':s} ${s==='all'?online.length:(counts[s]||0)}</button>`
+  ).join('');
+  const rows=list.map(o=>{
+    const st=String(o.orderStatus||o.status||'NEW').toUpperCase();
+    const pay=o.paymentStatus||(o.status==='PAID'?'PAID':(o.payMethod==='Credit'?'CREDIT':'UNPAID'));
+    return `<tr class="border-t align-top">
+      <td class="px-3 py-2"><button type="button" data-open-inv="${o.id}" class="font-medium" style="color:${a}">${esc(o.number)}</button>
+        <p class="text-xs text-slate-400">${esc(o.date||'')}</p></td>
+      <td class="px-3 py-2 text-sm">${esc(o.customerName||o.phone||'—')}
+        <p class="text-xs text-slate-400">${esc(o.deliveryAddress||o.fulfillment||'')}</p></td>
+      <td class="px-3 py-2 text-xs">${(o.items||[]).slice(0,3).map(it=>esc(it.name)+' ×'+(it.qty||1)).join('<br/>')}</td>
+      <td class="px-3 py-2 text-sm">${kes(o.total)}${o.deliveryFee?`<p class="text-xs">+del ${kes(o.deliveryFee)}</p>`:''}</td>
+      <td class="px-3 py-2 text-xs"><span class="font-medium">${esc(st)}</span><br/>Pay: ${esc(pay)}</td>
+      <td class="px-3 py-2 text-xs space-y-1">
+        <select data-set-order-status="${o.id}" class="border rounded-lg px-1 py-1 text-xs w-full">
+          ${['NEW','CONFIRMED','PROCESSING','READY','DISPATCHED','DELIVERED','CANCELLED'].map(s=>`<option value="${s}" ${st===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </td>
+    </tr>`;
+  }).join('');
   return `<div class="space-y-4">
-  <div class="bg-white rounded-2xl border p-5">
-    <div class="flex flex-wrap items-start justify-between gap-4">
-      <div class="flex gap-3 items-center">
-        ${logoHtml(b.name,a,52)}
+    <div class="bg-white rounded-2xl border p-4">
+      <div class="flex flex-wrap justify-between gap-2 mb-3">
         <div>
-          <h2 class="text-lg font-bold">${esc(b.name)} · Online shop</h2>
-          <p class="text-sm ${storeOn?'text-emerald-600':'text-amber-600'}">${storeOn?'● Open for online orders':'○ Closed — customers cannot order'}</p>
+          <h3 class="font-semibold">Online store & orders</h3>
+          <p class="text-xs text-slate-500">Customers order from your public link. Update status through delivery.</p>
         </div>
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="onlineStoreToggle" ${storeOn?'checked':''}/> Store open</label>
       </div>
-      <label class="flex items-center gap-2 text-sm border rounded-xl px-4 py-2 cursor-pointer bg-slate-50">
-        <input type="checkbox" id="toggleOnline" ${storeOn?'checked':''}/>
-        <span>Accept online orders</span>
-      </label>
+      <div class="grid sm:grid-cols-3 gap-2 text-sm mb-3">
+        <div><label class="text-xs text-slate-500">Default delivery fee (KES)</label>
+          <input id="deliveryFeeInput" type="number" value="${deliveryFee}" class="w-full border rounded-xl px-3 py-2"/></div>
+        <div class="flex items-end"><button type="button" id="saveDeliveryFee" class="px-4 py-2 rounded-xl text-white text-sm" style="background:${a}">Save fee</button></div>
+        <div class="flex items-end"><button type="button" data-go="online" class="px-4 py-2 rounded-xl border text-sm">Open customer store</button></div>
+      </div>
+      <div class="flex flex-wrap gap-1 mb-3">${statusBtns}</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[640px]">
+          <thead class="text-left text-slate-500 text-xs"><tr>
+            <th class="px-3 py-2">Order</th><th class="px-3 py-2">Customer</th><th class="px-3 py-2">Items</th><th class="px-3 py-2">Total</th><th class="px-3 py-2">Status</th><th class="px-3 py-2">Update</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="6" class="px-3 py-8 text-center text-slate-400">No online orders yet</td></tr>'}</tbody>
+        </table>
+      </div>
     </div>
-    <p class="text-sm text-slate-600 mt-4">Every business has its own online shop. Customers open <b>Order online</b> on the home page, choose <b>${esc(b.name)}</b>, add products and place an order. You receive it here.</p>
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-      <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-500">Products for sale online</p><p class="text-xl font-bold">${activeProds}</p></div>
-      <div class="rounded-xl bg-amber-50 p-3"><p class="text-xs text-amber-800">Pending orders</p><p class="text-xl font-bold text-amber-800">${pending}</p></div>
-      <div class="rounded-xl bg-emerald-50 p-3"><p class="text-xs text-emerald-800">Paid online orders</p><p class="text-xl font-bold text-emerald-800">${paid}</p></div>
-      <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-500">All online orders</p><p class="text-xl font-bold">${online.length}</p></div>
-    </div>
-    <div class="mt-4 flex flex-wrap gap-2">
-      <button type="button" id="previewStore" class="px-4 py-2 rounded-xl text-white text-sm font-semibold" style="background:${a}">Open my online shop (customer view)</button>
-      <button type="button" data-nav="products" class="px-4 py-2 rounded-xl border bg-white text-sm font-medium">Manage products</button>
-    </div>
-  </div>
-  <div class="bg-teal-50 border border-teal-100 rounded-xl p-4 text-sm text-teal-950">
-    <p class="font-semibold mb-1">How customers order</p>
-    <ol class="list-decimal ml-4 space-y-1 text-teal-900">
-      <li>Open BusinessHub home → <b>Order online</b></li>
-      <li>Select your shop: <b>${esc(b.name)}</b></li>
-      <li>Browse products by category, add to cart, enter name &amp; phone</li>
-      <li>Choose pickup or delivery → place order</li>
-      <li>You see the order below and mark it paid when money is received</li>
-    </ol>
-  </div>
-  <div class="bg-white rounded-2xl border overflow-x-auto">
-    <div class="px-4 py-3 border-b font-semibold text-sm">Incoming online orders</div>
-    <table class="w-full text-sm min-w-[640px]">
-      <thead class="bg-slate-50 text-left text-slate-500"><tr>
-        <th class="px-4 py-3">Order</th><th class="px-4 py-3">Customer</th><th class="px-4 py-3">Fulfillment</th><th class="px-4 py-3">Status</th><th class="px-4 py-3 text-right">Total</th><th class="px-4 py-3">Actions</th>
-      </tr></thead>
-      <tbody>${rows||'<tr><td colspan="6" class="p-10 text-center text-slate-400">No online orders yet — share your shop with customers</td></tr>'}</tbody>
-    </table>
-  </div>
   </div>`;
 }
-
 
 
 function secShifts(b,a){
@@ -3246,19 +3527,22 @@ function secShifts(b,a){
   const open=currentShift(b);
   const workers=b.workers||[];
   const recent=(b.shifts||[]).slice().reverse().slice(0,20);
-  const workerOpts=workers.map(w=>`<option value="${esc((w.firstName||w.name||'')+' '+(w.lastName||'')).trim()}">${esc(w.firstName||w.name||'')} ${esc(w.lastName||'')}</option>`).join('');
+  const workerOpts=workers.map(w=>{
+    const nm=((w.firstName||w.name||'')+' '+(w.lastName||'')).trim()||w.username||'Worker';
+    return `<option value="${esc(nm)}" data-wid="${w.id}">${esc(nm)} (@${esc(w.username||'')})</option>`;
+  }).join('');
   return `<div class="space-y-4">
-    <div class="bg-white rounded-2xl border p-4" style="background:linear-gradient(180deg,#fff 0%,#f0fdf4 100%)">
+    <div class="bg-white rounded-2xl border p-4">
       <h3 class="font-semibold mb-1">Cashier shifts</h3>
-      <p class="text-xs text-slate-500 mb-3">Shift records show the <b>worker name</b> who opened the till.</p>
+      <p class="text-xs text-slate-500 mb-3">The <b>worker name</b> is stored on each shift when you start it.</p>
       ${open?`<div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-sm mb-3">
-        <b>Shift open</b> · <span class="font-semibold text-emerald-900">${esc(open.openedBy||'—')}</span>
-        · started ${esc((open.startedAt||'').slice(0,16).replace('T',' '))}
+        <b>Shift open</b> · Worker: <span class="font-bold text-emerald-900">${esc(open.openedBy||'—')}</span>
+        · ${esc((open.startedAt||'').slice(0,16).replace('T',' '))}
         <button type="button" id="closeShiftBtn" class="ml-2 text-xs border px-2 py-1 rounded-lg">Close shift</button>
       </div>`:`
       <div class="flex flex-wrap gap-2 items-end mb-3">
-        <div><label class="text-xs text-slate-500">Worker name</label>
-          <select id="shiftWorkerName" class="border rounded-xl px-3 py-2 text-sm block min-w-[180px]">
+        <div class="flex-1 min-w-[200px]"><label class="text-xs text-slate-500">Worker on this shift</label>
+          <select id="shiftWorkerName" class="w-full border rounded-xl px-3 py-2 text-sm">
             <option value="">— select worker —</option>
             ${workerOpts}
             <option value="Owner">Owner</option>
@@ -3266,10 +3550,10 @@ function secShifts(b,a){
         </div>
         <button type="button" id="openShiftBtn" class="px-4 py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Start shift</button>
       </div>`}
-      <h4 class="text-sm font-medium mt-4 mb-2">Recent shifts</h4>
+      <h4 class="text-sm font-medium mt-4 mb-2">Recent shifts (by worker name)</h4>
       <div class="text-sm space-y-1">${recent.map(s=>`<div class="border-b py-2 flex justify-between gap-2">
-        <span><b class="text-slate-800">${esc(s.openedBy||'Unknown')}</b> · ${esc(s.status)}</span>
-        <span class="text-xs text-slate-400">${esc((s.startedAt||'').slice(0,16).replace('T',' '))}${s.endedAt?' → '+esc(String(s.endedAt).slice(0,16).replace('T',' ')):''}</span>
+        <span>Worker: <b>${esc(s.openedBy||'Unknown')}</b> · ${esc(s.status)}</span>
+        <span class="text-xs text-slate-400">${esc((s.startedAt||'').slice(0,16).replace('T',' '))}</span>
       </div>`).join('')||'<p class="text-slate-400">No shifts yet</p>'}</div>
     </div>
   </div>`;
@@ -3414,10 +3698,11 @@ function secTeam(b,a){
   ensureBranches(b);
   const workers=b.workers||[];
   const branches=b.branches||[{id:'main',name:'Main branch'}];
+  const permLabels={dashboard:'Mini dashboard',shop:'Shop / POS',invoices:'Invoices & receipts',onlineorders:'Online orders',delivery:'Delivery',stock:'View stock'};
   return `<div class="space-y-4">
     <div class="bg-white rounded-2xl border p-4">
       <h3 class="font-semibold">Worker management</h3>
-      <p class="text-xs text-slate-500 mb-3">Each worker has separate login credentials. They never see the owner dashboard — only POS, their sales, and invoices.</p>
+      <p class="text-xs text-slate-500 mb-3">Assign login credentials and which menu sections each worker may open. They never access full owner settings.</p>
       <label class="flex items-center gap-2 text-sm mb-2 p-3 rounded-xl bg-slate-50 border">
         <input type="checkbox" id="requireWorkerSalePw" ${b.requireWorkerSalePassword?'checked':''}/>
         Require worker password on every POS sale
@@ -3426,21 +3711,23 @@ function secTeam(b,a){
         <input type="checkbox" id="requireShiftForSale" ${b.requireShiftForSale?'checked':''}/>
         Require open cashier shift before POS sales
       </label>
-      <div class="space-y-2 mb-4">${workers.map((w,i)=>{
-        const sales=(b.orders||[]).filter(o=>o.servedBy&&o.servedBy.id===w.id&&o.status==='PAID');
+      <div class="space-y-2 mb-4">${workers.map((w,idx)=>{
+        const sales=(b.orders||[]).filter(o=>o.servedBy&&o.servedBy.id===w.id&&(o.status==='PAID'||o.status==='CREDIT'));
         const total=sales.reduce((s,o)=>s+Number(o.total||0),0);
+        const perms=w.permissions||{dashboard:true,shop:true,invoices:true};
+        const permStr=Object.keys(permLabels).filter(k=>perms[k]).map(k=>permLabels[k]).join(', ')||'none';
         return `<div class="border rounded-xl p-3 text-sm">
           <div class="flex flex-wrap justify-between gap-2">
             <div>
               <b>${esc(w.firstName||w.name||'')} ${esc(w.lastName||'')}</b>
               <span class="text-xs text-slate-500"> · @${esc(w.username||'—')} · ${esc(w.role||'cashier')}</span>
-              <p class="text-xs text-slate-500">Branch: ${esc((branches.find(x=>x.id===w.branchId)||{}).name||'Main')} · Phone: ${esc(w.phone||'—')}</p>
-              <p class="text-xs mt-1">Sales: ${sales.length} · ${kes(total)} · Commission ${Number(w.commissionPct||0)}%</p>
+              <p class="text-xs text-slate-500">Menus: ${esc(permStr)}</p>
+              <p class="text-xs mt-1">Sales: ${sales.length} · ${kes(total)}</p>
             </div>
-            <button type="button" data-del-worker="${i}" class="text-xs text-red-600">Remove</button>
+            <button type="button" data-del-worker="${idx}" class="text-xs text-red-600">Remove</button>
           </div>
         </div>`;
-      }).join('')||'<p class="text-slate-400 text-sm">No workers yet — add one below.</p>'}</div>
+      }).join('')||'<p class="text-slate-400 text-sm">No workers yet</p>'}</div>
       <form id="addWorkerForm2" class="grid sm:grid-cols-2 gap-2 text-sm border-t pt-4">
         <input name="firstName" required placeholder="First name" class="border rounded-xl px-3 py-2"/>
         <input name="lastName" placeholder="Last name" class="border rounded-xl px-3 py-2"/>
@@ -3457,6 +3744,17 @@ function secTeam(b,a){
           ${branches.map(br=>`<option value="${br.id}">${esc(br.name)}</option>`).join('')}
         </select>
         <input name="commissionPct" type="number" min="0" max="100" step="0.1" placeholder="Commission %" class="border rounded-xl px-3 py-2"/>
+        <div class="sm:col-span-2 p-3 rounded-xl bg-slate-50 border">
+          <p class="text-xs font-medium mb-2">Authorise menu sections</p>
+          <div class="flex flex-wrap gap-3 text-xs">
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_dashboard" checked/> Mini dashboard</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_shop" checked/> Shop / POS</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_invoices" checked/> Invoices & receipts</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_onlineorders"/> Online orders</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_delivery"/> Delivery</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="perm_stock"/> View stock</label>
+          </div>
+        </div>
         <button class="sm:col-span-2 py-2.5 rounded-xl text-white font-medium" style="background:${a}">Add worker with login</button>
       </form>
     </div>
@@ -3592,6 +3890,14 @@ function secSettings(b,a){
   </div>
 
 
+  <div class="bg-white rounded-2xl border p-6">
+    <h3 class="font-semibold mb-1">Appearance</h3>
+    <p class="text-xs text-slate-500 mb-2">Light / dark mode for this device.</p>
+    <select id="themeSelect" class="w-full border rounded-xl px-3 py-2.5 text-sm">
+      <option value="light" ${(S.theme||'light')==='light'?'selected':''}>Light</option>
+      <option value="dark" ${S.theme==='dark'?'selected':''}>Dark</option>
+    </select>
+  </div>
   <div class="bg-white rounded-2xl border p-6">
     <h3 class="font-semibold mb-1">Shop operation mode</h3>
     <p class="text-xs text-slate-500 mb-3">Solo = you use the full menu yourself. Team = you still have the full owner menu; workers use Worker login for a mini home + POS.</p>
@@ -4239,7 +4545,14 @@ function bind(){
         branchId:fd.get('branchId')||'main',
         commissionPct:Number(fd.get('commissionPct'))||0,
         createdAt:today(),
-        permissions:{pos:true,invoices:true,stock:false,reports:false}
+        permissions:{
+          dashboard:!!fd.get('perm_dashboard'),
+          shop:!!fd.get('perm_shop'),
+          invoices:!!fd.get('perm_invoices'),
+          onlineorders:!!fd.get('perm_onlineorders'),
+          delivery:!!fd.get('perm_delivery'),
+          stock:!!fd.get('perm_stock')
+        }
       });
       saveBiz(b);pushAudit('worker_added',username);toast('Worker added with separate login');render();
     };
@@ -4250,18 +4563,46 @@ function bind(){
   const receiptWidth=document.getElementById('receiptWidth');
   if(receiptWidth)receiptWidth.onchange=()=>{S.receiptWidth=receiptWidth.value;render()};
   const barcodeScan=document.getElementById('barcodeScan');
-  if(barcodeScan)barcodeScan.onkeydown=e=>{
+  function handlePosBarcode(code){
+    code=String(code||'').trim();if(!code)return;
+    const p=addProductToCartByBarcode(code);
+    if(barcodeScan){barcodeScan.value='';barcodeScan.focus()}
+    if(p){
+      if(S.scanContinuous){/* stay on shop, soft refresh cart only */}
+      render();
+      setTimeout(()=>{const el=document.getElementById('barcodeScan');if(el)el.focus()},100);
+    }
+  }
+  if(barcodeScan){
+    barcodeScan.focus();
+    barcodeScan.onkeydown=e=>{
+      if(e.key!=='Enter')return;
+      e.preventDefault();
+      handlePosBarcode(barcodeScan.value);
+    };
+  }
+  const scanContinuous=document.getElementById('scanContinuous');
+  if(scanContinuous)scanContinuous.onchange=()=>{S.scanContinuous=!!scanContinuous.checked};
+  const cameraScanBtn=document.getElementById('cameraScanBtn');
+  if(cameraScanBtn)cameraScanBtn.onclick=()=>startCameraBarcodeScan(code=>handlePosBarcode(code));
+  const stockBarcodeScan=document.getElementById('stockBarcodeScan');
+  if(stockBarcodeScan)stockBarcodeScan.onkeydown=e=>{
     if(e.key!=='Enter')return;
     e.preventDefault();
-    const code=barcodeScan.value.trim();if(!code)return;
-    const b=biz();const p=(b.products||[]).find(x=>String(x.barcode||'')===code||String(x.id)===code);
-    if(!p){toast('No product for barcode '+code);barcodeScan.select();return}
-    // add to cart
-    if(!b.cart)b.cart=[];
-    const line=b.cart.find(c=>c.id===p.id);
-    if(line)line.qty+=1;else b.cart.push({id:p.id,name:p.name,price:Number(p.price)||0,qty:1});
-    saveBiz(b);barcodeScan.value='';toast(p.name+' added');render();
+    const code=stockBarcodeScan.value.trim();
+    const p=findProductByBarcode(biz(),code);
+    if(!p){toast('Not found: '+code);return}
+    S.stockSearch=p.name;S.invTab='overview';
+    stockBarcodeScan.value='';
+    toast(p.name+' · stock '+(p.stock||0));render();
   };
+  const stockCameraScan=document.getElementById('stockCameraScan');
+  if(stockCameraScan)stockCameraScan.onclick=()=>startCameraBarcodeScan(code=>{
+    const p=findProductByBarcode(biz(),code);
+    if(!p){toast('Not found: '+code);return}
+    S.stockSearch=p.name;S.invTab='overview';toast(p.name+' · stock '+(p.stock||0));render();
+  });
+
   const requireShiftForSale=document.getElementById('requireShiftForSale');
   if(requireShiftForSale)requireShiftForSale.onchange=()=>{
     const b=biz();if(!b)return;b.requireShiftForSale=!!requireShiftForSale.checked;saveBiz(b);
@@ -4684,8 +5025,13 @@ render();
     const b=biz();if(!b)return 0;
     document.querySelectorAll('[data-price]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-price'));if(p){p.price=Number(inp.value)||0;p.reviewed=true}});
     document.querySelectorAll('[data-pname]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-pname'));if(p)p.name=(inp.value||p.name).trim()});
+    document.querySelectorAll('[data-psku]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-psku'));if(p)p.sku=(inp.value||'').trim()});
     document.querySelectorAll('[data-pbarcode]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-pbarcode'));if(p)p.barcode=(inp.value||'').trim()});
     document.querySelectorAll('[data-psub]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-psub'));if(p)p.sub=(inp.value||'Custom').trim()});
+    document.querySelectorAll('[data-pcost]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-pcost'));if(p)p.cost=inp.value===''?null:Number(inp.value)});
+    document.querySelectorAll('[data-stock]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-stock'));if(p)p.stock=Number(inp.value)||0});
+    document.querySelectorAll('[data-pbatch]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-pbatch'));if(p)p.batch=(inp.value||'').trim()});
+    document.querySelectorAll('[data-pexpiry]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-pexpiry'));if(p)p.expiry=(inp.value||'').trim()});
     document.querySelectorAll('[data-pimage]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-pimage'));if(p)p.image=(inp.value||'').trim()});
     document.querySelectorAll('[data-stock]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-stock'));if(p)p.stock=Math.max(0,Number(inp.value)||0)});
     saveBiz(b);return b.products.length;
@@ -5008,7 +5354,7 @@ render();
       const items=S.onlineCart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id}));
       S.onlineCart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,(p.stock||0)-c.qty)});
       const order={id:uid(),number:'WEB-'+String(b.onlineN).padStart(4,'0'),date:today(),items:items,total:total,status:status||'PENDING',
-        payMethod:payMethod,method:payMethod,phone:phone,customerName:name,fulfillment:fulfill,deliveryAddress:fulfill==='delivery'?delivAddr:'',receipt:receipt||'PENDING-PAY',source:'online'};
+        payMethod:payMethod,method:payMethod,phone:phone,customerName:name,fulfillment:fulfill,deliveryAddress:fulfill==='delivery'?delivAddr:'',receipt:receipt||'PENDING-PAY',source:'online',orderStatus:'NEW',paymentStatus:'PENDING',deliveryFee:Number((biz()&&biz().deliveryFee)||0),branchId:(biz()&&biz().currentBranchId)||'main'};
       if(!b.orders)b.orders=[];b.orders.push(order);saveBiz(b);S.onlineCart=[];
       return order;
     };
@@ -5311,12 +5657,9 @@ render();
     const b=biz();if(!b)return;if(!b.shifts)b.shifts=[];
     if(currentShift(b)){toast('Shift already open');return}
     const sel=document.getElementById('shiftWorkerName');
-    let who=(sel&&sel.value)||'';
-    if(!who){
-      const cw=currentWorker();
-      who=(cw&&cw.worker&&((cw.worker.firstName||'')+' '+(cw.worker.lastName||'')).trim())||(cw&&cw.worker&&cw.worker.name)||(currentUser()&&currentUser().name)||'Owner';
-    }
-    who=String(who).trim()||'Owner';
+    let who=(sel&&sel.value&&String(sel.value).trim())||'';
+    if(!who){alert('Select the worker name for this shift');return}
+    who=String(who).trim();
     b.shifts.push({id:uid(),status:'open',startedAt:new Date().toISOString(),openedBy:who,openingFloat:0});
     saveBiz(b);pushAudit('shift_open',who);toast('Shift started for '+who);render();
   };
@@ -5361,6 +5704,136 @@ render();
     S.dashPay=(document.getElementById('dashPay')||{}).value||'all';
     render();
   };
+  
+  const themeToggle=document.getElementById('themeToggle');
+  if(themeToggle)themeToggle.onclick=()=>{
+    S.theme=(S.theme==='dark')?'light':'dark';
+    try{localStorage.setItem('bh_theme',S.theme)}catch(e){}
+    document.documentElement.setAttribute('data-theme',S.theme);
+    toast(S.theme==='dark'?'Dark mode':'Light mode');
+  };
+  const themeSelect=document.getElementById('themeSelect');
+  if(themeSelect)themeSelect.onchange=()=>{
+    S.theme=themeSelect.value||'light';
+    try{localStorage.setItem('bh_theme',S.theme)}catch(e){}
+    document.documentElement.setAttribute('data-theme',S.theme);
+    toast('Theme: '+S.theme);
+  };
+  const workerMenuToggle=document.getElementById('workerMenuToggle');
+  if(workerMenuToggle)workerMenuToggle.onclick=()=>{S.workerMenuOpen=!S.workerMenuOpen;render()};
+  document.querySelectorAll('[data-oo-filter]').forEach(btn=>btn.onclick=()=>{S.onlineOrderFilter=btn.getAttribute('data-oo-filter');render()});
+  document.querySelectorAll('[data-set-order-status]').forEach(sel=>{
+    sel.onchange=()=>{
+      const b=biz();const id=sel.getAttribute('data-set-order-status');
+      const o=(b.orders||[]).find(x=>x.id===id);if(!o)return;
+      o.orderStatus=sel.value;
+      if(sel.value==='DELIVERED'){o.status=o.status==='CREDIT'?o.status:'PAID';o.paymentStatus=o.paymentStatus||'PAID'}
+      if(sel.value==='CANCELLED')o.status='CANCELLED';
+      saveBiz(b);toast('Order '+o.number+' → '+sel.value);render();
+    };
+  });
+  const onlineStoreToggle=document.getElementById('onlineStoreToggle');
+  if(onlineStoreToggle)onlineStoreToggle.onchange=()=>{const b=biz();b.onlineStore=!!onlineStoreToggle.checked;saveBiz(b);toast(b.onlineStore?'Store open':'Store closed')};
+  const saveDeliveryFee=document.getElementById('saveDeliveryFee');
+  if(saveDeliveryFee)saveDeliveryFee.onclick=()=>{
+    const b=biz();b.deliveryFee=Number((document.getElementById('deliveryFeeInput')||{}).value)||0;saveBiz(b);toast('Delivery fee saved');
+  };
+
+  
+  document.querySelectorAll('[data-inv-tab]').forEach(btn=>btn.onclick=()=>{S.invTab=btn.getAttribute('data-inv-tab');render()});
+  const stockSearch=document.getElementById('stockSearch');
+  if(stockSearch)stockSearch.oninput=()=>{S.stockSearch=stockSearch.value;/* debounce free */};
+  if(stockSearch)stockSearch.onchange=()=>{S.stockSearch=stockSearch.value;render()};
+  const stockMoveForm=document.getElementById('stockMoveForm');
+  if(stockMoveForm)stockMoveForm.onsubmit=e=>{
+    e.preventDefault();
+    const fd=new FormData(stockMoveForm);
+    const type=stockMoveForm.getAttribute('data-move');
+    const b=biz();const p=(b.products||[]).find(x=>x.id===fd.get('productId'));
+    if(!p){alert('Product not found');return}
+    let qty=Number(fd.get('qty'))||0;
+    if(type==='receive'){
+      if(qty<=0){alert('Qty must be positive');return}
+      p.stock=(Number(p.stock)||0)+qty;
+      if(fd.get('batch'))p.batch=fd.get('batch');
+      recordMovement(b,{type:'RECEIVE',productId:p.id,productName:p.name,qty,batch:fd.get('batch'),note:fd.get('note')});
+    }else if(type==='issue'){
+      if(qty<=0){alert('Qty must be positive');return}
+      if((p.stock||0)<qty){alert('Insufficient stock');return}
+      p.stock=(Number(p.stock)||0)-qty;
+      recordMovement(b,{type:'ISSUE',productId:p.id,productName:p.name,qty:-qty,batch:fd.get('batch'),note:fd.get('note')});
+    }else if(type==='adjust'){
+      if(fd.get('absolute')){
+        const prev=Number(p.stock)||0;
+        p.stock=qty;
+        recordMovement(b,{type:'ADJUST',productId:p.id,productName:p.name,qty:qty-prev,batch:fd.get('batch'),note:fd.get('note')||'absolute set'});
+      }else{
+        p.stock=(Number(p.stock)||0)+qty;
+        recordMovement(b,{type:'ADJUST',productId:p.id,productName:p.name,qty,batch:fd.get('batch'),note:fd.get('note')});
+      }
+    }
+    saveBiz(b);toast('Stock '+type+' recorded');render();
+  };
+  const stockTransferForm=document.getElementById('stockTransferForm');
+  if(stockTransferForm)stockTransferForm.onsubmit=e=>{
+    e.preventDefault();
+    const fd=new FormData(stockTransferForm);
+    const b=biz();const p=(b.products||[]).find(x=>x.id===fd.get('productId'));
+    if(!p)return;
+    const qty=Number(fd.get('qty'))||0;
+    if(qty<=0){alert('Qty must be positive');return}
+    if((p.stock||0)<qty){alert('Insufficient stock');return}
+    if(fd.get('fromBranch')===fd.get('toBranch')){alert('Choose different branches');return}
+    p.stock=(Number(p.stock)||0)-qty;
+    // same catalog; transfer is logged (per-branch stock can expand later)
+    recordMovement(b,{type:'TRANSFER',productId:p.id,productName:p.name,qty:-qty,fromBranch:fd.get('fromBranch'),toBranch:fd.get('toBranch'),note:fd.get('note')});
+    // credit destination conceptually
+    recordMovement(b,{type:'TRANSFER_IN',productId:p.id,productName:p.name,qty:qty,fromBranch:fd.get('fromBranch'),toBranch:fd.get('toBranch'),note:fd.get('note')});
+    p.stock=(Number(p.stock)||0)+qty; // keep global stock same for single-catalog; history shows transfer
+    // Actually net zero for global - undo the -qty
+    // wait: if we - then + net zero - good for global stock with history only
+    saveBiz(b);toast('Transfer logged');render();
+  };
+  const regProductForm=document.getElementById('regProductForm');
+  if(regProductForm)regProductForm.onsubmit=e=>{
+    e.preventDefault();
+    const fd=new FormData(regProductForm);
+    const b=biz();if(!b.products)b.products=[];
+    const name=String(fd.get('name')||'').trim();
+    if(!name)return;
+    const sku=String(fd.get('sku')||'').trim()||genSKU(b,name);
+    const barcode=String(fd.get('barcode')||'').trim()||genBarcode();
+    const stock=Number(fd.get('stock'))||0;
+    const p={
+      id:uid(),name,sku,barcode,
+      category:String(fd.get('category')||'').trim()||(b.categories&&b.categories[0])||'General',
+      sub:String(fd.get('sub')||'').trim()||'Custom',
+      price:Number(fd.get('price'))||0,
+      cost:fd.get('cost')===''||fd.get('cost')==null?null:Number(fd.get('cost')),
+      stock,reorder:Number(fd.get('reorder'))||5,
+      batch:String(fd.get('batch')||'').trim(),
+      expiry:String(fd.get('expiry')||'').trim(),
+      serial:String(fd.get('serial')||'').trim(),
+      image:String(fd.get('image')||'').trim(),
+      active:true
+    };
+    b.products.push(p);
+    if(stock)recordMovement(b,{type:'RECEIVE',productId:p.id,productName:p.name,qty:stock,batch:p.batch,note:'Opening stock'});
+    saveBiz(b);toast('Product registered');render();
+  };
+  const genMissingSku=document.getElementById('genMissingSku');
+  if(genMissingSku)genMissingSku.onclick=()=>{
+    const b=biz();let n=0;
+    (b.products||[]).forEach(p=>{if(!p.sku){p.sku=genSKU(b,p.name);n++}});
+    saveBiz(b);toast(n+' SKU(s) generated');render();
+  };
+  const genMissingBarcode=document.getElementById('genMissingBarcode');
+  if(genMissingBarcode)genMissingBarcode.onclick=()=>{
+    const b=biz();let n=0;
+    (b.products||[]).forEach(p=>{if(!p.barcode){p.barcode=genBarcode();n++}});
+    saveBiz(b);toast(n+' barcode(s) generated');render();
+  };
+
   const adminRefresh=document.getElementById('adminRefresh');
   if(adminRefresh)adminRefresh.onclick=()=>{
     if(!SERVER_MODE){toast('Local mode — no server');return}
