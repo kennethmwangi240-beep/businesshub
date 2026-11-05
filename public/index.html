@@ -128,6 +128,11 @@ button.lp-card{cursor:pointer}
 #updBar{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:120;background:#0f172a;color:#fff;border-radius:14px;padding:10px 14px;font-size:13px;display:none;gap:12px;align-items:center;box-shadow:0 12px 30px -10px rgba(0,0,0,.5)}
 #updBar.show{display:flex}
 @media print{#netBar,#updBar{display:none!important}}
+
+.sidebar{pointer-events:auto;z-index:50}
+.sidebar .nav-item,.nav-item{pointer-events:auto;cursor:pointer;position:relative;z-index:1}
+.layout{position:relative}
+.main-wrap{position:relative;z-index:1}
 </style>
 </head>
 <body>
@@ -1534,6 +1539,58 @@ function currentShift(b){
   return (b.shifts||[]).find(s=>s.status==='open')||null;
 }
 
+
+function requireWorkerSalePassword(onOk){
+  try{
+    const b=biz();
+    const cw=currentWorker();
+    if(cw){
+      openModal(`<h3 class="text-lg font-bold mb-2">Confirm sale</h3>
+        <p class="text-sm text-slate-500 mb-2">Worker: <b>${esc(cw.worker.name)}</b></p>
+        <input id="wSalePw" type="password" class="w-full border rounded-xl px-3 py-2.5 mb-3" placeholder="Your worker password"/>
+        <p id="wSaleErr" class="hidden text-sm text-red-600 mb-2"></p>
+        <button type="button" id="wSaleOk" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${S.accent()}">Confirm</button>
+        <button type="button" id="pinCancel" class="w-full py-2 text-sm text-slate-500 mt-2">Cancel</button>`);
+      document.getElementById('pinCancel').onclick=closeModal;
+      document.getElementById('wSaleOk').onclick=()=>{
+        const pw=document.getElementById('wSalePw').value;
+        if(pw!==String(cw.worker.password||'')){
+          document.getElementById('wSaleErr').textContent='Incorrect password';
+          document.getElementById('wSaleErr').classList.remove('hidden');
+          return;
+        }
+        S._servedBy={id:cw.worker.id,name:cw.worker.name,role:cw.worker.role};
+        closeModal();onOk();
+      };
+      return;
+    }
+    if(b&&b.requireWorkerSalePassword&&(b.workers||[]).length){
+      const opts=(b.workers||[]).map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('');
+      openModal(`<h3 class="text-lg font-bold mb-2">Worker confirmation</h3>
+        <select id="wSaleWho" class="w-full border rounded-xl px-3 py-2 mb-2">${opts}</select>
+        <input id="wSalePw" type="password" class="w-full border rounded-xl px-3 py-2.5 mb-3" placeholder="Worker password"/>
+        <p id="wSaleErr" class="hidden text-sm text-red-600 mb-2"></p>
+        <button type="button" id="wSaleOk" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${S.accent()}">Confirm</button>
+        <button type="button" id="pinCancel" class="w-full py-2 text-sm text-slate-500 mt-2">Cancel</button>`);
+      document.getElementById('pinCancel').onclick=closeModal;
+      document.getElementById('wSaleOk').onclick=()=>{
+        const wid=document.getElementById('wSaleWho').value;
+        const pw=document.getElementById('wSalePw').value;
+        const w=(b.workers||[]).find(x=>x.id===wid);
+        if(!w||pw!==String(w.password||'')){
+          document.getElementById('wSaleErr').textContent='Incorrect password';
+          document.getElementById('wSaleErr').classList.remove('hidden');
+          return;
+        }
+        S._servedBy={id:w.id,name:w.name,role:w.role};
+        closeModal();onOk();
+      };
+      return;
+    }
+  }catch(e){console.error(e)}
+  onOk();
+}
+
 function requireSalesPin(onOk){
   const b=biz();
   if(!b){toast('No business');return}
@@ -1892,7 +1949,44 @@ function productThumbWide(p){
 function cartCount(){const b=biz();return ((b&&b.cart)||[]).reduce((s,c)=>s+(c.qty||0),0)}
 function cartTotal(){let t=0;((biz()||{}).cart||[]).forEach(c=>t+=c.price*c.qty);return money(t)}
 function go(v){S.view=v;S.viewInvoiceId=null;render()}
-function goApp(s){if(currentWorker()&&!db().session){S.view='worker';S.appView=s||'dashboard';S.viewInvoiceId=null;render();return}S.view='app';S.appView=s||'dashboard';S.viewInvoiceId=null;render()}
+
+function workerSession(){
+  try{return JSON.parse(localStorage.getItem('bh_worker_session')||'null')}catch(e){return null}
+}
+function setWorkerSession(ws){
+  if(!ws)localStorage.removeItem('bh_worker_session');
+  else localStorage.setItem('bh_worker_session',JSON.stringify(ws));
+}
+function clearWorkerSession(){setWorkerSession(null)}
+function currentWorker(){
+  try{
+    const ws=workerSession();
+    if(!ws||!ws.businessId||!ws.workerId)return null;
+    const d=db();
+    const b=(d.businesses||[]).find(x=>x.id===ws.businessId);
+    if(!b)return null;
+    const w=(b.workers||[]).find(x=>x.id===ws.workerId);
+    if(!w)return null;
+    return {session:ws,business:b,worker:w};
+  }catch(e){return null}
+}
+function isWorkerMode(){
+  try{return !!(currentWorker()&&!db().session)}catch(e){return false}
+}
+
+function goApp(s){
+  try{
+    S.viewInvoiceId=null;
+    S.appView=s||'dashboard';
+    if(isWorkerMode()){S.view='worker'}
+    else{S.view='app'}
+    render();
+  }catch(e){
+    console.error('goApp',e);
+    S.view='app';S.appView=s||'dashboard';
+    try{render()}catch(e2){console.error(e2)}
+  }
+}
 
 /* ===== Install (PWA) helpers ===== */
 function isStandalone(){try{return (window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true}catch(e){return false}}
@@ -3677,7 +3771,13 @@ function bind(){
     window.bhNavClick=true;
     document.addEventListener('click',function(ev){
       const nav=ev.target&&ev.target.closest&&ev.target.closest('[data-nav]');
-      if(nav){ev.preventDefault();goApp(nav.getAttribute('data-nav'));return}
+      if(nav){
+        ev.preventDefault();
+        ev.stopPropagation();
+        const key=nav.getAttribute('data-nav');
+        if(key)goApp(key);
+        return;
+      }
       const tab=ev.target&&ev.target.closest&&ev.target.closest('[data-admin-tab]');
       if(tab){ev.preventDefault();S.adminTab=tab.getAttribute('data-admin-tab');render();return}
       const mt=ev.target&&ev.target.closest&&ev.target.closest('#menuToggle');
