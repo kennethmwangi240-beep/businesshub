@@ -13,7 +13,60 @@ const { Pool } = require('pg');
 
 const scrypt = promisify(crypto.scrypt);
 const PORT = Number(process.env.PORT) || 3847;
-const PUBLIC = path.join(__dirname, 'public');
+const ROOT = __dirname;
+const PUBLIC = path.join(ROOT, 'public');
+
+const BACKUP_ROOT = path.join(ROOT, 'data', 'businesshub');
+
+function safeEmailDir(email) {
+  return String(email || 'unknown').toLowerCase().replace(/[^a-z0-9@._+-]/g, '_').slice(0, 120);
+}
+function ensureBackupDir(email) {
+  const dir = path.join(BACKUP_ROOT, safeEmailDir(email));
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+function writeBusinessBackupFile(email, business) {
+  const dir = ensureBackupDir(email);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const name = `${String(business.name || 'business').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40)}_${stamp}.json`;
+  const filePath = path.join(dir, name);
+  const payload = {
+    type: 'businesshub_business_backup',
+    version: 3,
+    folder: 'businesshub',
+    email,
+    exportedAt: new Date().toISOString(),
+    business
+  };
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+  return { filePath, name, dir, relative: path.join('businesshub', safeEmailDir(email), name) };
+}
+async function emailBackupOptional(to, subject, text, filename, jsonContent) {
+  const key = process.env.RESEND_API_KEY || '';
+  const from = process.env.BACKUP_FROM_EMAIL || 'BusinessHub <onboarding@resend.dev>';
+  if (!key) return { sent: false, reason: 'RESEND_API_KEY not set — backup saved on server only' };
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject,
+        text,
+        attachments: [{ filename, content: Buffer.from(jsonContent).toString('base64') }]
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { sent: false, reason: data.message || ('HTTP ' + res.status) };
+    return { sent: true, id: data.id };
+  } catch (e) {
+    return { sent: false, reason: String(e.message || e) };
+  }
+}
+
+
 const SESSION_DAYS = 30;
 const MAX_BODY = 10 * 1024 * 1024;
 const MIN_PASSWORD = 8;
@@ -31,10 +84,20 @@ const pool = new Pool({
 pool.on('error', (e) => console.error('pg pool error', e.message));
 
 const DEFAULT_PLANS = {
-  FREE: { name: 'Free', price: 0, bizLimit: 1, label: 'Free trial' },
-  PRO: { name: 'Pro', price: 1500, bizLimit: 3, label: 'Pro · KES 1,500/mo' },
-  BUSINESS: { name: 'Business', price: 4500, bizLimit: 10, label: 'Business · KES 4,500/mo' }
+  FREE: { name: 'Free', price: 0, price: 0, annual: 0, bizLimit: 1, workers: 1, products: 50, branches: 1, onlineStore: false, ai: false, label: 'Free · trial / limited' },
+  STARTER: { name: 'Starter', price: 800, quarterly: 2200, annual: 8000, bizLimit: 1, workers: 3, products: 500, branches: 1, onlineStore: false, ai: false, label: 'Starter · KES 800/mo' },
+  PRO: { name: 'Professional', price: 1500, quarterly: 4000, annual: 15000, bizLimit: 3, workers: 10, products: 5000, branches: 3, onlineStore: true, ai: true, label: 'Professional · KES 1,500/mo' },
+  BUSINESS: { name: 'Business', price: 4500, quarterly: 12000, annual: 45000, bizLimit: 10, workers: 50, products: 50000, branches: 10, onlineStore: true, ai: true, label: 'Business · KES 4,500/mo' },
+  ENTERPRISE: { name: 'Enterprise', price: 0, quarterly: 0, annual: 0, bizLimit: 99, workers: 999, products: 999999, branches: 99, onlineStore: true, ai: true, label: 'Enterprise · custom' }
 };
+function mergePlans(stored) {
+  const base = JSON.parse(JSON.stringify(DEFAULT_PLANS));
+  if (!stored || typeof stored !== 'object') return base;
+  Object.keys(stored).forEach((k) => {
+    base[k] = Object.assign({}, base[k] || {}, stored[k]);
+  });
+  return base;
+}
 const DEFAULT_PLATFORM = {
   company: 'BusinessHub Kenya', ownerName: '', phone: '', email: '', address: '', city: 'Nairobi',
   country: 'Kenya', mpesaTill: '', paybill: '', bankName: '', bankAccount: '', supportEmail: '', website: '', notes: ''
@@ -278,7 +341,7 @@ async function handleApi(req, res, pathname) {
     if (!u) return json(res, 401, { error: 'Unauthorized' });
     return json(res, 200, {
       user: publicUser(u), isAdmin: isAdmin(u),
-      plans: await getCfg('plans', DEFAULT_PLANS), platformUpdate: await getCfg('platformUpdate', null)
+      plans: mergePlans(await getCfg('plans', DEFAULT_PLANS)), platformUpdate: await getCfg('platformUpdate', null)
     });
   }
 
@@ -303,7 +366,7 @@ async function handleApi(req, res, pathname) {
     if (isAdmin(u)) return json(res, 403, { error: 'Admin cannot create client businesses here' });
     const body = await readBody(req);
     const mine = (await pool.query('SELECT data FROM businesses WHERE owner_id=$1 ORDER BY created_at', [u.id])).rows;
-    const plans = await getCfg('plans', DEFAULT_PLANS);
+    const plans = mergePlans(await getCfg('plans', DEFAULT_PLANS));
     const planKey = mine[0]?.data?.plan || 'FREE';
     const limit = (plans[planKey] || DEFAULT_PLANS.FREE).bizLimit || 1;
     if (mine.length >= limit) return json(res, 403, { error: 'Plan business limit reached' });
@@ -373,7 +436,7 @@ async function handleApi(req, res, pathname) {
         trialEndsAt: b.trialEndsAt,
         onlineStore: b.onlineStore !== false && b.onlineStore !== 'false'
       })),
-      planCounts, plans: await getCfg('plans', DEFAULT_PLANS), platform: await getCfg('platform', DEFAULT_PLATFORM),
+      planCounts, plans: mergePlans(await getCfg('plans', DEFAULT_PLANS)), platform: await getCfg('platform', DEFAULT_PLATFORM),
       notices: await getCfg('notices', []),
       totals: { clients: clients.length, businesses: bizs.length, suspended: bizs.filter((b) => b.suspended === 'true').length }
     });
@@ -491,12 +554,105 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, { ok: true, business: b });
   }
 
+
+  if (pathname === '/api/support/tickets' && method === 'GET') {
+    const u = await authUser(req);
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    const all = await getCfg('supportTickets', []);
+    if (isAdmin(u)) return json(res, 200, { tickets: all });
+    return json(res, 200, { tickets: all.filter((t) => t.userId === u.id || t.ownerId === u.id) });
+  }
+
+  if (pathname === '/api/support/tickets' && method === 'POST') {
+    const u = await authUser(req);
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    const body = await readBody(req);
+    const all = await getCfg('supportTickets', []);
+    const ticket = {
+      id: uid(),
+      userId: u.id,
+      ownerId: u.id,
+      email: u.email,
+      businessId: body.businessId || null,
+      subject: str(body.subject, 200) || 'Support request',
+      body: str(body.body, 5000) || '',
+      status: 'open',
+      priority: body.priority || 'normal',
+      createdAt: new Date().toISOString(),
+      messages: [{ at: new Date().toISOString(), from: u.email, body: str(body.body, 5000) || '' }]
+    };
+    all.push(ticket);
+    await setCfg('supportTickets', all.slice(-200));
+    const alerts = await getCfg('adminAlerts', []);
+    alerts.push({ id: uid(), type: 'support_ticket', ticketId: ticket.id, at: ticket.createdAt, message: 'Support ticket: ' + ticket.subject, email: u.email });
+    await setCfg('adminAlerts', alerts.slice(-100));
+    return json(res, 201, { ticket });
+  }
+
+  if (pathname === '/api/support/tickets/reply' && method === 'POST') {
+    const u = await authUser(req);
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    const body = await readBody(req);
+    const all = await getCfg('supportTickets', []);
+    const t = all.find((x) => x.id === body.ticketId);
+    if (!t) return json(res, 404, { error: 'Ticket not found' });
+    if (!isAdmin(u) && t.userId !== u.id) return json(res, 403, { error: 'Forbidden' });
+    t.messages = t.messages || [];
+    t.messages.push({ at: new Date().toISOString(), from: u.email, body: str(body.body, 5000), admin: isAdmin(u) });
+    if (body.status && isAdmin(u)) t.status = body.status;
+    if (isAdmin(u) && body.status === 'resolved') t.resolvedAt = new Date().toISOString();
+    await setCfg('supportTickets', all);
+    return json(res, 200, { ticket: t });
+  }
+
+  if (pathname === '/api/admin/platform-stats' && method === 'GET') {
+    const u = await authUser(req);
+    if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
+    const clients = (await pool.query("SELECT * FROM users WHERE role<>'admin'")).rows;
+    const bizs = (await pool.query('SELECT * FROM businesses')).rows.map(bizOut);
+    const plans = mergePlans(await getCfg('plans', DEFAULT_PLANS));
+    const today = new Date().toISOString().slice(0, 10);
+    const month = today.slice(0, 7);
+    let mrr = 0;
+    bizs.forEach((b) => {
+      const p = plans[b.plan] || plans.FREE;
+      if (!b.suspended && b.plan && b.plan !== 'FREE') mrr += Number(p.price || 0);
+    });
+    const catCount = {};
+    bizs.forEach((b) => {
+      (b.categories || []).forEach((c) => { catCount[c] = (catCount[c] || 0) + 1; });
+      if (b.categoryLabel) catCount[b.categoryLabel] = (catCount[b.categoryLabel] || 0) + 1;
+    });
+    return json(res, 200, {
+      totals: {
+        clients: clients.length,
+        businesses: bizs.length,
+        active: bizs.filter((b) => !b.suspended).length,
+        suspended: bizs.filter((b) => b.suspended).length,
+        trial: bizs.filter((b) => (b.plan || 'FREE') === 'FREE').length,
+        paid: bizs.filter((b) => b.plan && b.plan !== 'FREE').length,
+        workers: bizs.reduce((n, b) => n + ((b.workers || []).length), 0),
+        products: bizs.reduce((n, b) => n + ((b.products || []).length), 0),
+        mrr,
+        arr: mrr * 12,
+        newToday: bizs.filter((b) => (b.createdAt || '').slice(0, 10) === today).length,
+        newMonth: bizs.filter((b) => (b.createdAt || '').slice(0, 7) === month).length
+      },
+      planCounts: Object.keys(plans).reduce((o, k) => {
+        o[k] = bizs.filter((b) => (b.plan || 'FREE') === k).length;
+        return o;
+      }, {}),
+      categories: catCount,
+      plans
+    });
+  }
+
   if (pathname === '/api/admin/plans' && method === 'PUT') {
     const u = await authUser(req);
     if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
     const body = await readBody(req);
     if (body.plans && typeof body.plans === 'object' && !Array.isArray(body.plans)) await setCfg('plans', body.plans);
-    return json(res, 200, { plans: await getCfg('plans', DEFAULT_PLANS) });
+    return json(res, 200, { plans: mergePlans(await getCfg('plans', DEFAULT_PLANS)) });
   }
 
   if (pathname === '/api/admin/platform' && method === 'PUT') {
@@ -591,6 +747,60 @@ async function handleApi(req, res, pathname) {
     return json(res, out.status, out.body);
   }
 
+
+  if (pathname.match(/^\/api\/businesses\/[^/]+\/backup$/) && method === 'POST') {
+    const u = await authUser(req);
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    const id = pathname.split('/')[3];
+    const row = (await pool.query('SELECT * FROM businesses WHERE id=$1', [id])).rows[0];
+    if (!row) return json(res, 404, { error: 'Not found' });
+    if (!isAdmin(u) && row.owner_id !== u.id) return json(res, 403, { error: 'Forbidden' });
+    const body = await readBody(req);
+    const b = bizOut(row);
+    const email = String(body.email || u.email || '').toLowerCase().trim();
+    if (!email) return json(res, 400, { error: 'Email required for backup folder' });
+    const written = writeBusinessBackupFile(email, b);
+    let mail = { sent: false, reason: 'not requested' };
+    if (body.sendEmail) {
+      const raw = fs.readFileSync(written.filePath, 'utf8');
+      mail = await emailBackupOptional(
+        email,
+        'BusinessHub backup — ' + (b.name || id),
+        'Your business backup is attached and also stored under BusinessHub cloud folder for ' + email + '.\nFile: ' + written.name,
+        written.name,
+        raw
+      );
+    }
+    return json(res, 200, {
+      ok: true,
+      folder: 'businesshub/' + safeEmailDir(email),
+      file: written.name,
+      relative: written.relative,
+      email,
+      mail
+    });
+  }
+
+  if (pathname === '/api/backups/mine' && method === 'GET') {
+    const u = await authUser(req);
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    const email = u.email;
+    const dir = path.join(BACKUP_ROOT, safeEmailDir(email));
+    let files = [];
+    try {
+      if (fs.existsSync(dir)) {
+        files = fs.readdirSync(dir)
+          .filter((f) => f.endsWith('.json'))
+          .map((f) => {
+            const st = fs.statSync(path.join(dir, f));
+            return { name: f, size: st.size, at: st.mtime.toISOString(), folder: 'businesshub/' + safeEmailDir(email) };
+          })
+          .sort((a, b) => (a.at < b.at ? 1 : -1));
+      }
+    } catch (e) {}
+    return json(res, 200, { email, folder: 'businesshub/' + safeEmailDir(email), files });
+  }
+
   if (pathname === '/api/admin/backup' && method === 'GET') {
     const u = await authUser(req);
     if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
@@ -600,7 +810,7 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, {
       type: 'businesshub_admin_backup', version: 2, exportedAt: new Date().toISOString(),
       data: {
-        users, businesses, plans: await getCfg('plans', DEFAULT_PLANS), platform: await getCfg('platform', DEFAULT_PLATFORM),
+        users, businesses, plans: mergePlans(await getCfg('plans', DEFAULT_PLANS)), platform: await getCfg('platform', DEFAULT_PLATFORM),
         notices: await getCfg('notices', [])
       }
     });
