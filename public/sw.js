@@ -1,4 +1,4 @@
-// BusinessHub service worker: always fetch the newest app when online, fall back to the cached copy offline.
+// MyBusinessHub service worker: always fetch the newest app when online, fall back to the cached copy offline.
 const CACHE = 'bh-shell-v3';
 const CDN = ['cdn.tailwindcss.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 

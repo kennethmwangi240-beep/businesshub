@@ -11,12 +11,15 @@
 <script>
 window.__bhPrompt=null;
 window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__bhPrompt=e;if(window.refreshInstallUI)refreshInstallUI()});
-window.addEventListener('appinstalled',function(){window.__bhPrompt=null;if(window.refreshInstallUI)refreshInstallUI();if(window.toast)toast('BusinessHub installed on this device')});
+window.addEventListener('appinstalled',function(){window.__bhPrompt=null;if(window.refreshInstallUI)refreshInstallUI();if(window.toast)toast('MyBusinessHub installed on this device')});
 </script>
 <link rel="manifest" href="/manifest.webmanifest"/>
-<meta name="theme-color" content="#0b3a8f"/>
+<meta name="theme-color" content="#0a1628"/>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"/>
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png"/>
 <link rel="icon" type="image/png" href="/favicon.png"/>
-<link rel="apple-touch-icon" href="/icon-192.png"/>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
+<link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png"/>
 <script src="/vendor/tailwindcdn.js"></script>
 <script src="/vendor/chart.umd.min.js"></script>
 <script>
@@ -1363,7 +1366,12 @@ function initials(name){
   return (p[0][0]+p[p.length-1][0]).toUpperCase();
 }
 function logoHtml(name,color,size){
-  const s=size||48;const fs=Math.round(s*0.34);
+  const s=size||40;
+  const n=String(name||'');
+  if(/mybusinesshub|businesshub/i.test(n)){
+    return `<img src="/logo-mark.png" alt="${esc(n)}" style="width:${s}px;height:${s}px;border-radius:12px;object-fit:cover"/>`;
+  }
+  const fs=Math.max(12,Math.round(s*0.35));
   return `<div class="logo-mark" style="width:${s}px;height:${s}px;font-size:${fs}px;background:${color||'#0d9488'}">${esc(initials(name))}</div>`;
 }
 
@@ -1411,7 +1419,7 @@ function load(){try{return migrate(JSON.parse(localStorage.getItem(KEY)))}catch(
 function save(d){localStorage.setItem(KEY,JSON.stringify(d));return d}
 function db(){
   let d=load();
-  if(!d){d={users:[],session:null,currentBizId:null,businesses:[],plans:JSON.parse(JSON.stringify(DEFAULT_PLANS)),adminEmail:'admin@businesshub.ke',platform:{company:'BusinessHub Kenya',ownerName:'',phone:'',email:'admin@businesshub.ke',address:'',city:'Nairobi',country:'Kenya',mpesaTill:'',paybill:'',bankName:'',bankAccount:'',supportEmail:'',website:'',notes:''},notices:[],daraja:{}};save(d)}
+  if(!d){d={users:[],session:null,currentBizId:null,businesses:[],plans:JSON.parse(JSON.stringify(DEFAULT_PLANS)),adminEmail:'admin@businesshub.ke',platform:{company:'MyBusinessHub',ownerName:'',phone:'',email:'admin@businesshub.ke',address:'',city:'Nairobi',country:'Kenya',mpesaTill:'',paybill:'',bankName:'',bankAccount:'',supportEmail:'',website:'',notes:''},notices:[],daraja:{}};save(d)}
   if(!d.businesses)d.businesses=[];
   if(!d.plans)d.plans=JSON.parse(JSON.stringify(DEFAULT_PLANS));
   d.businesses.forEach(b=>{if(b.onlineStore===undefined)b.onlineStore=true;if(!b.trialEndsAt)b.trialEndsAt=addDays(b.createdAt||today(),3);if(!b.payments)b.payments={provider:'mpesa'};(b.products||[]).forEach(p=>{if(!p.image)p.image=autoImageFor(p.name,p.sourceCat,p.sub)});});
@@ -1751,26 +1759,37 @@ function parseDay(s){
   if(p.length<3)return null;
   return new Date(Number(p[0]),Number(p[1])-1,Number(p[2]));
 }
+function toDate(val){
+  if(!val)return null;
+  if(val instanceof Date)return isNaN(val.getTime())?null:val;
+  const s=String(val).slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(s))return null;
+  const d=new Date(s+'T12:00:00');
+  return isNaN(d.getTime())?null:d;
+}
 function addDays(dayStr, n){
-  const d=parseDay(dayStr)||new Date();
-  d.setDate(d.getDate()+n);
+  const d=toDate(dayStr)||new Date();
+  d.setDate(d.getDate()+Number(n||0));
   const pad=x=>String(x).padStart(2,'0');
   return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 }
 function trialEndsOn(b){
-  if(b.trialEndsAt)return b.trialEndsAt;
+  if(!b)return today();
+  if(b.trialEndsAt)return String(b.trialEndsAt).slice(0,10);
   return addDays(b.createdAt||today(), 3);
 }
 function daysLeftInTrial(b){
-  const end=parseDay(trialEndsOn(b));
-  if(!end)return 0;
-  const now=parseDay(today());
-  const ms=end.getTime()-now.getTime();
-  return Math.ceil(ms/86400000);
+  try{
+    const end=toDate(trialEndsOn(b));
+    const now=toDate(today())||new Date();
+    if(!end)return 0;
+    const ms=end.getTime()-now.getTime();
+    return Math.ceil(ms/86400000);
+  }catch(e){return 0}
 }
 function planIsPaid(b){
-  const p=String(b.plan||'FREE').toUpperCase();
-  return p==='PRO'||p==='BUSINESS';
+  const p=String((b&&b.plan)||'FREE').toUpperCase();
+  return p==='STARTER'||p==='PRO'||p==='BUSINESS'||p==='ENTERPRISE'||p==='PAID';
 }
 function trialExpired(b){
   if(planIsPaid(b))return false;
@@ -2003,7 +2022,7 @@ function refreshInstallUI(){document.querySelectorAll('[data-install],[data-inst
 async function bhInstall(){
   if(window.__bhPrompt){
     const ev=window.__bhPrompt;window.__bhPrompt=null;
-    try{ev.prompt();const r=await ev.userChoice;if(r&&r.outcome==='accepted')toast('Installing BusinessHub…')}catch(e){}
+    try{ev.prompt();const r=await ev.userChoice;if(r&&r.outcome==='accepted')toast('Installing MyBusinessHub…')}catch(e){}
     refreshInstallUI();return;
   }
   showInstallHelp();
@@ -2015,8 +2034,8 @@ function showInstallHelp(){
   else if(isIOS())steps='<li>Open this site in <b>Safari</b>.</li><li>Tap the <b>Share</b> button (square with an arrow).</li><li>Choose <b>Add to Home Screen</b>, then <b>Add</b>.</li>';
   else if(/firefox/i.test(ua)&&!/android/i.test(ua))steps='<li>Firefox on computers cannot install web apps. Open this site in <b>Chrome</b> or <b>Edge</b> instead.</li>';
   else if(/android/i.test(ua))steps='<li>Tap the browser menu <b>⋮</b> (top right).</li><li>Choose <b>Install app</b> or <b>Add to Home screen</b>.</li><li>Confirm with <b>Install</b>.</li>';
-  else steps='<li>Look for the <b>install icon</b> (a small monitor with a down arrow) at the right end of the address bar and click it.</li><li>Or open the browser menu <b>⋮</b> → <b>Cast, save and share</b> (Chrome) / <b>Apps</b> (Edge) → <b>Install BusinessHub Kenya</b>.</li><li>Click <b>Install</b>. A desktop shortcut and an app window are created.</li>';
-  openModal(`<h3 class="text-lg font-bold mb-1">Install BusinessHub</h3>
+  else steps='<li>Look for the <b>install icon</b> (a small monitor with a down arrow) at the right end of the address bar and click it.</li><li>Or open the browser menu <b>⋮</b> → <b>Cast, save and share</b> (Chrome) / <b>Apps</b> (Edge) → <b>Install MyBusinessHub</b>.</li><li>Click <b>Install</b>. A desktop shortcut and an app window are created.</li>';
+  openModal(`<h3 class="text-lg font-bold mb-1">Install MyBusinessHub</h3>
   <p class="text-sm text-slate-500 mb-3">Opens like a normal app from your desktop or home screen, with no browser tabs.</p>
   <ol class="list-decimal pl-5 text-sm space-y-2">${steps}</ol>
   <p class="text-xs text-slate-400 mt-4">If you already installed it, open it from your desktop, Start menu or home screen.</p>
@@ -2129,7 +2148,7 @@ function viewLanding(){
   <div class="lp-blob" style="width:380px;height:380px;background:var(--brand2);top:240px;right:-120px;animation-delay:-5s"></div>
   <div class="relative">
   <header class="bg-white/80 backdrop-blur border-b px-4 h-16 flex items-center justify-between max-w-5xl mx-auto sticky top-0 z-20">
-    <div class="flex items-center gap-2"><img src="/logo-mark.png" alt="MyBusinessHub" class="h-10 w-10 rounded-xl object-cover"/><span class="font-extrabold text-lg"><span style="color:#0b3a8f">MyBusiness</span><span style="color:#f59e0b">Hub</span></span></div>
+    <div class="flex items-center gap-2"><img src="/logo-mark.png" alt="MyBusinessHub" class="h-10 w-10 rounded-xl object-cover shadow-sm"/><span class="font-extrabold text-lg"><span style="color:#0b3a8f">MyBusiness</span><span style="color:#f59e0b">Hub</span></span></div>
     <div class="flex gap-1 sm:gap-2 text-sm items-center">
       <button type="button" data-go="online" class="lp-btn px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-100">Order online</button>
       <button type="button" data-go="login" class="lp-btn px-3 py-1.5 rounded-lg hover:bg-slate-100">Client log in</button>
@@ -2229,7 +2248,7 @@ function viewLogin(){
 
 
 function viewRegister(){
-  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="MyBusinessHub" class="h-14 mx-auto mb-2"/>
+  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="MyBusinessHub" class="h-16 w-16 mx-auto mb-2 rounded-2xl object-cover shadow"/>
   <button type="button" data-go="landing" class="text-xs text-slate-400 mb-4">← Back</button>
   <h1 class="text-2xl font-bold">Create owner account</h1>
   <form id="regForm" class="mt-6 space-y-4">
@@ -2617,7 +2636,7 @@ function secDash(b,a){
   const onlinePending=(b.orders||[]).filter(o=>o.source==='online'&&o.status==='PENDING').length;
   let instDismissed=false;try{instDismissed=Date.now()-Number(localStorage.getItem('bh_inst_dismiss')||0)<6048e5}catch(e){}
   const installBanner=instDismissed?'':`<div data-install-wrap class="rounded-xl p-3 mb-4 text-sm flex flex-wrap items-center justify-between gap-2 border" style="background:color-mix(in srgb,${a} 10%,white);border-color:color-mix(in srgb,${a} 30%,white)">
-    <div><b>Install BusinessHub on this device</b><p class="text-xs text-slate-600">Opens like a normal app from your desktop or home screen. No browser tabs.</p></div>
+    <div><b>Install MyBusinessHub on this device</b><p class="text-xs text-slate-600">Opens like a normal app from your desktop or home screen. No browser tabs.</p></div>
     <div class="flex items-center gap-2">${installBtn('px-4 py-2 rounded-xl','Install app',a)}<button type="button" data-inst-dismiss class="text-xs text-slate-500 px-2">Not now</button></div></div>`;
   const lowItems=(b.products||[]).filter(p=>(p.stock||0)>0&&(p.stock||0)<=5).sort((x,y)=>x.stock-y.stock);
   const lowBanner=lowItems.length?`<div class="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4 text-sm text-amber-950 flex flex-wrap items-center justify-between gap-2">
@@ -3549,7 +3568,7 @@ function viewAdmin(){
       </div></div>`;
   }
   const d=db();
-  if(!d.platform)d.platform={company:'BusinessHub Kenya',ownerName:'',phone:'',email:d.adminEmail||'admin@businesshub.ke',address:'',city:'Nairobi',country:'Kenya',mpesaTill:'',paybill:'',bankName:'',bankAccount:'',supportEmail:'',website:'',notes:''};
+  if(!d.platform)d.platform={company:'MyBusinessHub',ownerName:'',phone:'',email:d.adminEmail||'admin@businesshub.ke',address:'',city:'Nairobi',country:'Kenya',mpesaTill:'',paybill:'',bankName:'',bankAccount:'',supportEmail:'',website:'',notes:''};
   const p=d.platform;
   const clients=d.users.filter(u=>u.role!=='admin'&&u.email!==(d.adminEmail||'admin@businesshub.ke'));
   const businesses=d.businesses||[];
@@ -3884,7 +3903,7 @@ function viewAdmin(){
 
   return `<div class="ad ${dark?'dark':''} min-h-screen bg-slate-100" style="--ad:${accentC}">
   <header class="text-white px-4 h-14 flex items-center justify-between sticky top-0 z-20" style="background:linear-gradient(90deg,#0f172a,color-mix(in srgb,${accentC} 55%,#0f172a))">
-    <div class="font-bold text-sm md:text-base flex items-center gap-2"><img src="/logo-mark.png" alt="" class="h-8 w-8 rounded-md object-cover bg-white p-0.5"/>MyBusinessHub · Platform admin</div>
+    <div class="font-bold text-sm md:text-base flex items-center gap-2"><img src="/logo-mark.png" alt="" class="h-8 w-8 rounded-md object-cover bg-white p-0.5"/>MyMyBusinessHub · Platform admin</div>
     <div class="flex items-center gap-2 text-sm">
       <span class="text-slate-300 hidden md:inline">${esc(p.company||'MyBusinessHub')}</span>
       ${installBtn('px-3 py-1.5 rounded-lg','Install app',accentC)}
