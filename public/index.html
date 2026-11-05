@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>BusinessHub Kenya</title>
+<title>BusinessHub</title>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-title" content="BusinessHub"/>
@@ -1040,6 +1040,15 @@ async function syncPull(){
         const al=await api('/api/admin/alerts');
         d.adminAlerts=al.alerts||[];
       }catch(e){d.adminAlerts=d.adminAlerts||[]}
+      try{
+        const st=await api('/api/admin/platform-stats');
+        d.platformStats=st;
+        if(st.plans)d.plans=mergePlans(st.plans);
+      }catch(e){}
+      try{
+        const tk=await api('/api/support/tickets');
+        d.supportTickets=tk.tickets||[];
+      }catch(e){d.supportTickets=d.supportTickets||[]}
     }else{
       const full = await api('/api/businesses');
       const remote = full.businesses || [];
@@ -1129,10 +1138,18 @@ const _saveBizOrig = null; // placeholder patched after saveBiz defined
 const COLORS=['#16a34a','#2563eb','#d97706','#db2777','#dc2626','#0891b2','#7c3aed','#0d9488','#475569'];
 const PAY_METHODS=['Cash','M-Pesa','Bank transfer','Card','Credit'];
 const DEFAULT_PLANS={
-  FREE:{name:'Free',price:0,bizLimit:1,label:'Free'},
-  PRO:{name:'Pro',price:1500,bizLimit:3,label:'Pro · KES 1,500/mo'},
-  BUSINESS:{name:'Business',price:4500,bizLimit:10,label:'Business · KES 4,500/mo'}
+  FREE:{name:'Free',price:0,bizLimit:1,workers:1,products:50,branches:1,onlineStore:false,ai:false,label:'Free'},
+  STARTER:{name:'Starter',price:800,bizLimit:1,workers:3,products:500,branches:1,onlineStore:false,ai:false,label:'Starter · KES 800/mo'},
+  PRO:{name:'Professional',price:1500,bizLimit:3,workers:10,products:5000,branches:3,onlineStore:true,workers:[],ai:true,label:'Pro · KES 1,500/mo'},
+  BUSINESS:{name:'Business',price:4500,bizLimit:10,workers:50,products:50000,branches:10,onlineStore:true,workers:[],ai:true,label:'Business · KES 4,500/mo'},
+  ENTERPRISE:{name:'Enterprise',price:0,bizLimit:99,workers:999,products:999999,branches:99,onlineStore:true,workers:[],ai:true,label:'Enterprise · custom'}
 };
+function mergePlans(stored){
+  const base=JSON.parse(JSON.stringify(DEFAULT_PLANS));
+  if(!stored||typeof stored!=='object')return base;
+  Object.keys(stored).forEach(k=>{base[k]=Object.assign({},base[k]||{},stored[k]);});
+  return base;
+}
 
 function uid(){return 'id_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36)}
 function money(n){return Math.round((Number(n)||0)*100)/100}
@@ -1156,7 +1173,7 @@ function emptyBiz(ownerId,extra){
   return Object.assign({
     id:uid(),ownerId,name:'',phone:'',address:'',payinfo:'',currency:'KES',
     categories:[],categoryLabel:'',color:'#0d9488',salesPin:'',
-    plan:'FREE',onlineStore:true,createdAt:today(),trialEndsAt:addDays(today(),3),
+    plan:'FREE',onlineStore:true,workers:[],createdAt:today(),trialEndsAt:addDays(today(),3),
     products:[],cart:[],orders:[],customers:[],quotations:[],expenses:[],purchases:[],
     orderN:0,qtN:0,purN:0,onlineN:0
   },extra||{});
@@ -1636,7 +1653,7 @@ function productThumbWide(p){
 function cartCount(){const b=biz();return ((b&&b.cart)||[]).reduce((s,c)=>s+(c.qty||0),0)}
 function cartTotal(){let t=0;((biz()||{}).cart||[]).forEach(c=>t+=c.price*c.qty);return money(t)}
 function go(v){S.view=v;S.viewInvoiceId=null;render()}
-function goApp(s){S.view='app';S.appView=s||'dashboard';S.viewInvoiceId=null;render()}
+function goApp(s){if(currentWorker()&&!db().session){S.view='worker';S.appView=s||'dashboard';S.viewInvoiceId=null;render();return}S.view='app';S.appView=s||'dashboard';S.viewInvoiceId=null;render()}
 
 /* ===== Install (PWA) helpers ===== */
 function isStandalone(){try{return (window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true}catch(e){return false}}
@@ -1675,7 +1692,7 @@ function adPill(label,color){return `<span class="ad-pill" style="--c:${color}">
 function drawAdminCharts(){
   if(typeof Chart==='undefined')return;
   (window.__adCharts||[]).forEach(c=>{try{c.destroy()}catch(e){}});window.__adCharts=[];
-  const d=db();const plans=d.plans||DEFAULT_PLANS;const bs=d.businesses||[];
+  const d=db();const plans=mergePlans(d.plans||DEFAULT_PLANS);const bs=d.businesses||[];
   const txt=adDark()?'#cbd5e1':'#475569';const grid=adDark()?'#22314d':'#e2e8f0';const col=AD_THEMES[adTheme()];
   const pc=document.getElementById('adPlanChart');
   if(pc){const keys=Object.keys(plans);
@@ -2011,6 +2028,54 @@ function viewOnboard(){
   </form></div></div>`;
 }
 
+
+function viewWorkerApp(){
+  const cw=currentWorker();
+  if(!cw){S.view='login';S.loginMode='worker';return viewLogin()}
+  const b=cw.business;const w=cw.worker;const a=b.color||'#0d9488';
+  const d=db();d.currentBizId=b.id;save(d);
+  const todaySales=paidOrders(b).filter(o=>o.date===today()&&o.servedBy&&o.servedBy.id===w.id);
+  const todayTotal=todaySales.reduce((s,o)=>s+Number(o.total||0),0);
+  const mySales=paidOrders(b).filter(o=>o.servedBy&&o.servedBy.id===w.id);
+  let main;
+  if(S.appView==='shop')main=secShop(b,a);
+  else if(S.appView==='invoices')main=secInvoices(b,a);
+  else main=`<div class="space-y-4">
+      <div class="bg-gradient-to-br from-teal-600 to-teal-800 text-white rounded-2xl p-5">
+        <p class="text-sm opacity-90">Worker mini dashboard</p>
+        <h2 class="text-xl font-bold mt-1">${esc(w.name)}</h2>
+        <p class="text-sm mt-1">${esc(b.name)} · ${esc(w.role||'cashier')}</p>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">My sales today</p><p class="text-xl font-bold">${kes(todayTotal)}</p><p class="text-xs text-slate-400">${todaySales.length} sale(s)</p></div>
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">My sales (all)</p><p class="text-xl font-bold">${mySales.length}</p></div>
+      </div>
+      <button type="button" data-nav="shop" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${a}">Open POS / Shop</button>
+    </div>`;
+  return `<div class="min-h-screen bg-slate-50 flex">
+    <aside class="w-56 bg-slate-900 text-slate-100 flex flex-col hidden md:flex">
+      <div class="p-4 border-b border-white/10"><p class="font-bold">Worker</p><p class="text-xs text-slate-400 truncate">${esc(w.name)}</p></div>
+      <nav class="p-2 flex-1 space-y-1">
+        <button type="button" data-nav="dashboard" class="nav-item w-full text-left ${S.appView==='dashboard'||!S.appView?'active':''}">My dashboard</button>
+        <button type="button" data-nav="shop" class="nav-item w-full text-left ${S.appView==='shop'?'active':''}">POS / Shop</button>
+        <button type="button" data-nav="invoices" class="nav-item w-full text-left ${S.appView==='invoices'?'active':''}">Invoices</button>
+      </nav>
+      <button type="button" id="workerSignOut" class="m-3 py-2 text-sm rounded-lg bg-white/10">Log out</button>
+    </aside>
+    <div class="flex-1 flex flex-col min-w-0">
+      <header class="bg-white border-b px-4 py-3 flex items-center justify-between gap-2">
+        <div class="md:hidden flex gap-2">
+          <button type="button" data-nav="dashboard" class="text-xs border px-2 py-1 rounded-lg">Home</button>
+          <button type="button" data-nav="shop" class="text-xs border px-2 py-1 rounded-lg">POS</button>
+        </div>
+        <p class="font-semibold truncate">${esc(b.name)}</p>
+        <button type="button" id="workerSignOut2" class="text-xs text-slate-500">Log out</button>
+      </header>
+      <main class="p-4 max-w-5xl w-full mx-auto">${main}</main>
+    </div>
+  </div>`;
+}
+
 function viewApp(){
   const b=biz();if(!b){S.view='onboard';return viewOnboard()}
   if(needsPlanPaywall(b))return viewPaywall(b);
@@ -2024,10 +2089,12 @@ function viewApp(){
   }
   const accent=S.accent();const user=currentUser();
   const nav=[
-    ['dashboard','Dashboard'],['wallet','Wallet & trends'],['shop','Shop (sell)'],['stock','Stock'],
-    ['products','Products & prices'],['purchases','Purchases'],['customers','Customers & suppliers'],
-    ['quotations','Quotations'],['invoices','Invoices'],['expenses','Income & expenses'],
-    ['reports','Reports'],['onlineorders','Online shop'],['settings','Settings']
+    ['dashboard','Dashboard'],['wallet','Wallet & trends'],['shop','Shop (POS)'],['stock','Stock'],
+    ['products','Products'],['purchases','Purchases'],['customers','Customers'],
+    ['quotations','Quotations'],['invoices','Invoices'],['expenses','Finance'],
+    ['reports','Reports'],['onlineorders','Online store'],['orders','Online orders'],
+    ['delivery','Delivery'],['branches','Branches'],['team','Workers'],
+    ['loyalty','Loyalty'],['ai','AI assistant'],['settings','Settings']
   ];
   const side=nav.map(([k,l])=>`<button type="button" class="nav-item ${S.appView===k?'active':''}" data-nav="${k}">${l}</button>`).join('');
   const mine=myBusinesses();
@@ -2047,10 +2114,16 @@ function viewApp(){
     else if(S.appView==='expenses')main=secExpenses(b,accent);
     else if(S.appView==='reports')main=secReports(b,accent);
     else if(S.appView==='onlineorders')main=secOnlineOrders(b,accent);
+    else if(S.appView==='orders')main=secOnlineOrders(b,accent);
+    else if(S.appView==='delivery')main=secDelivery(b,accent);
+    else if(S.appView==='branches')main=secBranches(b,accent);
+    else if(S.appView==='team')main=secTeam(b,accent);
+    else if(S.appView==='loyalty')main=secLoyalty(b,accent);
+    else if(S.appView==='ai')main=secAI(b,accent);
     else if(S.appView==='settings')main=secSettings(b,accent);
     else main=secDash(b,accent);
   }catch(e){main=`<div class="p-4 text-red-600">${esc(String(e))}</div>`;console.error(e)}
-  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (sell)',stock:'Stock',products:'Products & prices',purchases:'Purchases',customers:'Customers & suppliers',quotations:'Quotations',invoices:'Invoices',expenses:'Income & expenses',reports:'Reports',onlineorders:'Online shop',settings:'Settings'};
+  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (POS)',stock:'Stock',products:'Products',purchases:'Purchases',customers:'Customers',quotations:'Quotations',invoices:'Invoices',expenses:'Finance',reports:'Reports',onlineorders:'Online store',orders:'Online orders',delivery:'Delivery',branches:'Branches',team:'Workers',loyalty:'Loyalty',ai:'AI assistant',settings:'Settings'};
   return `<div class="layout">
   <aside class="sidebar">
     <div class="side-brand h-14 flex items-center gap-2 px-3 font-bold text-sm border-b" style="color:${accent}">
@@ -2407,6 +2480,7 @@ function secInvoiceDetail(b,a){
       <p>Fulfillment: ${esc(o.fulfillment||'pickup')}${o.deliveryAddress?' — '+esc(o.deliveryAddress):''}</p>
       ${o.phone?`<p>Phone: ${esc(o.phone)}</p>`:''}
       ${o.customerName?`<p>Customer: ${esc(o.customerName)}</p>`:''}
+      ${o.servedBy?`<p class="font-semibold mt-2">SERVED BY: ${esc(o.servedBy.name)}</p>`:''}
     </div>
     <table class="w-full text-sm mb-6"><thead class="text-left text-slate-500 border-b"><tr>
       <th class="pb-2">Item</th><th class="pb-2 text-center">Qty</th><th class="pb-2 text-right">Price</th><th class="pb-2 text-right">Amount</th></tr></thead>
@@ -2590,6 +2664,109 @@ function secOnlineOrders(b,a){
   </div>`;
 }
 
+
+function secAI(b,a){
+  const tips=aiInsights(b);
+  const forecast=stockForecast(b).slice(0,15);
+  return `<div class="space-y-4">
+    <div class="bg-gradient-to-br from-violet-600 to-indigo-700 text-white rounded-2xl p-5">
+      <h2 class="text-lg font-bold">AI business assistant</h2>
+      <p class="text-sm opacity-90 mt-1">Insights from <b>your</b> sales, stock and expenses only. Does not change records automatically.</p>
+    </div>
+    <form id="aiAskForm" class="bg-white rounded-2xl border p-4 flex flex-col sm:flex-row gap-2">
+      <input name="q" class="flex-1 border rounded-xl px-3 py-2.5 text-sm" placeholder="e.g. What needs restocking? How much profit?"/>
+      <button class="px-4 py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Ask</button>
+    </form>
+    <div id="aiAnswer" class="hidden bg-violet-50 border border-violet-100 rounded-xl p-4 text-sm text-violet-950"></div>
+    <div class="grid md:grid-cols-2 gap-3">
+      ${tips.map(t=>`<div class="bg-white rounded-2xl border p-4"><p class="text-xs uppercase tracking-wide text-slate-400">${esc(t.type)}</p><p class="font-semibold mt-1">${esc(t.title)}</p><p class="text-sm text-slate-600 mt-1">${esc(t.body)}</p></div>`).join('')}
+    </div>
+    <div class="bg-white rounded-2xl border p-4 overflow-x-auto">
+      <h3 class="font-semibold mb-2">Stock forecast (from ~30 days sales)</h3>
+      <table class="w-full text-sm min-w-[520px]"><thead class="text-left text-slate-500"><tr><th class="py-2">Product</th><th>Stock</th><th>Sold</th><th>Days left</th><th>Suggest reorder</th><th>Confidence</th></tr></thead>
+      <tbody>${forecast.map(f=>`<tr class="border-t"><td class="py-2">${esc(f.name)}</td><td>${f.stock}</td><td>${f.sold30}</td><td>${f.daysLeft==null?'—':f.daysLeft}</td><td>${f.reorderQty||'—'}</td><td class="text-xs">${esc(f.confidence)}</td></tr>`).join('')||'<tr><td colspan="6" class="py-6 text-center text-slate-400">No products</td></tr>'}</tbody></table>
+      <p class="text-xs text-slate-400 mt-2">Statistical estimate only — not a guarantee. Needs sales history for better confidence.</p>
+    </div>
+  </div>`;
+}
+function secBranches(b,a){
+  ensureBranches(b);
+  return `<div class="space-y-4">
+    <div class="bg-white rounded-2xl border p-4">
+      <h3 class="font-semibold mb-1">Branches</h3>
+      <p class="text-xs text-slate-500 mb-3">Multi-branch inventory transfers and separate tills expand further over time. Branch list is stored on this business.</p>
+      <div class="space-y-2 mb-4">${b.branches.map(br=>`<div class="flex flex-wrap justify-between gap-2 border rounded-xl px-3 py-2 text-sm ${b.currentBranchId===br.id?'ring-2 ring-teal-500':''}">
+        <div><b>${esc(br.name)}</b><p class="text-xs text-slate-500">${esc(br.address||'')} ${esc(br.phone||'')}</p></div>
+        <div class="flex gap-2">
+          <button type="button" data-set-branch="${br.id}" class="text-xs border px-2 py-1 rounded-lg">Set active</button>
+          ${br.id!=='main'?`<button type="button" data-del-branch="${br.id}" class="text-xs text-red-600">Remove</button>`:''}
+        </div>
+      </div>`).join('')}</div>
+      <form id="addBranchForm" class="grid sm:grid-cols-4 gap-2 text-sm">
+        <input name="name" required placeholder="Branch name" class="border rounded-xl px-3 py-2"/>
+        <input name="address" placeholder="Address" class="border rounded-xl px-3 py-2"/>
+        <input name="phone" placeholder="Phone" class="border rounded-xl px-3 py-2"/>
+        <button class="py-2 rounded-xl text-white font-medium" style="background:${a}">Add branch</button>
+      </form>
+    </div>
+  </div>`;
+}
+function secTeam(b,a){
+  const workers=b.workers||[];
+  return `<div class="space-y-4">
+    <div class="bg-white rounded-2xl border p-4">
+      <h3 class="font-semibold">Workers</h3>
+      <p class="text-xs text-slate-500 mb-3">Roster for your business. Full worker login & POS password confirmation ships as an extension of this roster.</p>
+      <div class="space-y-2 mb-3">${workers.map((w,i)=>`<div class="flex justify-between border rounded-xl px-3 py-2 text-sm">
+        <span><b>${esc(w.name)}</b> · ${esc(w.role)} · ${esc(w.phone||'—')}</span>
+        <button type="button" data-del-worker="${i}" class="text-xs text-red-600">Remove</button>
+      </div>`).join('')||'<p class="text-slate-400 text-sm">No workers yet</p>'}</div>
+      <form id="addWorkerForm2" class="grid sm:grid-cols-4 gap-2 text-sm">
+        <input name="name" required placeholder="Name" class="border rounded-xl px-3 py-2"/>
+        <input name="phone" placeholder="Phone" class="border rounded-xl px-3 py-2"/>
+        <select name="role" class="border rounded-xl px-3 py-2"><option value="cashier">Cashier</option><option value="manager">Manager</option><option value="delivery">Delivery</option><option value="storekeeper">Storekeeper</option></select>
+        <button class="py-2 rounded-xl text-white font-medium" style="background:${a}">Add</button>
+      </form>
+    </div>
+  </div>`;
+}
+function secDelivery(b,a){
+  ensureDeliveries(b);
+  const list=(b.deliveries||[]).slice().reverse();
+  const pending=(b.orders||[]).filter(o=>o.source==='online'&&(o.fulfillment==='delivery'||o.fulfillment==='Delivery')&&o.status!=='DELIVERED'&&o.status!=='CANCELLED');
+  return `<div class="space-y-4">
+    <div class="bg-white rounded-2xl border p-4">
+      <h3 class="font-semibold mb-1">Delivery management</h3>
+      <p class="text-xs text-slate-500 mb-3">Track deliveries for online/POS orders. Pickup remains available at checkout.</p>
+      <h4 class="text-sm font-medium mb-2">Open delivery orders</h4>
+      <div class="space-y-2 mb-4">${pending.map(o=>`<div class="border rounded-xl p-3 text-sm flex flex-wrap justify-between gap-2">
+        <div><b>${esc(o.number)}</b> · ${esc(o.customerName||o.phone||'')} · ${kes(o.total)}
+          <p class="text-xs text-slate-500">${esc(o.deliveryAddress||o.fulfillment||'')}</p></div>
+        <button type="button" data-mark-delivery="${o.id}" class="text-xs px-3 py-1.5 rounded-lg text-white" style="background:${a}">Mark delivered</button>
+      </div>`).join('')||'<p class="text-slate-400 text-sm">No pending delivery orders</p>'}</div>
+      <h4 class="text-sm font-medium mb-2">Delivery log</h4>
+      <div class="space-y-1 text-sm">${list.slice(0,30).map(d=>`<div class="border-b py-2 flex justify-between"><span>${esc(d.orderNumber||d.id)} · ${esc(d.status)}</span><span class="text-xs text-slate-400">${esc(d.at||'')}</span></div>`).join('')||'<p class="text-slate-400">No deliveries logged</p>'}</div>
+    </div>
+  </div>`;
+}
+function secLoyalty(b,a){
+  ensureLoyalty(b);
+  const L=b.loyalty;
+  const cust=b.customers||[];
+  return `<div class="space-y-4">
+    <div class="bg-white rounded-2xl border p-4">
+      <h3 class="font-semibold mb-1">Loyalty</h3>
+      <p class="text-xs text-slate-500 mb-3">Points rules for this business. Points accrue on paid sales when enabled.</p>
+      <form id="loyaltyForm" class="grid sm:grid-cols-3 gap-2 text-sm mb-4">
+        <div><label class="text-xs text-slate-500">Points per KES</label><input name="pointsPerKes" type="number" step="0.01" value="${L.pointsPerKes||1}" class="w-full border rounded-xl px-3 py-2"/></div>
+        <div><label class="text-xs text-slate-500">KES per 100 points redeem</label><input name="redeemRate" type="number" value="${L.redeemRate||100}" class="w-full border rounded-xl px-3 py-2"/></div>
+        <div class="flex items-end"><button class="w-full py-2 rounded-xl text-white font-medium" style="background:${a}">Save rules</button></div>
+      </form>
+      <p class="text-sm text-slate-600">Customers: <b>${cust.length}</b>. Points ledger per customer expands as sales link phone numbers.</p>
+    </div>
+  </div>`;
+}
+
 function secSettings(b,a){
   const selected=b.categories||[];
   const pills=Object.keys(CATALOG).filter(k=>k!=='empty').map(k=>{
@@ -2679,6 +2856,23 @@ function secSettings(b,a){
     </div>
     <p class="text-xs text-slate-400 mt-2">3-day free trial, then Pro or Business required.</p>
   </div>
+
+  <div class="bg-white rounded-2xl border p-6">
+    <h3 class="font-semibold mb-1">Workers</h3>
+    <p class="text-xs text-slate-500 mb-3">Team members who can help run the shop. Worker logins expand in a later V3 phase — records are stored on this business now.</p>
+    <div class="space-y-2 mb-3" id="workersList">
+      ${((b.workers)||[]).map((w,i)=>`<div class="flex justify-between items-center border rounded-xl px-3 py-2 text-sm">
+        <span><b>${esc(w.name||'')}</b> · ${esc(w.role||'cashier')} · ${esc(w.phone||'')}</span>
+        <button type="button" data-del-worker="${i}" class="text-xs text-red-600">Remove</button>
+      </div>`).join('')||'<p class="text-sm text-slate-400">No workers yet</p>'}
+    </div>
+    <form id="addWorkerForm" class="grid sm:grid-cols-4 gap-2 text-sm">
+      <input name="name" required placeholder="Full name" class="border rounded-xl px-3 py-2"/>
+      <input name="phone" placeholder="Phone" class="border rounded-xl px-3 py-2"/>
+      <select name="role" class="border rounded-xl px-3 py-2"><option value="cashier">Cashier</option><option value="manager">Manager</option><option value="storekeeper">Storekeeper</option></select>
+      <button class="py-2 rounded-xl text-white font-medium" style="background:${a}">Add worker</button>
+    </form>
+  </div>
   <div class="bg-white rounded-2xl border p-6">
     <h3 class="font-semibold mb-1">Sales PIN</h3>
     <p class="text-xs text-slate-500 mb-3">${(biz()&&biz().pinLocked)?'<span class="text-red-600 font-semibold">PIN locked after failed attempts.</span> Contact platform admin to unlock.':(getSalesPin()?'Protects every sale. You can change or reset it below.':'No PIN yet — create one before selling.')}</p>
@@ -2688,11 +2882,25 @@ function secSettings(b,a){
     </div>
     <p class="text-[11px] text-slate-400 mt-2">Reset PIN: enter current PIN, then choose a new 4–6 digit PIN.</p>
   </div>
+
+  <div class="bg-white rounded-2xl border p-6">
+    <h3 class="font-semibold mb-1">Support</h3>
+    <p class="text-xs text-slate-500 mb-3">Send a ticket to BusinessHub platform support.</p>
+    <form id="supportForm" class="space-y-2 text-sm">
+      <input name="subject" required placeholder="Subject" class="w-full border rounded-xl px-3 py-2"/>
+      <textarea name="body" required rows="3" placeholder="Describe the issue" class="w-full border rounded-xl px-3 py-2"></textarea>
+      <button class="w-full py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Submit ticket</button>
+    </form>
+  </div>
   <div class="bg-white rounded-2xl border p-6">
     <h3 class="font-semibold mb-1">Business backup</h3>
     <p class="text-xs text-slate-500 mb-3">Save a full copy of <b>${esc(b.name)}</b> (products, stock, sales, customers, expenses). Store the file safely. Restore later on this device or another.</p>
     <div class="flex flex-col gap-2">
       <button type="button" id="backupBiz" class="w-full py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Download business backup</button>
+      <button type="button" id="backupCloud" class="w-full py-2.5 rounded-xl border-2 border-teal-600 text-teal-800 font-semibold bg-teal-50">Save to BusinessHub folder (server)</button>
+      <button type="button" id="backupEmail" class="w-full py-2.5 rounded-xl border font-semibold bg-white">Email backup to my account email</button>
+      <p class="text-[11px] text-slate-500">Server copies go to folder <b>businesshub / your-email</b> on the host. Email works when the platform sets RESEND_API_KEY.</p>
+      <div id="backupCloudList" class="text-xs text-slate-600 space-y-1"></div>
       <label class="w-full py-2.5 rounded-xl border text-center text-sm font-medium cursor-pointer bg-slate-50">
         Restore backup into this business
         <input type="file" id="restoreBizFile" accept="application/json,.json" class="hidden"/>
@@ -2726,7 +2934,7 @@ function viewAdmin(){
   const p=d.platform;
   const clients=d.users.filter(u=>u.role!=='admin'&&u.email!==(d.adminEmail||'admin@businesshub.ke'));
   const businesses=d.businesses||[];
-  const plans=d.plans||DEFAULT_PLANS;
+  const plans=mergePlans(d.plans||DEFAULT_PLANS);
   const planCounts={};
   businesses.forEach(b=>{const k=b.plan||'FREE';planCounts[k]=(planCounts[k]||0)+1});
   const suspended=businesses.filter(b=>b.suspended).length;
@@ -2736,7 +2944,7 @@ function viewAdmin(){
   const swatches=Object.keys(AD_THEMES).map(k=>`<button type="button" data-ad-theme="${k}" title="${k}" aria-label="${k} theme" class="ad-sw ${adTheme()===k?'on':''}" style="background:${AD_THEMES[k]}"></button>`).join('');
 
   const tabs=[
-    ['overview','Overview'],['clients','Clients'],['businesses','Businesses'],['plans','Payment plans'],['profile','My platform details'],['updates','Updates / notices'],['alerts','Alerts'],['backup','Backup']
+    ['overview','Dashboard'],['clients','Users'],['businesses','Businesses'],['plans','Subscription plans'],['payments','Payments'],['tickets','Support'],['analytics','Analytics'],['profile','Platform settings'],['updates','Announcements'],['alerts','Alerts'],['backup','Backups']
   ];
   const tabNav=tabs.map(([k,l])=>`<button type="button" data-admin-tab="${k}" class="ad-tab px-3 py-2 text-sm rounded-lg ${tab===k?'ad-btn font-semibold':'bg-white border text-slate-600'}">${l}</button>`).join('');
 
@@ -2965,6 +3173,54 @@ function viewAdmin(){
         </form>
       </div>
     </div>`;
+  }else if(tab==='tickets'){
+    const tickets=(d.supportTickets||[]).slice().reverse();
+    body=`<div class="bg-white rounded-2xl border p-6 max-w-3xl">
+      <h3 class="font-semibold mb-1">Support tickets</h3>
+      <p class="text-sm text-slate-500 mb-4">Business owners submit tickets; you reply and resolve them. Existing data is never deleted.</p>
+      <div class="space-y-3">${tickets.map(t=>`<div class="border rounded-xl p-3 text-sm">
+        <div class="flex flex-wrap justify-between gap-2">
+          <span class="font-medium">${esc(t.subject)}</span>
+          <span class="text-xs px-2 py-0.5 rounded-full ${t.status==='resolved'?'bg-emerald-50 text-emerald-800':'bg-amber-50 text-amber-900'}">${esc(t.status||'open')}</span>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">${esc(t.email||'')} · ${esc((t.createdAt||'').slice(0,16).replace('T',' '))}</p>
+        <p class="mt-2 text-slate-700">${esc(t.body||'')}</p>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <button type="button" data-ticket-resolve="${t.id}" class="text-xs border px-2 py-1 rounded-lg">Mark resolved</button>
+          <button type="button" data-ticket-reply="${t.id}" class="text-xs border px-2 py-1 rounded-lg bg-slate-50">Reply</button>
+        </div>
+      </div>`).join('')||'<p class="text-slate-400 text-center py-8">No tickets yet</p>'}</div>
+    </div>`;
+  }else if(tab==='analytics'){
+    const st=d.platformStats||{};
+    const t=st.totals||{};
+    body=`<div class="space-y-4">
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">MRR</p><p class="text-2xl font-bold text-teal-700">${kes(t.mrr||0)}</p></div>
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">ARR</p><p class="text-2xl font-bold">${kes(t.arr||0)}</p></div>
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">Paid plans</p><p class="text-2xl font-bold">${t.paid||0}</p></div>
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">New this month</p><p class="text-2xl font-bold">${t.newMonth||0}</p></div>
+      </div>
+      <div class="bg-white rounded-2xl border p-4">
+        <h3 class="font-semibold mb-2">Plan distribution</h3>
+        <div class="text-sm space-y-1">${Object.keys(st.planCounts||{}).map(k=>`<div class="flex justify-between border-b py-1"><span>${esc(((st.plans||plans)[k]||{}).name||k)}</span><span class="font-medium">${st.planCounts[k]}</span></div>`).join('')||'<p class="text-slate-400">No data</p>'}</div>
+      </div>
+      <div class="bg-white rounded-2xl border p-4">
+        <h3 class="font-semibold mb-2">Popular categories</h3>
+        <div class="text-sm space-y-1">${Object.keys(st.categories||{}).sort((a,b)=>(st.categories[b]-st.categories[a])).slice(0,12).map(k=>`<div class="flex justify-between border-b py-1"><span>${esc(k)}</span><span>${st.categories[k]}</span></div>`).join('')||'<p class="text-slate-400">No category data yet</p>'}</div>
+      </div>
+      <p class="text-xs text-slate-400">V3 Phase pack · Aggregate platform analytics only — individual business sales are not exposed here.</p>
+    </div>`;
+  }else if(tab==='payments'){
+    body=`<div class="bg-white rounded-2xl border p-6 max-w-2xl">
+      <h3 class="font-semibold mb-2">Subscription payments</h3>
+      <p class="text-sm text-slate-500 mb-4">Record and track plan payments. M-Pesa STK for plans remains available to clients in Settings. Manual confirmation supported.</p>
+      <div class="bg-slate-50 rounded-xl p-4 text-sm space-y-2">
+        <p><b>MRR (est.):</b> ${kes((d.platformStats&&d.platformStats.totals&&d.platformStats.totals.mrr)||0)}</p>
+        <p><b>Paid businesses:</b> ${(d.platformStats&&d.platformStats.totals&&d.platformStats.totals.paid)||0}</p>
+        <p class="text-xs text-slate-500">Full Daraja callback auto-activation is configured when Safaricom credentials and a public callback URL are set in platform settings.</p>
+      </div>
+    </div>`;
   }else if(tab==='backup'){
     body=`<div class="bg-white rounded-2xl border p-6 max-w-2xl space-y-4">
       <div>
@@ -3142,7 +3398,68 @@ function bind(){
     });
   }
 
-  document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribute('data-go')));
+  
+  document.querySelectorAll('[data-login-mode]').forEach(b=>b.onclick=()=>{S.loginMode=b.getAttribute('data-login-mode');render()});
+  const wlf=document.getElementById('workerLoginForm');
+  if(wlf)wlf.onsubmit=e=>{
+    e.preventDefault();
+    const fd=new FormData(wlf);
+    const err=document.getElementById('workerLoginErr');
+    err.classList.add('hidden');
+    const ownerEmail=String(fd.get('ownerEmail')).toLowerCase().trim();
+    const username=String(fd.get('username')).toLowerCase().trim();
+    const password=String(fd.get('password')||'');
+    const d=db();
+    const owner=d.users.find(u=>u.email===ownerEmail&&u.role!=='admin');
+    if(!owner){err.textContent='Owner account not found on this device/server data';err.classList.remove('hidden');return}
+    // Find business owned by this user that has the worker
+    const businesses=(d.businesses||[]).filter(b=>b.ownerId===owner.id);
+    let found=null,bizFound=null;
+    for(const b of businesses){
+      const w=(b.workers||[]).find(x=>String(x.username||'').toLowerCase()===username);
+      if(w){found=w;bizFound=b;break}
+    }
+    if(!found||!bizFound){err.textContent='Worker username not found for this owner';err.classList.remove('hidden');return}
+    if(String(found.password||'')!==password){err.textContent='Incorrect worker password';err.classList.remove('hidden');return}
+    // Clear owner session if any
+    d.session=null;d.currentBizId=bizFound.id;save(d);
+    setWorkerSession({workerId:found.id,businessId:bizFound.id,ownerId:owner.id,name:found.name});
+    S.view='worker';S.appView='dashboard';
+    toast('Welcome, '+found.name);
+    render();
+  };
+  const requireWorkerSalePw=document.getElementById('requireWorkerSalePw');
+  if(requireWorkerSalePw)requireWorkerSalePw.onchange=()=>{
+    const b=biz();if(!b)return;
+    b.requireWorkerSalePassword=!!requireWorkerSalePw.checked;
+    saveBiz(b);toast(b.requireWorkerSalePassword?'Worker password required on sales':'Worker password optional');
+  };
+  // Override add worker form to include username/password
+  const addWorkerForm2=document.getElementById('addWorkerForm2');
+  if(addWorkerForm2){
+    addWorkerForm2.onsubmit=e=>{
+      e.preventDefault();
+      const fd=new FormData(addWorkerForm2);
+      const b=biz();if(!b)return;
+      if(!b.workers)b.workers=[];
+      const username=String(fd.get('username')||'').toLowerCase().trim();
+      if(b.workers.some(w=>String(w.username||'').toLowerCase()===username)){alert('Username already used');return}
+      b.workers.push({
+        id:uid(),
+        name:fd.get('name'),
+        username:username,
+        password:String(fd.get('password')||''),
+        phone:fd.get('phone')||'',
+        role:fd.get('role')||'cashier',
+        createdAt:today()
+      });
+      saveBiz(b);toast('Worker added — they can log in on the Worker tab');render();
+    };
+  }
+  document.getElementById('workerSignOut')&&(document.getElementById('workerSignOut').onclick=()=>{clearWorkerSession();S.view='login';S.loginMode='worker';render();toast('Worker logged out')});
+  document.getElementById('workerSignOut2')&&(document.getElementById('workerSignOut2').onclick=()=>{clearWorkerSession();S.view='login';S.loginMode='worker';render();toast('Worker logged out')});
+
+document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribute('data-go')));
   document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>goApp(b.getAttribute('data-nav')));
   document.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{S.color=b.getAttribute('data-color');render()});
   document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{S.filter=b.getAttribute('data-filter');render()});
@@ -3192,7 +3509,7 @@ function bind(){
           const mine=db().businesses.filter(b=>b.ownerId===u.id);
           if(!mine.length){S.view='onboard';render()}
           else{db().currentBizId=mine[0].id;save(db());S.appView='dashboard';S.view='app';render()}
-          toast('Logged in (server)');
+          clearWorkerSession();toast('Logged in (server)');
         });
       }).catch(function(err){
         document.getElementById('loginErr').textContent=err.message||'Login failed';
@@ -3212,7 +3529,7 @@ function bind(){
     const mine=d.businesses.filter(b=>b.ownerId===u.id);
     if(!mine.length){S.view='onboard';render()}
     else{d.currentBizId=mine[0].id;save(d);S.appView='dashboard';S.view='app';render()}
-    toast('Logged in')};
+    clearWorkerSession();toast('Logged in')};
 
   const alf=document.getElementById('adminLoginForm');
   if(alf)alf.onsubmit=e=>{e.preventDefault();const fd=new FormData(alf);const d=db();
@@ -3454,7 +3771,7 @@ render();
       else receipt=payMethod.toUpperCase().replace(/\s/g,'')+'-'+String(b.orderN).padStart(4,'0');
     }
     const order={id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items,total,status:'PAID',
-      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null};
+      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null};S._servedBy=null;
     if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];saveBiz(b);return order;
   }
 
@@ -3491,6 +3808,7 @@ render();
       S._cashChange=money(Math.max(0,(tendered||due)-due));
     }
     requireSalesPin(()=>{
+      requireWorkerSalePassword(()=>{
       if(S.payMethod==='M-Pesa'){
         const b=biz();const amount=cartTotal();
         complete.disabled=true;complete.textContent='STK…';
@@ -3518,11 +3836,13 @@ render();
         <p class="text-sm text-slate-500 mt-2">${esc(o.number)} · ${esc(o.payMethod)}</p>
         <p class="text-xs text-slate-500">${esc(o.receipt)}</p>
         <p class="font-semibold mt-1">${kes(o.total)}</p>
+        ${o.servedBy?`<p class="text-xs mt-2 font-medium">SERVED BY: ${esc(o.servedBy.name)}</p>`:''}
         <button type="button" id="viewInv" class="mt-4 w-full py-2.5 rounded-xl border font-medium">View invoice</button>
         <button type="button" id="newSale" class="mt-2 w-full py-2.5 rounded-xl text-white font-semibold" style="background:${S.accent()}">New sale</button></div>`);
       document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
       document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
       toast('Sale saved · stock updated');
+      });
     });
   };
 
@@ -3675,6 +3995,49 @@ render();
       }});
     }).catch(e=>alert(String(e.message||e)));
   });
+  
+  async function refreshBackupList(){
+    const el=document.getElementById('backupCloudList');
+    if(!el||!SERVER_MODE)return;
+    try{
+      const data=await api('/api/backups/mine');
+      if(!(data.files||[]).length){el.innerHTML='<p class="text-slate-400">No server backups yet for '+esc(data.email||'')+'</p>';return}
+      el.innerHTML='<p class="font-medium text-slate-700">Folder: '+esc(data.folder)+'</p>'+data.files.slice(0,8).map(f=>'<p>'+esc(f.name)+' · '+(Math.round(f.size/1024))+' KB · '+esc((f.at||'').slice(0,19).replace('T',' '))+'</p>').join('');
+    }catch(e){el.innerHTML='<p class="text-slate-400">Could not list backups</p>'}
+  }
+  refreshBackupList();
+  const backupCloud=document.getElementById('backupCloud');
+  if(backupCloud)backupCloud.onclick=async()=>{
+    const b=biz();const u=currentUser();
+    if(!b){toast('No business');return}
+    if(!SERVER_MODE){toast('Open the app via your server URL to use the BusinessHub folder');return}
+    backupCloud.disabled=true;backupCloud.textContent='Saving…';
+    try{
+      const data=await api('/api/businesses/'+b.id+'/backup',{method:'POST',body:{email:(u&&u.email)||'',sendEmail:false}});
+      toast('Saved in '+data.folder+' / '+data.file);
+      refreshBackupList();
+    }catch(e){alert(e.message||e)}
+    backupCloud.disabled=false;backupCloud.textContent='Save to BusinessHub folder (server)';
+  };
+  const backupEmail=document.getElementById('backupEmail');
+  if(backupEmail)backupEmail.onclick=async()=>{
+    const b=biz();const u=currentUser();
+    if(!b||!u||!u.email){alert('You need to be logged in with an email');return}
+    if(!SERVER_MODE){toast('Server mode required to email backups');return}
+    if(!confirm('Save backup to BusinessHub folder and try to email '+u.email+'?'))return;
+    backupEmail.disabled=true;backupEmail.textContent='Sending…';
+    try{
+      const data=await api('/api/businesses/'+b.id+'/backup',{method:'POST',body:{email:u.email,sendEmail:true}});
+      let msg='Saved on server: '+data.folder+'/'+data.file;
+      if(data.mail&&data.mail.sent)msg+=' · Email sent to '+u.email;
+      else if(data.mail&&data.mail.reason)msg+=' · Email: '+data.mail.reason;
+      toast(msg);
+      if(data.mail&&!data.mail.sent)alert(msg+'\n\nAsk the platform owner to set RESEND_API_KEY on the server for automatic email delivery.');
+      refreshBackupList();
+    }catch(e){alert(e.message||e)}
+    backupEmail.disabled=false;backupEmail.textContent='Email backup to my account email';
+  };
+
   const backupBiz=document.getElementById('backupBiz');
   if(backupBiz)backupBiz.onclick=()=>{
     const b=biz();if(!b)return;
@@ -4023,6 +4386,84 @@ render();
     if(!id){alert('Select a business');return}
     if(newPin && !/^\d{4,6}$/.test(newPin)){alert('New PIN must be 4–6 digits');return}
     doUnlockPin(id, newPin);
+  };
+
+  
+  const addWorkerForm=document.getElementById('addWorkerForm');
+  if(addWorkerForm)addWorkerForm.onsubmit=e=>{
+    e.preventDefault();const fd=new FormData(addWorkerForm);const b=biz();if(!b)return;
+    if(!b.workers)b.workers=[];
+    b.workers.push({id:uid(),name:fd.get('name'),phone:fd.get('phone')||'',role:fd.get('role')||'cashier',createdAt:today()});
+    saveBiz(b);toast('Worker added');render();
+  };
+  document.querySelectorAll('[data-del-worker]').forEach(btn=>btn.onclick=()=>{
+    const b=biz();if(!b||!b.workers)return;
+    const i=Number(btn.getAttribute('data-del-worker'));
+    b.workers.splice(i,1);saveBiz(b);render();
+  });
+  const supportForm=document.getElementById('supportForm');
+  if(supportForm)supportForm.onsubmit=e=>{
+    e.preventDefault();const fd=new FormData(supportForm);
+    if(SERVER_MODE){
+      api('/api/support/tickets',{method:'POST',body:{subject:fd.get('subject'),body:fd.get('body'),businessId:(biz()||{}).id}}).then(function(){
+        toast('Support ticket submitted');supportForm.reset();
+      }).catch(function(err){alert(err.message||err)});
+      return;
+    }
+    toast('Connect to server to submit tickets');
+  };
+  document.querySelectorAll('[data-ticket-resolve]').forEach(btn=>btn.onclick=()=>{
+    const id=btn.getAttribute('data-ticket-resolve');
+    if(SERVER_MODE)api('/api/support/tickets/reply',{method:'POST',body:{ticketId:id,status:'resolved',body:'Marked resolved by admin'}}).then(function(){
+      syncPull().then(function(){render();toast('Ticket resolved')});
+    }).catch(function(e){alert(e.message||e)});
+  });
+  document.querySelectorAll('[data-ticket-reply]').forEach(btn=>btn.onclick=()=>{
+    const id=btn.getAttribute('data-ticket-reply');
+    const msg=prompt('Reply message:','');
+    if(!msg)return;
+    if(SERVER_MODE)api('/api/support/tickets/reply',{method:'POST',body:{ticketId:id,body:msg,status:'open'}}).then(function(){
+      syncPull().then(function(){render();toast('Reply sent')});
+    }).catch(function(e){alert(e.message||e)});
+  });
+
+  
+  const aiAskForm=document.getElementById('aiAskForm');
+  if(aiAskForm)aiAskForm.onsubmit=e=>{
+    e.preventDefault();const q=new FormData(aiAskForm).get('q');
+    const ans=answerBizQuestion(biz(),q);
+    const el=document.getElementById('aiAnswer');
+    if(el){el.textContent=ans;el.classList.remove('hidden')}
+  };
+  const addBranchForm=document.getElementById('addBranchForm');
+  if(addBranchForm)addBranchForm.onsubmit=e=>{
+    e.preventDefault();const fd=new FormData(addBranchForm);const b=biz();ensureBranches(b);
+    b.branches.push({id:uid(),name:fd.get('name'),address:fd.get('address')||'',phone:fd.get('phone')||''});
+    saveBiz(b);toast('Branch added');render();
+  };
+  document.querySelectorAll('[data-set-branch]').forEach(btn=>btn.onclick=()=>{
+    const b=biz();ensureBranches(b);b.currentBranchId=btn.getAttribute('data-set-branch');saveBiz(b);render();
+  });
+  document.querySelectorAll('[data-del-branch]').forEach(btn=>btn.onclick=()=>{
+    const b=biz();const id=btn.getAttribute('data-del-branch');
+    b.branches=(b.branches||[]).filter(x=>x.id!==id);
+    if(b.currentBranchId===id)b.currentBranchId=(b.branches[0]||{}).id;
+    saveBiz(b);render();
+  });
+  document.querySelectorAll('[data-mark-delivery]').forEach(btn=>btn.onclick=()=>{
+    const b=biz();const id=btn.getAttribute('data-mark-delivery');
+    const o=(b.orders||[]).find(x=>x.id===id);if(!o)return;
+    o.status='DELIVERED';o.deliveredAt=today();
+    ensureDeliveries(b);
+    b.deliveries.push({id:uid(),orderId:o.id,orderNumber:o.number,status:'DELIVERED',at:new Date().toISOString()});
+    saveBiz(b);toast('Marked delivered');render();
+  });
+  const loyaltyForm=document.getElementById('loyaltyForm');
+  if(loyaltyForm)loyaltyForm.onsubmit=e=>{
+    e.preventDefault();const fd=new FormData(loyaltyForm);const b=biz();ensureLoyalty(b);
+    b.loyalty.pointsPerKes=Number(fd.get('pointsPerKes'))||1;
+    b.loyalty.redeemRate=Number(fd.get('redeemRate'))||100;
+    saveBiz(b);toast('Loyalty rules saved');render();
   };
 
   const adminRefresh=document.getElementById('adminRefresh');
