@@ -766,6 +766,8 @@ async function handleApi(req, res, pathname) {
     const email = String(body.email || u.email || '').toLowerCase().trim();
     if (!email) return json(res, 400, { error: 'Email required for backup folder' });
     const written = writeBusinessBackupFile(email, b);
+      b.lastAutoBackupAt = new Date().toISOString();
+      await pool.query('UPDATE businesses SET data=$2::jsonb WHERE id=$1', [id, JSON.stringify(b)]);;
     let mail = { sent: false, reason: 'not requested' };
     if (body.sendEmail) {
       const raw = fs.readFileSync(written.filePath, 'utf8');
@@ -868,8 +870,79 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+
+/** Auto-backup every 2 days (checks every 6 hours). Saves under data/businesshub/<email>/ */
+const AUTO_BACKUP_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000;
+async function runScheduledBusinessBackups() {
+  try {
+    const rows = (await pool.query('SELECT id, owner_id, data FROM businesses')).rows;
+    const users = (await pool.query('SELECT id, email FROM users')).rows;
+    const byId = Object.fromEntries(users.map(u => [u.id, u.email]));
+    const now = Date.now();
+    let n = 0;
+    for (const row of rows) {
+      let b = row.data;
+      if (typeof b === 'string') { try { b = JSON.parse(b); } catch { continue; } }
+      if (!b || typeof b !== 'object') continue;
+      if (b.autoBackup === false) continue;
+      b.id = b.id || row.id;
+      const last = b.lastAutoBackupAt ? Date.parse(b.lastAutoBackupAt) : 0;
+      if (last && !Number.isNaN(last) && (now - last) < AUTO_BACKUP_INTERVAL_MS) continue;
+      const email = byId[row.owner_id] || b.ownerEmail || '';
+      if (!email) continue;
+      try {
+        writeBusinessBackupFile(email, b);
+        b.lastAutoBackupAt = new Date().toISOString();
+        await pool.query('UPDATE businesses SET data=$2::jsonb WHERE id=$1', [row.id, JSON.stringify(b)]);
+        n++;
+      } catch (e) {
+        console.warn('[auto-backup] fail', row.id, e.message);
+      }
+    }
+    // Admin/platform snapshot every 2 days
+    try {
+      const cfg = await getCfg('last_admin_auto_backup', null);
+      const lastAd = cfg ? Date.parse(cfg) : 0;
+      if (!lastAd || (now - lastAd) >= AUTO_BACKUP_INTERVAL_MS) {
+        const dir = ensureBackupDir('_platform');
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const businesses = (await pool.query('SELECT * FROM businesses ORDER BY created_at')).rows;
+        const payload = {
+          type: 'businesshub_admin_backup',
+          version: 3,
+          exportedAt: new Date().toISOString(),
+          auto: true,
+          data: {
+            users: (await pool.query('SELECT id,email,name,role,created_at FROM users')).rows,
+            businesses: businesses.map(r => {
+              let d = r.data; if (typeof d === 'string') try { d = JSON.parse(d); } catch { d = {}; }
+              return d;
+            })
+          }
+        };
+        fs.writeFileSync(path.join(dir, 'platform_auto_' + stamp + '.json'), JSON.stringify(payload, null, 2));
+        await setCfg('last_admin_auto_backup', new Date().toISOString());
+        console.log('[auto-backup] platform snapshot saved');
+      }
+    } catch (e) {
+      console.warn('[auto-backup] platform', e.message);
+    }
+    if (n) console.log('[auto-backup] businesses saved:', n);
+  } catch (e) {
+    console.warn('[auto-backup]', e.message);
+  }
+}
+function startAutoBackupScheduler() {
+  setTimeout(() => { runScheduledBusinessBackups().catch(() => {}); }, 20000);
+  setInterval(() => { runScheduledBusinessBackups().catch(() => {}); }, 6 * 60 * 60 * 1000);
+}
+
 init()
-  .then(() => server.listen(PORT, '0.0.0.0', () => console.log(`MyBusinessHub running on port ${PORT}`)))
+  .then(() => {
+    server.listen(PORT, '0.0.0.0', () => console.log(`MyBusinessHub running on port ${PORT}`));
+    startAutoBackupScheduler();
+    console.log('[auto-backup] scheduler started (every 2 days)');
+  })
   .catch((e) => { console.error('Startup failed:', e.message); process.exit(1); });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
