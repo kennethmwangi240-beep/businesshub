@@ -1559,7 +1559,7 @@ function requireWorkerSalePassword(onOk){
           document.getElementById('wSaleErr').classList.remove('hidden');
           return;
         }
-        S._servedBy={id:cw.worker.id,name:cw.worker.name,role:cw.worker.role};
+        S._servedBy={id:cw.worker.id,name:(cw.worker.firstName||cw.worker.name||''),role:cw.worker.role};
         closeModal();onOk();
       };
       return;
@@ -1582,7 +1582,7 @@ function requireWorkerSalePassword(onOk){
           document.getElementById('wSaleErr').classList.remove('hidden');
           return;
         }
-        S._servedBy={id:w.id,name:w.name,role:w.role};
+        S._servedBy={id:w.id,name:(w.firstName||w.name||''),role:w.role};
         closeModal();onOk();
       };
       return;
@@ -1661,7 +1661,7 @@ function requireSalesPin(onOk){
 const S={
   view:'landing',appView:'dashboard',filter:'All',search:'',bizCatTab:'all',
   selectedCats:['electrical'],color:'#d97706',chartMode:'daily',viewInvoiceId:null,
-  prodSearch:'',prodSub:'All',stockSearch:'',payMethod:'Cash',onlineBizId:null,onlineCart:[],adminTab:'overview',
+  prodSearch:'',prodSub:'All',stockSearch:'',payMethod:'Cash',cartDiscount:0,receiptWidth:'80',onlineBizId:null,onlineCart:[],adminTab:'overview',
   accent(){const b=biz();return (b&&b.color)||this.color}
 };
 let chartInst=null;
@@ -1947,7 +1947,8 @@ function productThumbWide(p){
 
 
 function cartCount(){const b=biz();return ((b&&b.cart)||[]).reduce((s,c)=>s+(c.qty||0),0)}
-function cartTotal(){let t=0;((biz()||{}).cart||[]).forEach(c=>t+=c.price*c.qty);return money(t)}
+function cartSubtotal(){let t=0;((biz()||{}).cart||[]).forEach(c=>t+=c.price*c.qty);return money(t)}
+function cartTotal(){const sub=cartSubtotal();const disc=Math.min(100,Math.max(0,Number(S.cartDiscount||0)));return money(sub*(1-disc/100))}
 function go(v){S.view=v;S.viewInvoiceId=null;render()}
 
 function workerSession(){
@@ -1977,9 +1978,15 @@ function isWorkerMode(){
 function goApp(s){
   try{
     S.viewInvoiceId=null;
-    S.appView=s||'dashboard';
-    if(isWorkerMode()){S.view='worker'}
-    else{S.view='app'}
+    const key=s||'dashboard';
+    if(isWorkerMode()){
+      const allowed=['dashboard','shop','invoices'];
+      S.appView=allowed.includes(key)?key:'dashboard';
+      S.view='worker';
+    }else{
+      S.appView=key;
+      S.view='app';
+    }
     render();
   }catch(e){
     console.error('goApp',e);
@@ -2047,16 +2054,24 @@ function animateCounts(){
 
 function render(){
   const d=db();
+  // Worker session (no owner session) → restricted worker UI only
+  if(!d.session && currentWorker()){
+    if(S.view!=='workerLogin')S.view='worker';
+  }
   if(d.session&&isAdmin()){
-    // Platform owner only sees admin — never client shop UI
-    if(S.view!=='admin'&&S.view!=='forgot'&&S.view!=='adminLogin')S.view='admin';
-  }else if(S.view!=='forgot'&&S.view!=='onboard'&&S.view!=='online'&&S.view!=='admin'){
-    if(d.session){
-      const mine=myBusinesses();
-      if(!mine.length)S.view='onboard';
-      else{
-        if(!d.currentBizId||!mine.find(b=>b.id===d.currentBizId)){d.currentBizId=mine[0].id;save(d)}
-        if(S.view!=='onboard')S.view='app';
+    if(S.view!=='admin'&&S.view!=='forgot'&&S.view!=='adminLogin'&&S.view!=='adminRegister')S.view='admin';
+  }else if(d.session&&!isAdmin()){
+    // Owner session — never stay on worker views
+    if(S.view==='worker'||S.view==='workerLogin')S.view='app';
+    const mine=myBusinesses();
+    if(!mine.length){
+      if(S.view!=='onboard'&&S.view!=='register'&&S.view!=='login')S.view='onboard';
+    }else{
+      if(!d.currentBizId||!mine.find(b=>b.id===d.currentBizId)){d.currentBizId=mine[0].id;save(d)}
+      const b=biz();
+      if(b&&!b.shopMode&&S.view!=='onboard'&&S.view!=='shopMode')S.view='shopMode';
+      else if(b&&b.shopMode&&S.view!=='onboard'&&S.view!=='online'&&S.view!=='forgot'&&S.view!=='shopMode'){
+        if(S.view!=='app')S.view='app';
       }
     }
   }
@@ -2066,6 +2081,9 @@ function render(){
   const root=document.getElementById('root');
   try{
     if(S.view==='landing')root.innerHTML=viewLanding();
+    else if(S.view==='workerLogin')root.innerHTML=viewWorkerLogin();
+    else if(S.view==='worker')root.innerHTML=viewWorkerApp();
+    else if(S.view==='shopMode')root.innerHTML=viewShopModePick();
     else if(S.view==='login'){root.innerHTML=viewLogin();try{const s=JSON.parse(localStorage.getItem('bh_remember')||'null');if(s&&s.email){const f=document.getElementById('loginForm');if(f){f.email.value=s.email;const r=document.getElementById('rememberMe');if(r)r.checked=true}}}catch(e){}}
     else if(S.view==='register')root.innerHTML=viewRegister();
     else if(S.view==='forgot')root.innerHTML=viewForgot();
@@ -2149,32 +2167,71 @@ function viewLanding(){
   <footer class="text-center text-xs text-slate-400 pb-8">© BusinessHub Kenya</footer>
   </div></div>`;
 }
-function viewLogin(){
-  return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="BusinessHub" class="h-14 mx-auto mb-2"/>
-  <div class="flex items-center justify-between mb-4"><button type="button" data-go="landing" class="text-xs text-slate-400">← Back</button>${installBtn('text-xs px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700','Install app')}</div>
-  <h1 class="text-2xl font-bold">Log in</h1>
-  <form id="loginForm" class="mt-6 space-y-4">
-    <div><label class="text-sm font-medium">Email</label><input name="email" type="email" required class="w-full border rounded-xl px-3 py-2.5 mt-1"/></div>
-    <div><label class="text-sm font-medium">Password</label>${pwField('password','',true)}</div>
-    <div class="flex justify-end"><button type="button" data-go="forgot" class="text-sm text-teal-700 font-medium">Forgot password?</button></div>
-    <label class="flex items-center gap-2 text-sm text-slate-600">
-      <input type="checkbox" name="remember" id="rememberMe" checked/>
-      Remember my email on this device
-    </label>
-    <p id="loginErr" class="hidden text-sm text-red-600"></p>
-    <button class="w-full py-3 rounded-xl text-white font-semibold bg-teal-600">Log in</button>
-  </form>
-  <p class="text-center text-sm mt-4 text-slate-500">No account? <button type="button" data-go="register" class="text-teal-700 font-medium">Register</button></p>
-  <p class="text-center text-xs text-slate-400 mt-6">
-    Platform owner?
-    <button type="button" data-go="adminLogin" class="text-teal-700 font-medium">Admin login</button>
-  </p>
+
+function viewWorkerLogin(){
+  return `<div class="min-h-screen flex items-center justify-center p-4 bg-slate-900">
+  <div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-xl">
+    <button type="button" data-go="login" class="text-xs text-slate-400 mb-4">← Owner login</button>
+    <h1 class="text-2xl font-bold text-slate-900">Worker login</h1>
+    <p class="text-sm text-slate-500 mt-1">Staff only. You cannot open the owner dashboard from here.</p>
+    <form id="workerLoginForm" class="mt-6 space-y-4">
+      <div>
+        <label class="text-sm font-medium">Owner email</label>
+        <input name="ownerEmail" type="email" required class="w-full border rounded-xl px-3 py-2.5 mt-1" placeholder="owner@business.com"/>
+      </div>
+      <div>
+        <label class="text-sm font-medium">Your username</label>
+        <input name="username" required autocomplete="username" class="w-full border rounded-xl px-3 py-2.5 mt-1" placeholder="e.g. jane"/>
+      </div>
+      <div>
+        <label class="text-sm font-medium">Your password</label>
+        ${pwField('password','',true)}
+      </div>
+      <p id="workerLoginErr" class="hidden text-sm text-red-600"></p>
+      <button class="w-full py-3 rounded-xl text-white font-semibold bg-slate-900">Log in as worker</button>
+    </form>
   </div></div>`;
 }
+
+function viewLogin(){
+  return `<div class="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+  <div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm">
+    <div class="flex items-center justify-between mb-4">
+      <button type="button" data-go="landing" class="text-xs text-slate-400">← Back</button>
+      ${installBtn('text-xs px-3 py-1.5 rounded-lg border','Install app')}
+    </div>
+    <h1 class="text-2xl font-bold">Owner log in</h1>
+    <p class="text-sm text-slate-500 mt-1">Business owners manage the full shop from this account.</p>
+    <form id="loginForm" class="mt-6 space-y-4">
+      <div>
+        <label class="text-sm font-medium text-slate-700">Email</label>
+        <input name="email" type="email" required class="w-full border rounded-xl px-3 py-2.5 mt-1"/>
+      </div>
+      <div>
+        <label class="text-sm font-medium text-slate-700">Password</label>
+        ${pwField('password','',true)}
+      </div>
+      <label class="flex items-center gap-2 text-sm text-slate-600">
+        <input type="checkbox" name="remember" id="rememberMe" checked/>
+        Remember on this device
+      </label>
+      <p id="loginErr" class="hidden text-sm text-red-600"></p>
+      <button type="submit" class="w-full py-3 rounded-xl text-white font-semibold bg-teal-600">Log in as owner</button>
+    </form>
+    <p class="text-center text-sm mt-4"><button type="button" data-go="forgot" class="text-teal-700">Forgot password?</button></p>
+    <p class="text-center text-sm mt-2 text-slate-500">No account? <button type="button" data-go="register" class="text-teal-700 font-medium">Create owner account</button></p>
+    <div class="mt-6 pt-4 border-t text-center">
+      <p class="text-xs text-slate-500 mb-2">Cashier or staff?</p>
+      <button type="button" data-go="workerLogin" class="w-full py-2.5 rounded-xl border-2 border-slate-800 text-slate-800 font-semibold text-sm">Worker login (separate)</button>
+    </div>
+  </div></div>`;
+}
+
+
 function viewRegister(){
   return `<div class="min-h-screen flex items-center justify-center p-4"><div class="w-full max-w-md bg-white rounded-2xl border p-8 shadow-sm"><img src="/logo-mark.png" alt="BusinessHub" class="h-14 mx-auto mb-2"/>
   <button type="button" data-go="landing" class="text-xs text-slate-400 mb-4">← Back</button>
-  <h1 class="text-2xl font-bold">Create account</h1>
+  <h1 class="text-2xl font-bold">Create owner account</h1>
   <form id="regForm" class="mt-6 space-y-4">
     <div><label class="text-sm font-medium">Name</label><input name="name" class="w-full border rounded-xl px-3 py-2.5 mt-1"/></div>
     <div><label class="text-sm font-medium">Email</label><input name="email" type="email" required class="w-full border rounded-xl px-3 py-2.5 mt-1"/></div>
@@ -2327,6 +2384,26 @@ function viewAdminRegister(){
   </div></div>`;
 }
 
+
+function viewShopModePick(){
+  const b=biz();
+  return `<div class="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+  <div class="w-full max-w-lg bg-white rounded-2xl border p-8 shadow-sm">
+    <h1 class="text-2xl font-bold">How will you run ${esc(b&&b.name||'your shop')}?</h1>
+    <p class="text-sm text-slate-500 mt-2">You can change this later in Settings. As the owner you always keep the full menu.</p>
+    <div class="mt-6 space-y-3">
+      <button type="button" id="pickSolo" class="w-full text-left p-4 rounded-2xl border-2 border-slate-200 hover:border-teal-600 transition">
+        <b class="text-lg">I work alone (solo)</b>
+        <p class="text-sm text-slate-500 mt-1">Full owner dashboard — POS, stock, reports, settings. No worker accounts.</p>
+      </button>
+      <button type="button" id="pickTeam" class="w-full text-left p-4 rounded-2xl border-2 border-slate-200 hover:border-teal-600 transition">
+        <b class="text-lg">I have workers / cashiers</b>
+        <p class="text-sm text-slate-500 mt-1">You still get the full owner menu. Add workers under <b>Workers</b>. They use the separate Worker login page with limited access (POS + their sales only).</p>
+      </button>
+    </div>
+  </div></div>`;
+}
+
 function viewOnboard(){
   const selected=S.selectedCats||[];
   const pills=Object.keys(CATALOG).filter(k=>k!=='empty').map(k=>{
@@ -2381,50 +2458,67 @@ function viewOnboard(){
 
 function viewWorkerApp(){
   const cw=currentWorker();
-  if(!cw){S.view='login';S.loginMode='worker';return viewLogin()}
-  const b=cw.business;const w=cw.worker;const a=b.color||'#0d9488';
-  const d=db();d.currentBizId=b.id;save(d);
-  const todaySales=paidOrders(b).filter(o=>o.date===today()&&o.servedBy&&o.servedBy.id===w.id);
-  const todayTotal=todaySales.reduce((s,o)=>s+Number(o.total||0),0);
-  const mySales=paidOrders(b).filter(o=>o.servedBy&&o.servedBy.id===w.id);
+  if(!cw){S.view='workerLogin';return viewWorkerLogin()}
+  const d=db();
+  if(d.session){clearWorkerSession();S.view='app';return viewApp()}
+  const b=cw.business;const w=cw.worker;const a=b.color||'#0f172a';
+  d.currentBizId=b.id;save(d);
+  const myOrders=paidOrders(b).filter(o=>o.servedBy&&o.servedBy.id===w.id);
+  const todaySales=myOrders.filter(o=>o.date===today());
+  const weekStart=(()=>{const t=new Date();t.setDate(t.getDate()-6);return t.toISOString().slice(0,10)})();
+  const weekSales=myOrders.filter(o=>o.date>=weekStart);
+  const monthPrefix=today().slice(0,7);
+  const monthSales=myOrders.filter(o=>String(o.date||'').startsWith(monthPrefix));
+  const sum=arr=>arr.reduce((s,o)=>s+Number(o.total||0),0);
+  const qty=arr=>{let q=0;arr.forEach(o=>(o.items||[]).forEach(it=>q+=Number(it.qty||0)));return q};
+  const shift=currentShift(b);
+  const allowed=['dashboard','shop','invoices'];
+  if(!allowed.includes(S.appView))S.appView='dashboard';
   let main;
   if(S.appView==='shop')main=secShop(b,a);
   else if(S.appView==='invoices')main=secInvoices(b,a);
   else main=`<div class="space-y-4">
-      <div class="bg-gradient-to-br from-teal-600 to-teal-800 text-white rounded-2xl p-5">
-        <p class="text-sm opacity-90">Worker mini dashboard</p>
-        <h2 class="text-xl font-bold mt-1">${esc(w.name)}</h2>
-        <p class="text-sm mt-1">${esc(b.name)} · ${esc(w.role||'cashier')}</p>
+      <div class="bg-slate-900 text-white rounded-2xl p-5">
+        <p class="text-sm text-slate-300">Worker mini dashboard</p>
+        <h2 class="text-xl font-bold mt-1">${esc(w.firstName||w.name||'')} ${esc(w.lastName||'')}</h2>
+        <p class="text-sm mt-1 text-slate-300">${esc(b.name)} · ${esc(w.role||'cashier')} · Shift: ${shift?'OPEN':'closed'}</p>
       </div>
-      <div class="grid grid-cols-2 gap-3">
-        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">My sales today</p><p class="text-xl font-bold">${kes(todayTotal)}</p><p class="text-xs text-slate-400">${todaySales.length} sale(s)</p></div>
-        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">My sales (all)</p><p class="text-xl font-bold">${mySales.length}</p></div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">Today</p><p class="text-lg font-bold">${kes(sum(todaySales))}</p><p class="text-xs text-slate-400">${todaySales.length} sales</p></div>
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">This week</p><p class="text-lg font-bold">${kes(sum(weekSales))}</p></div>
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">This month</p><p class="text-lg font-bold">${kes(sum(monthSales))}</p></div>
+        <div class="bg-white rounded-2xl border p-4"><p class="text-xs text-slate-500">Qty sold (month)</p><p class="text-lg font-bold">${qty(monthSales)}</p></div>
       </div>
-      <button type="button" data-nav="shop" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${a}">Open POS / Shop</button>
+      <div class="bg-white rounded-2xl border p-4 text-sm">
+        <p>Commission rate: <b>${Number(w.commissionPct||0)}%</b> · Est. month commission: <b>${kes(money(sum(monthSales)*Number(w.commissionPct||0)/100))}</b></p>
+      </div>
+      <button type="button" data-nav="shop" class="w-full py-3 rounded-xl text-white font-semibold bg-slate-900">Open POS</button>
+      <p class="text-xs text-slate-400 text-center">Limited access — no owner settings, stock admin, or reports.</p>
     </div>`;
-  return `<div class="min-h-screen bg-slate-50 flex">
-    <aside class="w-56 bg-slate-900 text-slate-100 flex flex-col hidden md:flex">
-      <div class="p-4 border-b border-white/10"><p class="font-bold">Worker</p><p class="text-xs text-slate-400 truncate">${esc(w.name)}</p></div>
+  return `<div class="min-h-screen bg-slate-100 flex">
+    <aside class="w-52 bg-slate-900 text-slate-100 flex flex-col hidden md:flex">
+      <div class="p-4 border-b border-white/10"><p class="font-bold text-sm">Worker</p><p class="text-xs text-slate-400 truncate">${esc(w.firstName||w.name||'')}</p></div>
       <nav class="p-2 flex-1 space-y-1">
-        <button type="button" data-nav="dashboard" class="nav-item w-full text-left ${S.appView==='dashboard'||!S.appView?'active':''}">My dashboard</button>
-        <button type="button" data-nav="shop" class="nav-item w-full text-left ${S.appView==='shop'?'active':''}">POS / Shop</button>
-        <button type="button" data-nav="invoices" class="nav-item w-full text-left ${S.appView==='invoices'?'active':''}">Invoices</button>
+        <button type="button" data-nav="dashboard" class="nav-item w-full text-left text-slate-200 ${S.appView==='dashboard'?'bg-white/15':''}">My dashboard</button>
+        <button type="button" data-nav="shop" class="nav-item w-full text-left text-slate-200 ${S.appView==='shop'?'bg-white/15':''}">POS</button>
+        <button type="button" data-nav="invoices" class="nav-item w-full text-left text-slate-200 ${S.appView==='invoices'?'bg-white/15':''}">Invoices</button>
       </nav>
       <button type="button" id="workerSignOut" class="m-3 py-2 text-sm rounded-lg bg-white/10">Log out</button>
     </aside>
     <div class="flex-1 flex flex-col min-w-0">
-      <header class="bg-white border-b px-4 py-3 flex items-center justify-between gap-2">
+      <header class="bg-white border-b px-4 py-3 flex items-center justify-between">
         <div class="md:hidden flex gap-2">
           <button type="button" data-nav="dashboard" class="text-xs border px-2 py-1 rounded-lg">Home</button>
           <button type="button" data-nav="shop" class="text-xs border px-2 py-1 rounded-lg">POS</button>
         </div>
-        <p class="font-semibold truncate">${esc(b.name)}</p>
+        <p class="font-semibold text-sm truncate">${esc(b.name)}</p>
         <button type="button" id="workerSignOut2" class="text-xs text-slate-500">Log out</button>
       </header>
       <main class="p-4 max-w-5xl w-full mx-auto">${main}</main>
     </div>
   </div>`;
 }
+
 
 function viewApp(){
   const b=biz();if(!b){S.view='onboard';return viewOnboard()}
@@ -2660,6 +2754,12 @@ function secShop(b,a){
         <button type="button" data-inc="${c.id}" class="w-8 h-8 rounded-lg border">+</button>
       </div></div>`).join('');
   const payOpts=PAY_METHODS.map(m=>`<button type="button" data-pay="${m}" class="pay-opt ${S.payMethod===m?'on':''}">${m}</button>`).join('');
+  const shiftOpen=currentShift(b);
+  const shiftWarn=(!shiftOpen&&b.requireShiftForSale)?`<div class="bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl p-2 mb-2">Open a cashier shift before selling (Workers → Shifts or Shifts menu).</div>`:'';
+  const disc=Number(S.cartDiscount||0);
+  const sub=cartSubtotal();
+  const tot=cartTotal();
+
   return `<div class="mb-3 flex flex-wrap gap-2">${catTabs}</div>
   <div class="lg:grid lg:grid-cols-3 gap-6">
   <div class="lg:col-span-2">
@@ -2674,7 +2774,23 @@ function secShop(b,a){
       <p class="text-lg font-bold">Total ${kes(cartTotal())}</p>
       <div>
         <label class="block text-sm font-medium mb-2">Payment method</label>
-        <div class="grid grid-cols-2 gap-2">${payOpts}</div>
+        <div class="grid grid-cols-2 gap-2">${payOpts}
+      ${shiftWarn||''}
+      <div class="mt-2 flex items-center gap-2 text-sm">
+        <label class="text-xs text-slate-500">Discount %</label>
+        <input id="cartDiscount" type="number" min="0" max="100" step="0.5" value="${disc}" class="w-20 border rounded-lg px-2 py-1"/>
+        <span class="text-xs text-slate-500">Subtotal ${kes(sub)} → <b>${kes(tot)}</b></span>
+      </div>
+      <div class="mt-2">
+        <label class="text-xs text-slate-500">Scan / enter barcode</label>
+        <input id="barcodeScan" class="w-full border rounded-xl px-3 py-2 mt-1 text-sm" placeholder="Barcode then Enter"/>
+      </div>
+      <div class="mt-2 text-xs text-slate-500">Receipt size:
+        <select id="receiptWidth" class="border rounded-lg px-2 py-1 ml-1">
+          <option value="58" ${S.receiptWidth==='58'?'selected':''}>58 mm</option>
+          <option value="80" ${S.receiptWidth!=='58'?'selected':''}>80 mm</option>
+        </select>
+      </div></div>
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Fulfillment</label>
@@ -2811,6 +2927,7 @@ function secInvoiceDetail(b,a){
   return `<div class="no-print mb-4 flex gap-2">
     <button type="button" data-nav="invoices" class="px-4 py-2 rounded-xl border bg-white text-sm">← Back</button>
     <button type="button" id="printInv" class="px-4 py-2 rounded-xl text-white text-sm font-medium" style="background:${a}">Print invoice</button>
+    ${o.status==='PAID'?`<button type="button" id="refundInv" class="px-4 py-2 rounded-xl border text-sm text-red-700">Refund / return</button>`:''}
   </div>
   <div class="invoice-print bg-white rounded-2xl border p-6 md:p-10 max-w-2xl mx-auto">
     <div class="flex justify-between gap-4 mb-8">
@@ -3082,24 +3199,59 @@ function secBranches(b,a){
   </div>`;
 }
 function secTeam(b,a){
+  ensureBranches(b);
   const workers=b.workers||[];
+  const branches=b.branches||[{id:'main',name:'Main branch'}];
   return `<div class="space-y-4">
     <div class="bg-white rounded-2xl border p-4">
-      <h3 class="font-semibold">Workers</h3>
-      <p class="text-xs text-slate-500 mb-3">Roster for your business. Full worker login & POS password confirmation ships as an extension of this roster.</p>
-      <div class="space-y-2 mb-3">${workers.map((w,i)=>`<div class="flex justify-between border rounded-xl px-3 py-2 text-sm">
-        <span><b>${esc(w.name)}</b> · ${esc(w.role)} · ${esc(w.phone||'—')}</span>
-        <button type="button" data-del-worker="${i}" class="text-xs text-red-600">Remove</button>
-      </div>`).join('')||'<p class="text-slate-400 text-sm">No workers yet</p>'}</div>
-      <form id="addWorkerForm2" class="grid sm:grid-cols-4 gap-2 text-sm">
-        <input name="name" required placeholder="Name" class="border rounded-xl px-3 py-2"/>
+      <h3 class="font-semibold">Worker management</h3>
+      <p class="text-xs text-slate-500 mb-3">Each worker has separate login credentials. They never see the owner dashboard — only POS, their sales, and invoices.</p>
+      <label class="flex items-center gap-2 text-sm mb-2 p-3 rounded-xl bg-slate-50 border">
+        <input type="checkbox" id="requireWorkerSalePw" ${b.requireWorkerSalePassword?'checked':''}/>
+        Require worker password on every POS sale
+      </label>
+      <label class="flex items-center gap-2 text-sm mb-4 p-3 rounded-xl bg-slate-50 border">
+        <input type="checkbox" id="requireShiftForSale" ${b.requireShiftForSale?'checked':''}/>
+        Require open cashier shift before POS sales
+      </label>
+      <div class="space-y-2 mb-4">${workers.map((w,i)=>{
+        const sales=(b.orders||[]).filter(o=>o.servedBy&&o.servedBy.id===w.id&&o.status==='PAID');
+        const total=sales.reduce((s,o)=>s+Number(o.total||0),0);
+        return `<div class="border rounded-xl p-3 text-sm">
+          <div class="flex flex-wrap justify-between gap-2">
+            <div>
+              <b>${esc(w.firstName||w.name||'')} ${esc(w.lastName||'')}</b>
+              <span class="text-xs text-slate-500"> · @${esc(w.username||'—')} · ${esc(w.role||'cashier')}</span>
+              <p class="text-xs text-slate-500">Branch: ${esc((branches.find(x=>x.id===w.branchId)||{}).name||'Main')} · Phone: ${esc(w.phone||'—')}</p>
+              <p class="text-xs mt-1">Sales: ${sales.length} · ${kes(total)} · Commission ${Number(w.commissionPct||0)}%</p>
+            </div>
+            <button type="button" data-del-worker="${i}" class="text-xs text-red-600">Remove</button>
+          </div>
+        </div>`;
+      }).join('')||'<p class="text-slate-400 text-sm">No workers yet — add one below.</p>'}</div>
+      <form id="addWorkerForm2" class="grid sm:grid-cols-2 gap-2 text-sm border-t pt-4">
+        <input name="firstName" required placeholder="First name" class="border rounded-xl px-3 py-2"/>
+        <input name="lastName" placeholder="Last name" class="border rounded-xl px-3 py-2"/>
+        <input name="username" required placeholder="Username (login)" class="border rounded-xl px-3 py-2" pattern="[a-zA-Z0-9._\\-]{2,32}"/>
+        <input name="password" required type="password" placeholder="Password" class="border rounded-xl px-3 py-2"/>
         <input name="phone" placeholder="Phone" class="border rounded-xl px-3 py-2"/>
-        <select name="role" class="border rounded-xl px-3 py-2"><option value="cashier">Cashier</option><option value="manager">Manager</option><option value="delivery">Delivery</option><option value="storekeeper">Storekeeper</option></select>
-        <button class="py-2 rounded-xl text-white font-medium" style="background:${a}">Add</button>
+        <select name="role" class="border rounded-xl px-3 py-2">
+          <option value="cashier">Cashier</option>
+          <option value="manager">Manager</option>
+          <option value="storekeeper">Storekeeper</option>
+          <option value="delivery">Delivery</option>
+        </select>
+        <select name="branchId" class="border rounded-xl px-3 py-2">
+          ${branches.map(br=>`<option value="${br.id}">${esc(br.name)}</option>`).join('')}
+        </select>
+        <input name="commissionPct" type="number" min="0" max="100" step="0.1" placeholder="Commission %" class="border rounded-xl px-3 py-2"/>
+        <button class="sm:col-span-2 py-2.5 rounded-xl text-white font-medium" style="background:${a}">Add worker with login</button>
       </form>
     </div>
   </div>`;
 }
+
+
 function secDelivery(b,a){
   ensureDeliveries(b);
   const list=(b.deliveries||[]).slice().reverse();
@@ -3834,7 +3986,7 @@ function bind(){
     if(String(found.password||'')!==password){err.textContent='Incorrect worker password';err.classList.remove('hidden');return}
     // Clear owner session if any
     d.session=null;d.currentBizId=bizFound.id;save(d);
-    setWorkerSession({workerId:found.id,businessId:bizFound.id,ownerId:owner.id,name:found.name});
+    setWorkerSession({workerId:found.id,businessId:bizFound.id,ownerId:owner.id,name:found.name,username:found.username});
     S.view='worker';S.appView='dashboard';
     toast('Welcome, '+found.name);
     render();
@@ -3862,18 +4014,48 @@ function bind(){
       if(!b.workers)b.workers=[];
       const username=String(fd.get('username')||'').toLowerCase().trim();
       if(b.workers.some(w=>String(w.username||'').toLowerCase()===username)){alert('Username already used');return}
+      const firstName=String(fd.get('firstName')||fd.get('name')||'').trim();
+      const lastName=String(fd.get('lastName')||'').trim();
       b.workers.push({
         id:uid(),
-        name:fd.get('name'),
+        firstName,lastName,
+        name:(firstName+' '+lastName).trim(),
         username:username,
         password:String(fd.get('password')||''),
         phone:fd.get('phone')||'',
         role:fd.get('role')||'cashier',
-        createdAt:today()
+        branchId:fd.get('branchId')||'main',
+        commissionPct:Number(fd.get('commissionPct'))||0,
+        createdAt:today(),
+        permissions:{pos:true,invoices:true,stock:false,reports:false}
       });
-      saveBiz(b);toast('Worker added — they can log in on the Worker tab');render();
+      saveBiz(b);pushAudit('worker_added',username);toast('Worker added with separate login');render();
     };
   }
+
+  const cartDiscount=document.getElementById('cartDiscount');
+  if(cartDiscount)cartDiscount.onchange=cartDiscount.oninput=()=>{S.cartDiscount=Number(cartDiscount.value)||0;render()};
+  const receiptWidth=document.getElementById('receiptWidth');
+  if(receiptWidth)receiptWidth.onchange=()=>{S.receiptWidth=receiptWidth.value;render()};
+  const barcodeScan=document.getElementById('barcodeScan');
+  if(barcodeScan)barcodeScan.onkeydown=e=>{
+    if(e.key!=='Enter')return;
+    e.preventDefault();
+    const code=barcodeScan.value.trim();if(!code)return;
+    const b=biz();const p=(b.products||[]).find(x=>String(x.barcode||'')===code||String(x.id)===code);
+    if(!p){toast('No product for barcode '+code);barcodeScan.select();return}
+    // add to cart
+    if(!b.cart)b.cart=[];
+    const line=b.cart.find(c=>c.id===p.id);
+    if(line)line.qty+=1;else b.cart.push({id:p.id,name:p.name,price:Number(p.price)||0,qty:1});
+    saveBiz(b);barcodeScan.value='';toast(p.name+' added');render();
+  };
+  const requireShiftForSale=document.getElementById('requireShiftForSale');
+  if(requireShiftForSale)requireShiftForSale.onchange=()=>{
+    const b=biz();if(!b)return;b.requireShiftForSale=!!requireShiftForSale.checked;saveBiz(b);
+    toast(b.requireShiftForSale?'Shift required before sales':'Shift optional');
+  };
+
   document.getElementById('workerSignOut')&&(document.getElementById('workerSignOut').onclick=()=>{clearWorkerSession();S.view='login';S.loginMode='worker';render();toast('Worker logged out')});
   document.getElementById('workerSignOut2')&&(document.getElementById('workerSignOut2').onclick=()=>{clearWorkerSession();S.view='login';S.loginMode='worker';render();toast('Worker logged out')});
 
@@ -3904,6 +4086,17 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
 
   const printInv=document.getElementById('printInv');
   if(printInv)printInv.onclick=()=>window.print();
+  const refundInv=document.getElementById('refundInv');
+  if(refundInv)refundInv.onclick=()=>{
+    if(!confirm('Mark this sale as REFUNDED and restore stock?'))return;
+    const b=biz();const o=(b.orders||[]).find(x=>x.id===S.viewInvoiceId);if(!o||o.status==='REFUNDED')return;
+    (o.items||[]).forEach(it=>{
+      const p=(b.products||[]).find(x=>x.id===it.product_id||x.name===it.name);
+      if(p)p.stock=(Number(p.stock)||0)+(Number(it.qty)||0);
+    });
+    o.status='REFUNDED';o.refundedAt=today();
+    saveBiz(b);pushAudit('refund',o.number);toast('Refunded · stock restored');render();
+  };
   document.querySelectorAll('[data-rep-period]').forEach(el=>el.onclick=()=>{S.repPeriod=el.dataset.repPeriod;render()});
   document.querySelectorAll('[data-rep-shift]').forEach(el=>el.onclick=()=>{S.repDate=rpShift(S.repPeriod||'daily',S.repDate||today(),+el.dataset.repShift);render()});
   const repDate=document.getElementById('repDate');if(repDate)repDate.onchange=()=>{if(repDate.value){S.repDate=repDate.value;render()}};
@@ -4175,7 +4368,7 @@ render();
   function checkoutSale(){
     const b=biz();if(!b||!(b.cart||[]).length){alert('Cart empty');return null}
     for(const c of b.cart){const p=b.products.find(x=>x.id===c.id);if(!p||(p.stock||0)<c.qty){alert('Not enough stock for '+(c.name||''));return null}}
-    let total=0;b.cart.forEach(c=>total+=c.price*c.qty);total=money(total);
+    let total=cartTotal();const subtotal=cartSubtotal();const discountPct=Number(S.cartDiscount||0);
     b.orderN=(b.orderN||0)+1;
     const items=b.cart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id}));
     b.cart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,(p.stock||0)-c.qty)});
@@ -4191,8 +4384,8 @@ render();
       else if(payMethod==='M-Pesa')receipt='MPESA-PENDING';
       else receipt=payMethod.toUpperCase().replace(/\s/g,'')+'-'+String(b.orderN).padStart(4,'0');
     }
-    const order={id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items,total,status:'PAID',
-      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null};S._servedBy=null;
+    const order={id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items,total,status:(payMethod==='Credit'?'CREDIT':'PAID'),
+      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',discountPct:Number(S.cartDiscount||0),subtotal:cartSubtotal(),cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null,branchId:(biz()&&biz().currentBranchId)||'main'};S._servedBy=null;S.cartDiscount=0;
     if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];saveBiz(b);if(!navigator.onLine){enqueueOfflineSale(Object.assign({},order));}else if(SERVER_MODE){/* synced via saveBiz */}pushAudit('sale',order.number);return order;
   }
 
@@ -4219,6 +4412,8 @@ render();
   });
   const complete=document.getElementById('btnCompleteSale');
   if(complete)complete.onclick=()=>{
+    const b0=biz();
+    if(b0&&b0.requireShiftForSale&&!currentShift(b0)){alert('Open a cashier shift before selling');return}
     const phone=(document.getElementById('mpesaPhone')||{}).value||'';
     if(S.payMethod==='M-Pesa'&&phone.replace(/\s/g,'').length<9){alert('Enter customer M-Pesa number');return}
     if(S.payMethod==='Cash'){
@@ -4906,6 +5101,30 @@ render();
     const b=biz();const sh=currentShift(b);if(!sh)return;
     sh.status='closed';sh.endedAt=new Date().toISOString();
     saveBiz(b);pushAudit('shift_close',sh.openedBy||'');toast('Shift closed');render();
+  };
+
+  
+  document.querySelectorAll('[data-go]').forEach(btn=>{
+    const v=btn.getAttribute('data-go');
+    // extend: workerLogin
+  });
+  const pickSolo=document.getElementById('pickSolo');
+  if(pickSolo)pickSolo.onclick=()=>{
+    const b=biz();if(!b)return;
+    b.shopMode='solo';b.requireWorkerSalePassword=false;saveBiz(b);
+    S.view='app';S.appView='dashboard';render();toast('Solo mode — full owner menu');
+  };
+  const pickTeam=document.getElementById('pickTeam');
+  if(pickTeam)pickTeam.onclick=()=>{
+    const b=biz();if(!b)return;
+    b.shopMode='team';b.requireWorkerSalePassword=true;saveBiz(b);
+    S.view='app';S.appView='team';render();toast('Team mode — add workers, then they use Worker login');
+  };
+  const openWorkerLoginBtn=document.getElementById('openWorkerLoginBtn');
+  if(openWorkerLoginBtn)openWorkerLoginBtn.onclick=()=>{
+    if(!confirm('Open Worker login? This logs out the owner on THIS device so a worker can sign in with their own username and password. Use another phone for cashiers if you need to stay owner.'))return;
+    const d=db();d.session=null;save(d);clearWorkerSession();
+    S.view='workerLogin';S.appView='dashboard';render();
   };
 
   const adminRefresh=document.getElementById('adminRefresh');
