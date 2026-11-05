@@ -1375,6 +1375,65 @@ document.addEventListener('visibilitychange', function(){
 const _saveBizOrig = null; // placeholder patched after saveBiz defined
 
 const COLORS=['#16a34a','#2563eb','#d97706','#db2777','#dc2626','#0891b2','#7c3aed','#0d9488','#475569'];
+
+const UNIT_OPTIONS=[
+  {id:'pc',label:'Piece (whole)',suffix:'pc',step:1,whole:true},
+  {id:'pack',label:'Pack / box',suffix:'pack',step:1,whole:true},
+  {id:'set',label:'Set',suffix:'set',step:1,whole:true},
+  {id:'dozen',label:'Dozen',suffix:'dozen',step:1,whole:true},
+  {id:'m',label:'Metre',suffix:'m',step:0.01,whole:false},
+  {id:'cm',label:'Centimetre',suffix:'cm',step:1,whole:false},
+  {id:'g',label:'Gram',suffix:'g',step:1,whole:false},
+  {id:'kg',label:'Kilogram',suffix:'kg',step:0.001,whole:false},
+  {id:'ml',label:'Millilitre',suffix:'ml',step:1,whole:false},
+  {id:'l',label:'Litre',suffix:'L',step:0.01,whole:false},
+  {id:'hr',label:'Hour (service)',suffix:'hr',step:0.25,whole:false},
+  {id:'job',label:'Job / service',suffix:'job',step:1,whole:true},
+  {id:'day',label:'Day (rental)',suffix:'day',step:1,whole:true},
+  {id:'sqm',label:'Square metre',suffix:'m²',step:0.01,whole:false},
+  {id:'unit',label:'Unit',suffix:'unit',step:1,whole:true}
+];
+function unitMeta(u){
+  const s=String(u||'pc').toLowerCase();
+  // match by id or suffix or "per m" style
+  let m=UNIT_OPTIONS.find(x=>x.id===s||x.suffix===s);
+  if(!m){
+    if(/metre|meter|\bm\b|per\s*m/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='m');
+    else if(/gram|\bg\b|per\s*g/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='g');
+    else if(/kg|kilo/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='kg');
+    else if(/litre|liter|\bl\b/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='l');
+    else if(/ml/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='ml');
+    else if(/hour|hr/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='hr');
+    else if(/pack|box/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='pack');
+    else if(/sq\.?\s*m|m²|square/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='sqm');
+    else if(/job|service/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='job');
+    else if(/day/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='day');
+    else if(/dozen/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='dozen');
+    else if(/set/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='set');
+    else if(/cm/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='cm');
+    else m=UNIT_OPTIONS.find(x=>x.id==='pc');
+  }
+  return m||UNIT_OPTIONS[0];
+}
+function unitLabel(u){return unitMeta(u).label}
+function unitSuffix(u){return unitMeta(u).suffix}
+function unitStep(u){return unitMeta(u).step}
+function isWholeUnit(u){return !!unitMeta(u).whole}
+function normalizeQty(u,qty){
+  const m=unitMeta(u);
+  let q=Number(qty)||0;
+  if(m.whole)q=Math.round(q);
+  else q=Math.round(q/m.step)*m.step;
+  return Math.max(0,Number(q.toFixed(4)));
+}
+function fmtQty(u,qty){
+  const q=normalizeQty(u,qty);
+  const suf=unitSuffix(u);
+  if(isWholeUnit(u))return q+' '+suf;
+  return (Number.isInteger(q)?q:q)+' '+suf;
+}
+function pricePerLabel(u){return 'per '+unitSuffix(u)}
+
 const PAY_METHODS=['Cash','M-Pesa','Bank transfer','Card','Credit'];
 const DEFAULT_PLANS={
   FREE:{name:'Free',price:0,installFee:1000,bizLimit:1,workers:1,products:50,branches:1,onlineStore:false,ai:false,label:'Free'},
@@ -2018,6 +2077,19 @@ function productThumbWide(p){
   return `<div class="w-full aspect-[4/3] rounded-t-xl flex items-center justify-center text-4xl" style="background:${v.bg}">${v.emoji}</div>`;
 }
 
+
+
+function normalizeProductUnits(b){
+  if(!b||!b.products)return;
+  b.products.forEach(p=>{
+    if(!p.unit)p.unit='pc';
+    else{
+      const m=unitMeta(p.unit);
+      // store canonical id for consistency
+      if(m&&!UNIT_OPTIONS.find(x=>x.id===p.unit))p.unit=m.id;
+    }
+  });
+}
 
 function cartCount(){const b=biz();return ((b&&b.cart)||[]).reduce((s,c)=>s+(c.qty||0),0)}
 function cartSubtotal(){let t=0;((biz()||{}).cart||[]).forEach(c=>t+=c.price*c.qty);return money(t)}
@@ -2898,6 +2970,7 @@ function drawChart(){
 }
 
 function secShop(b,a){
+  normalizeProductUnits(b);
   const prods=(b.products||[]).filter(p=>p.active!==false);
   // Category tabs from sourceCat
   const catKeys=['all',...new Set(prods.map(p=>p.sourceCat).filter(Boolean))];
@@ -2925,7 +2998,7 @@ function secShop(b,a){
         <div class="min-w-0 flex-1">
           <div class="flex justify-between gap-2"><p class="font-semibold text-sm leading-snug">${esc(p.name)}</p>
           <span class="text-xs px-2 py-0.5 rounded-full shrink-0 h-fit ${st<=0?'bg-red-100 text-red-700':st<=5?'bg-amber-100 text-amber-800':'bg-emerald-50 text-emerald-700'}">${st<=0?'Out':st+' left'}</span></div>
-          <p class="text-xs text-slate-400 mt-1">${esc(p.unit)} · ${esc(p.sub||'')}</p>
+          <p class="text-xs text-slate-400 mt-1">${esc(pricePerLabel(p.unit||'pc'))} · ${esc(p.sub||'')}</p>
           <p class="font-bold mt-1" style="color:${bc}">${kes(p.price)}${inC?` ×${inC}`:''}</p>
         </div>
       </div>
@@ -2934,10 +3007,11 @@ function secShop(b,a){
   const cart=b.cart||[];
   const cartRows=!cart.length?'<p class="text-sm text-slate-400 py-6 text-center">Tap items to add</p>':
     cart.map(c=>`<div class="flex items-center justify-between gap-2 py-2 border-b border-slate-50">
-      <div class="min-w-0 flex-1"><p class="text-sm font-medium truncate">${esc(c.name)}</p><p class="text-xs text-slate-500">${kes(c.price)}</p></div>
+      <div class="min-w-0 flex-1"><p class="text-sm font-medium truncate">${esc(c.name)}</p><p class="text-xs text-slate-500">${kes(c.price)} ${esc(pricePerLabel(c.unit||'pc'))}</p></div>
       <div class="flex items-center gap-1">
         <button type="button" data-dec="${c.id}" class="w-8 h-8 rounded-lg border">−</button>
-        <span class="w-6 text-center text-sm font-semibold">${c.qty}</span>
+        <input type="number" data-cqty="${c.id}" value="${c.qty}" step="${unitStep(c.unit||'pc')}" min="0" class="w-14 text-center text-sm font-semibold border rounded-lg py-1"/>
+        <span class="text-[10px] text-slate-400">${esc(unitSuffix(c.unit||'pc'))}</span>
         <button type="button" data-inc="${c.id}" class="w-8 h-8 rounded-lg border">+</button>
       </div></div>`).join('');
   const payOpts=PAY_METHODS.map(m=>`<button type="button" data-pay="${m}" class="pay-opt ${S.payMethod===m?'on':''}">${m}</button>`).join('');
@@ -3046,7 +3120,7 @@ function addProductToCartByBarcode(code){
   if(!b.cart)b.cart=[];
   const line=b.cart.find(c=>c.id===p.id);
   if(line)line.qty+=1;
-  else b.cart.push({id:p.id,name:p.name,price:Number(p.price)||0,qty:1});
+  else b.cart.push({id:p.id,name:p.name,price:Number(p.price)||0,qty:normalizeQty(p.unit||'pc',1),unit:p.unit||'pc'});
   saveBiz(b);
   toast('✓ '+p.name);
   try{if(window.navigator&&navigator.vibrate)navigator.vibrate(30)}catch(e){}
@@ -3298,6 +3372,7 @@ function secStock(b,a){
 
 
 function secProducts(b,a){
+  normalizeProductUnits(b);
   const q=(S.prodSearch||'').toLowerCase();
   let list=b.products||[];
   if(q)list=list.filter(p=>((p.name||'')+(p.sku||'')+(p.barcode||'')+(p.sub||'')+(p.category||'')).toLowerCase().includes(q));
@@ -3308,6 +3383,9 @@ function secProducts(b,a){
     <td class="px-2 py-2"><input data-psku="${p.id}" value="${esc(p.sku||'')}" class="w-24 border rounded-lg px-2 py-1 text-xs" placeholder="SKU"/></td>
     <td class="px-2 py-2"><input data-pbarcode="${p.id}" value="${esc(p.barcode||'')}" class="w-28 border rounded-lg px-2 py-1 text-xs" placeholder="Barcode"/>${p.barcode?`<div class="mt-1 overflow-x-auto">${barcodeSvg(p.barcode,{height:28})}</div>`:''}</td>
     <td class="px-2 py-2"><input data-psub="${p.id}" value="${esc(p.sub||'')}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Sub"/></td>
+    <td class="px-2 py-2"><select data-punit="${p.id}" class="border rounded-lg px-1 py-1 text-xs max-w-[100px]">
+      ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(p.unit||'pc')===u.id||String(p.unit||'').includes(u.suffix)?'selected':''}>${esc(u.suffix)}</option>`).join('')}
+    </select></td>
     <td class="px-2 py-2"><input type="number" data-price="${p.id}" value="${p.price}" class="w-20 border rounded-lg px-2 py-1 text-sm"/></td>
     <td class="px-2 py-2"><input type="number" data-pcost="${p.id}" value="${p.cost!=null?p.cost:''}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Cost"/></td>
     <td class="px-2 py-2"><input type="number" data-stock="${p.id}" value="${p.stock||0}" class="w-16 border rounded-lg px-2 py-1 text-sm"/></td>
@@ -3329,9 +3407,12 @@ function secProducts(b,a){
       <input name="sub" placeholder="Subcategory / variant" class="border rounded-xl px-3 py-2"/>
       <input name="sku" placeholder="SKU (auto if empty)" class="border rounded-xl px-3 py-2"/>
       <input name="barcode" placeholder="Barcode (auto if empty)" class="border rounded-xl px-3 py-2"/>
-      <input name="price" type="number" step="0.01" placeholder="Sell price" class="border rounded-xl px-3 py-2"/>
-      <input name="cost" type="number" step="0.01" placeholder="Cost price" class="border rounded-xl px-3 py-2"/>
-      <input name="stock" type="number" placeholder="Opening stock" class="border rounded-xl px-3 py-2"/>
+      <select name="unit" class="border rounded-xl px-3 py-2">
+        ${UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('')}
+      </select>
+      <input name="price" type="number" step="0.01" placeholder="Sell price (per unit)" class="border rounded-xl px-3 py-2"/>
+      <input name="cost" type="number" step="0.01" placeholder="Cost (per unit)" class="border rounded-xl px-3 py-2"/>
+      <input name="stock" type="number" step="0.01" placeholder="Opening stock (in unit)" class="border rounded-xl px-3 py-2"/>
       <input name="reorder" type="number" placeholder="Reorder level" class="border rounded-xl px-3 py-2"/>
       <input name="batch" placeholder="Batch / lot" class="border rounded-xl px-3 py-2"/>
       <input name="expiry" type="date" class="border rounded-xl px-3 py-2"/>
@@ -3353,7 +3434,7 @@ function secProducts(b,a){
   <input id="prodSearch" type="search" placeholder="Search name, SKU, barcode, category…" value="${esc(S.prodSearch||'')}" class="w-full border rounded-xl px-3 py-2 bg-white"/>
   <div class="bg-white rounded-2xl border overflow-x-auto"><table class="w-full text-sm min-w-[900px]">
     <thead class="bg-slate-50 text-left text-slate-500 text-xs"><tr>
-      <th class="px-2 py-3">Img</th><th class="px-2 py-3">Name</th><th class="px-2 py-3">SKU</th><th class="px-2 py-3">Barcode</th><th class="px-2 py-3">Sub</th><th class="px-2 py-3">Price</th><th class="px-2 py-3">Cost</th><th class="px-2 py-3">Stock</th><th class="px-2 py-3">Batch</th><th class="px-2 py-3">Expiry</th><th></th>
+      <th class="px-2 py-3">Img</th><th class="px-2 py-3">Name</th><th class="px-2 py-3">SKU</th><th class="px-2 py-3">Barcode</th><th class="px-2 py-3">Sub</th><th class="px-2 py-3">Unit</th><th class="px-2 py-3">Price</th><th class="px-2 py-3">Cost</th><th class="px-2 py-3">Stock</th><th class="px-2 py-3">Batch</th><th class="px-2 py-3">Expiry</th><th></th>
     </tr></thead>
     <tbody>${rows||'<tr><td colspan="11" class="p-8 text-center text-slate-400">Empty catalog</td></tr>'}</tbody>
   </table></div>
@@ -3453,7 +3534,7 @@ function secInvoiceDetail(b,a){
       <p class="text-xs">${esc(o.number)} · ${esc(o.date)}</p>
     </div>
     <div class="text-sm space-y-1 mb-3">
-      ${(o.items||[]).map(it=>`<div class="flex justify-between gap-2"><span>${esc(it.name)} ×${it.qty}</span><span>${kes(it.price*it.qty)}</span></div>`).join('')}
+      ${(o.items||[]).map(it=>`<div class="flex justify-between gap-2"><span>${esc(it.name)} ×${fmtQty(it.unit||'pc',it.qty)}</span><span>${kes(it.price*it.qty)}</span></div>`).join('')}
     </div>
     <div class="border-t pt-2 text-sm">
       ${o.discountPct?`<div class="flex justify-between"><span>Discount</span><span>${o.discountPct}%</span></div>`:''}
@@ -3594,7 +3675,7 @@ function secOnlineOrders(b,a){
         <p class="text-xs text-slate-400">${esc(o.date||'')}</p></td>
       <td class="px-3 py-2 text-sm">${esc(o.customerName||o.phone||'—')}
         <p class="text-xs text-slate-400">${esc(o.deliveryAddress||o.fulfillment||'')}</p></td>
-      <td class="px-3 py-2 text-xs">${(o.items||[]).slice(0,3).map(it=>esc(it.name)+' ×'+(it.qty||1)).join('<br/>')}</td>
+      <td class="px-3 py-2 text-xs">${(o.items||[]).slice(0,3).map(it=>esc(it.name)+' ×'+fmtQty(it.unit||'pc',it.qty||1)).join('<br/>')}</td>
       <td class="px-3 py-2 text-sm">${kes(o.total)}${o.deliveryFee?`<p class="text-xs">+del ${kes(o.deliveryFee)}</p>`:''}</td>
       <td class="px-3 py-2 text-xs"><span class="font-medium">${esc(st)}</span><br/>Pay: ${esc(pay)}</td>
       <td class="px-3 py-2 text-xs space-y-1">
@@ -4515,7 +4596,7 @@ function viewOnline(){
         ${productThumbWide(p)}
         <div class="p-3">
           <p class="font-medium text-sm leading-snug line-clamp-2">${esc(p.name)}</p>
-          <p class="text-xs text-slate-400 mt-1">${esc(p.unit||'per pc')} · ${p.stock} left</p>
+          <p class="text-xs text-slate-400 mt-1">${esc(pricePerLabel(p.unit||'pc'))} · ${p.stock} ${esc(unitSuffix(p.unit||'pc'))} left</p>
           <div class="flex items-center justify-between mt-2 gap-2">
             <p class="font-bold" style="color:${b.color||'#0d9488'}">${kes(p.price)}</p>
             <span class="text-xs px-2 py-0.5 rounded-full ${inC?'text-white':'bg-slate-100 text-slate-600'}" style="${inC?'background:'+(b.color||'#0d9488'):''}">${inC?('×'+inC):'+ Add'}</span>
@@ -5045,18 +5126,41 @@ render();
   document.querySelectorAll('[data-add]').forEach(btn=>btn.onclick=()=>{
     const b=biz();if(!b)return;
     const p=b.products.find(x=>x.id===btn.getAttribute('data-add'));if(!p||(p.stock||0)<=0)return;
+    const u=p.unit||'pc';const step=unitStep(u);
     const row=(b.cart||[]).find(c=>c.id===p.id);
-    const next=(row?row.qty:0)+1;
-    if(next>(p.stock||0)){toast('Only '+p.stock+' in stock');return}
-    if(row)row.qty+=1;else{if(!b.cart)b.cart=[];b.cart.push({id:p.id,name:p.name,price:p.price,qty:1})}
+    const next=normalizeQty(u,(row?Number(row.qty):0)+step);
+    if(next>(Number(p.stock)||0)){toast('Only '+p.stock+' '+unitSuffix(u)+' in stock');return}
+    if(row){row.qty=next;row.unit=u}else{if(!b.cart)b.cart=[];b.cart.push({id:p.id,name:p.name,price:p.price,qty:normalizeQty(u,step),unit:u})}
     saveBiz(b);render();toast('Added to cart')});
   document.querySelectorAll('[data-inc]').forEach(btn=>btn.onclick=()=>{
     const b=biz();const row=(b.cart||[]).find(c=>c.id===btn.getAttribute('data-inc'));if(!row)return;
-    const p=b.products.find(x=>x.id===row.id);if(p&&row.qty>=(p.stock||0)){toast('Only '+p.stock+' in stock');return}
-    row.qty+=1;saveBiz(b);render()});
+    const p=b.products.find(x=>x.id===row.id);
+    const u=row.unit||(p&&p.unit)||'pc';
+    const step=unitStep(u);
+    const next=normalizeQty(u,(Number(row.qty)||0)+step);
+    if(p&&next>(Number(p.stock)||0)){toast('Only '+p.stock+' '+unitSuffix(u)+' in stock');return}
+    row.qty=next;row.unit=u;saveBiz(b);render()});
   document.querySelectorAll('[data-dec]').forEach(btn=>btn.onclick=()=>{
     const b=biz();const id=btn.getAttribute('data-dec');const row=(b.cart||[]).find(c=>c.id===id);
-    if(!row)return;row.qty-=1;if(row.qty<=0)b.cart=b.cart.filter(c=>c.id!==id);saveBiz(b);render()});
+    if(!row)return;
+    const p=b.products.find(x=>x.id===row.id);
+    const u=row.unit||(p&&p.unit)||'pc';
+    const step=unitStep(u);
+    row.qty=normalizeQty(u,(Number(row.qty)||0)-step);
+    if(row.qty<=0)b.cart=b.cart.filter(c=>c.id!==id);
+    saveBiz(b);render()});
+  document.querySelectorAll('[data-cqty]').forEach(inp=>{
+    inp.onchange=inp.onblur=()=>{
+      const b=biz();const row=(b.cart||[]).find(c=>c.id===inp.getAttribute('data-cqty'));if(!row)return;
+      const p=b.products.find(x=>x.id===row.id);
+      const u=row.unit||(p&&p.unit)||'pc';
+      let q=normalizeQty(u,inp.value);
+      if(p&&q>(Number(p.stock)||0)){q=normalizeQty(u,p.stock);toast('Max stock '+p.stock+' '+unitSuffix(u))}
+      if(q<=0){b.cart=b.cart.filter(c=>c.id!==row.id)}
+      else{row.qty=q;row.unit=u}
+      saveBiz(b);render();
+    };
+  });
   const bc=document.getElementById('btnClear');
   if(bc)bc.onclick=()=>{const b=biz();b.cart=[];saveBiz(b);render()};
 
@@ -5070,7 +5174,7 @@ render();
     for(const c of b.cart){const p=b.products.find(x=>x.id===c.id);if(!p||(p.stock||0)<c.qty){alert('Not enough stock for '+(c.name||''));return null}}
     let total=cartTotal();const subtotal=cartSubtotal();const discountPct=Number(S.cartDiscount||0);
     b.orderN=(b.orderN||0)+1;
-    const items=b.cart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id}));
+    const items=b.cart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id,unit:c.unit||'pc'}));
     b.cart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,(p.stock||0)-c.qty)});
     const fulfillEl=document.querySelector('input[name="fulfill"]:checked');
     const fulfillment=(fulfillEl&&fulfillEl.value)||'pickup';
@@ -5463,7 +5567,7 @@ render();
     const p=b.products.find(x=>x.id===btn.getAttribute('data-online-add'));if(!p)return;
     const row=S.onlineCart.find(c=>c.id===p.id);
     if(row){if(row.qty>=(p.stock||0)){toast('Stock limit');return}row.qty++}
-    else S.onlineCart.push({id:p.id,name:p.name,price:p.price,qty:1});
+    else S.onlineCart.push({id:p.id,name:p.name,price:p.price,qty:normalizeQty(p.unit||'pc',1),unit:p.unit||'pc'});
     render();toast('Added')});
   const olBack=document.getElementById('onlineBack');
   if(olBack)olBack.onclick=()=>{S.onlineBizId=null;S.onlineCart=[];render()};
@@ -5487,12 +5591,12 @@ render();
     for(const c of S.onlineCart){const p=b.products.find(x=>x.id===c.id);if(!p||(p.stock||0)<c.qty){alert('Stock changed for '+c.name);return}}
     let total=0;S.onlineCart.forEach(c=>total+=c.price*c.qty);total=money(total);
     b.orderN=(b.orderN||0)+1;b.onlineN=(b.onlineN||0)+1;
-    const items=S.onlineCart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id}));
+    const items=S.onlineCart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id,unit:c.unit||'pc'}));
     S.onlineCart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,(p.stock||0)-c.qty)});
     const payMethod=(document.getElementById('olPay')||{}).value||'mpesa';
     const finishOnline=function(receipt,status){
       b.orderN=(b.orderN||0)+1;b.onlineN=(b.onlineN||0)+1;
-      const items=S.onlineCart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id}));
+      const items=S.onlineCart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id,unit:c.unit||'pc'}));
       S.onlineCart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,(p.stock||0)-c.qty)});
       const order={id:uid(),number:'WEB-'+String(b.onlineN).padStart(4,'0'),date:today(),items:items,total:total,status:status||'PENDING',
         payMethod:payMethod,method:payMethod,phone:phone,customerName:name,fulfillment:fulfill,deliveryAddress:fulfill==='delivery'?delivAddr:'',receipt:receipt||'PENDING-PAY',source:'online',orderStatus:'NEW',paymentStatus:'PENDING',deliveryFee:Number((biz()&&biz().deliveryFee)||0),branchId:(biz()&&biz().currentBranchId)||'main'};
@@ -5944,13 +6048,14 @@ render();
     const sku=String(fd.get('sku')||'').trim()||genSKU(b,name);
     const barcode=String(fd.get('barcode')||'').trim()||genBarcode();
     const stock=Number(fd.get('stock'))||0;
+    const unit=String(fd.get('unit')||'pc').trim()||'pc';
     const p={
-      id:uid(),name,sku,barcode,
+      id:uid(),name,sku,barcode,unit,
       category:String(fd.get('category')||'').trim()||(b.categories&&b.categories[0])||'General',
       sub:String(fd.get('sub')||'').trim()||'Custom',
       price:Number(fd.get('price'))||0,
       cost:fd.get('cost')===''||fd.get('cost')==null?null:Number(fd.get('cost')),
-      stock,reorder:Number(fd.get('reorder'))||5,
+      stock:normalizeQty(unit,stock),reorder:Number(fd.get('reorder'))||5,
       batch:String(fd.get('batch')||'').trim(),
       expiry:String(fd.get('expiry')||'').trim(),
       serial:String(fd.get('serial')||'').trim(),
