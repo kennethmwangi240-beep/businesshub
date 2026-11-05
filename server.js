@@ -1,5 +1,5 @@
 /**
- * BusinessHub Kenya — API + static app server
+ * MyBusinessHub — API + static app server
  * Storage: PostgreSQL (any host) via DATABASE_URL.  Node 18+, one dependency: pg.
  */
 'use strict';
@@ -99,7 +99,7 @@ function mergePlans(stored) {
   return base;
 }
 const DEFAULT_PLATFORM = {
-  company: 'BusinessHub Kenya', ownerName: '', phone: '', email: '', address: '', city: 'Nairobi',
+  company: 'MyBusinessHub', ownerName: '', phone: '', email: '', address: '', city: 'Nairobi',
   country: 'Kenya', mpesaTill: '', paybill: '', bankName: '', bankAccount: '', supportEmail: '', website: '', notes: ''
 };
 // Fields a business owner may never set themselves
@@ -869,7 +869,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 init()
-  .then(() => server.listen(PORT, '0.0.0.0', () => console.log(`BusinessHub Kenya running on port ${PORT}`)))
+  .then(() => server.listen(PORT, '0.0.0.0', () => console.log(`MyBusinessHub running on port ${PORT}`)))
   .catch((e) => { console.error('Startup failed:', e.message); process.exit(1); });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
