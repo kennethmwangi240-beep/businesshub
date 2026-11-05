@@ -2389,6 +2389,15 @@ function animateCounts(){
   });
 }
 
+function safeRender(){
+  try{
+    if(document.activeElement&&typeof document.activeElement.blur==='function'){
+      const t=document.activeElement.tagName;
+      if(t==='INPUT'||t==='SELECT'||t==='TEXTAREA')document.activeElement.blur();
+    }
+  }catch(e){}
+  setTimeout(()=>{try{render()}catch(e){console.error(e)}},0);
+}
 function render(){
   try{applyTheme(S.theme||localStorage.getItem('bh_theme')||'light')}catch(e){try{document.documentElement.setAttribute('data-theme','light')}catch(e2){}}
   const d=db();
@@ -2417,20 +2426,31 @@ function render(){
   if(chartInst){try{chartInst.destroy()}catch(e){}chartInst=null}
   (window.__adCharts||[]).forEach(c=>{try{c.destroy()}catch(e){}});window.__adCharts=[];
   const root=document.getElementById('root');
+  const setRoot=(html)=>{
+    if(!root)return;
+    try{
+      while(root.firstChild)root.removeChild(root.firstChild);
+      root.innerHTML=html;
+    }catch(e){
+      try{root.innerHTML=html}catch(e2){
+        try{root.textContent='Something went wrong. Tap Reload.';console.error(e2)}catch(e3){}
+      }
+    }
+  };
   try{
-    if(S.view==='landing')root.innerHTML=viewLanding();
-    else if(S.view==='workerLogin')root.innerHTML=viewWorkerLogin();
-    else if(S.view==='worker')root.innerHTML=viewWorkerApp();
-    else if(S.view==='shopMode')root.innerHTML=viewShopModePick();
-    else if(S.view==='login'){root.innerHTML=viewLogin();try{const s=JSON.parse(localStorage.getItem('bh_remember')||'null');if(s&&s.email){const f=document.getElementById('loginForm');if(f){f.email.value=s.email;const r=document.getElementById('rememberMe');if(r)r.checked=true}}}catch(e){}}
-    else if(S.view==='register')root.innerHTML=viewRegister();
-    else if(S.view==='forgot')root.innerHTML=viewForgot();
-    else if(S.view==='adminLogin')root.innerHTML=viewAdminLogin();
-    else if(S.view==='adminRegister')root.innerHTML=viewAdminRegister();
-    else if(S.view==='onboard')root.innerHTML=viewOnboard();
-    else if(S.view==='online')root.innerHTML=viewOnline();
-    else if(S.view==='admin')root.innerHTML=viewAdmin();
-    else root.innerHTML=viewApp();
+    if(S.view==='landing')setRoot(viewLanding());
+    else if(S.view==='workerLogin')setRoot(viewWorkerLogin());
+    else if(S.view==='worker')setRoot(viewWorkerApp());
+    else if(S.view==='shopMode')setRoot(viewShopModePick());
+    else if(S.view==='login'){setRoot(viewLogin());try{const s=JSON.parse(localStorage.getItem('bh_remember')||'null');if(s&&s.email){const f=document.getElementById('loginForm');if(f){f.email.value=s.email;const r=document.getElementById('rememberMe');if(r)r.checked=true}}}catch(e){}}
+    else if(S.view==='register')setRoot(viewRegister());
+    else if(S.view==='forgot')setRoot(viewForgot());
+    else if(S.view==='adminLogin')setRoot(viewAdminLogin());
+    else if(S.view==='adminRegister')setRoot(viewAdminRegister());
+    else if(S.view==='onboard')setRoot(viewOnboard());
+    else if(S.view==='online')setRoot(viewOnline());
+    else if(S.view==='admin')setRoot(viewAdmin());
+    else setRoot(viewApp());
     bind();
   const badge=document.getElementById('serverBadge');
   if(badge){badge.textContent=SERVER_MODE?'Server DB':'Local only';badge.className='text-xs px-2 py-1 rounded-full '+(SERVER_MODE?'bg-emerald-100 text-emerald-800':'bg-slate-100 text-slate-500')}
@@ -2445,8 +2465,8 @@ function render(){
     if(S.view==='admin'&&(S.adminTab||'overview')==='overview')requestAnimationFrame(()=>{drawAdminCharts();animateCounts()});
     refreshInstallUI();
   }catch(err){
-    root.innerHTML=`<div class="p-8"><h1 class="text-red-600 font-bold">Error</h1><pre class="text-xs">${esc(String(err.stack||err))}</pre>
-    <button onclick="location.reload()" class="mt-4 px-4 py-2 bg-slate-800 text-white rounded-lg">Reload</button></div>`;
+    setRoot(`<div class="p-8"><h1 class="text-red-600 font-bold">Error</h1><pre class="text-xs">${esc(String(err.stack||err))}</pre>
+    <button onclick="location.reload()" class="mt-4 px-4 py-2 bg-slate-800 text-white rounded-lg">Reload</button></div>`);
     console.error(err);
   }
 }
@@ -2491,7 +2511,7 @@ function viewLanding(){
         ${themes.map((t,i)=>`<button type="button" title="${t[0]}" data-lptheme="${t[1]},${t[2]}" class="lp-sw ${i===0?'on':''}" style="background:linear-gradient(135deg,${t[1]} 50%,${t[2]} 50%)"></button>`).join('')}
       </div>
     </div>
-    <div class="lp-logo-card"><img src="/logo.png" alt="MyBusinessHub — Manage, Grow, Succeed" class="w-full rounded-3xl"/></div>
+    <div class="lp-logo-card"><img src="/logo.jpg" alt="MyBusinessHub — Manage, Grow, Succeed" class="w-full rounded-3xl"/></div>
   </section>
   <section class="max-w-5xl mx-auto px-4 pb-10">
     <h2 class="text-xl font-bold text-slate-900 mb-4">Everything your shop needs</h2>
@@ -5357,7 +5377,7 @@ render();
     const step=unitStep(u);
     const next=normalizeQty(u,(Number(row.qty)||0)+step);
     if(p&&next>(Number(p.stock)||0)){toast('Only '+p.stock+' '+unitSuffix(u)+' in stock');return}
-    row.qty=next;row.unit=u;refreshCartLinePrice(row,p||{});saveBiz(b);render()});
+    row.qty=next;row.unit=u;refreshCartLinePrice(row,p||{});saveBiz(b);safeRender()});
   document.querySelectorAll('[data-dec]').forEach(btn=>btn.onclick=()=>{
     const b=biz();const id=btn.getAttribute('data-dec');const row=(b.cart||[]).find(c=>c.id===id);
     if(!row)return;
@@ -5367,9 +5387,9 @@ render();
     row.qty=normalizeQty(u,(Number(row.qty)||0)-step);
     if(row.qty<=0)b.cart=b.cart.filter(c=>c.id!==id);
     else refreshCartLinePrice(row,p||{});
-    saveBiz(b);render()});
+    saveBiz(b);safeRender()});
   document.querySelectorAll('[data-cqty]').forEach(inp=>{
-    inp.onchange=inp.onblur=()=>{
+    const applyQty=()=>{
       const b=biz();const row=(b.cart||[]).find(c=>c.id===inp.getAttribute('data-cqty'));if(!row)return;
       const p=b.products.find(x=>x.id===row.id);
       const u=row.unit||(p&&p.unit)||'pc';
@@ -5377,8 +5397,11 @@ render();
       if(p&&q>(Number(p.stock)||0)){q=normalizeQty(u,p.stock);toast('Max stock '+p.stock+' '+unitSuffix(u))}
       if(q<=0){b.cart=b.cart.filter(c=>c.id!==row.id)}
       else{row.qty=q;row.unit=u;refreshCartLinePrice(row,p||{})}
-      saveBiz(b);render();
+      saveBiz(b);
+      safeRender();
     };
+    inp.onchange=()=>applyQty();
+    inp.onblur=()=>{setTimeout(applyQty,0)};
   });
   const bc=document.getElementById('btnClear');
   if(bc)bc.onclick=()=>{const b=biz();b.cart=[];saveBiz(b);render()};
@@ -6358,7 +6381,7 @@ render();
       row.unit=sel.value||productPriceUnit(p);
       row.qty=normalizeQty(row.unit,row.qty);
       refreshCartLinePrice(row,p);
-      saveBiz(b);toast('Unit '+unitLabel(row.unit)+' · '+kes(row.price)+' each');render();
+      saveBiz(b);toast('Unit '+unitLabel(row.unit)+' · '+kes(row.price)+' each');safeRender();
     };
   });
   document.querySelectorAll('[data-iunit]').forEach(sel=>{
@@ -6368,18 +6391,20 @@ render();
       o.items[idx].unit=sel.value||'pc';
       o.items[idx].qty=normalizeQty(o.items[idx].unit,o.items[idx].qty);
       o.total=money((o.items||[]).reduce((s,it)=>s+Number(it.price||0)*Number(it.qty||0),0));
-      saveBiz(b);render();
+      saveBiz(b);safeRender();
     };
   });
   document.querySelectorAll('[data-iqty]').forEach(inp=>{
-    inp.onchange=()=>{
+    const apply=()=>{
       const b=biz();const oid=inp.getAttribute('data-iqty');const idx=Number(inp.getAttribute('data-iidx'));
       const o=(b.orders||[]).find(x=>x.id===oid);if(!o||!o.items||!o.items[idx])return;
       const u=o.items[idx].unit||'pc';
       o.items[idx].qty=normalizeQty(u,inp.value);
       o.total=money((o.items||[]).reduce((s,it)=>s+Number(it.price||0)*Number(it.qty||0),0));
-      saveBiz(b);render();
+      saveBiz(b);safeRender();
     };
+    inp.onchange=()=>apply();
+    inp.onblur=()=>{setTimeout(apply,0)};
   });
 
   
