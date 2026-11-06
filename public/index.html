@@ -38,9 +38,19 @@ if(window.refreshInstallUI)refreshInstallUI();if(window.toast)toast('MyBusinessH
 <style>
 *{box-sizing:border-box}body{font-family:Inter,system-ui,sans-serif;background:linear-gradient(165deg,#dbeafe 0%,#f0fdf4 35%,#f8fafc 70%,#fef3c7 100%);background-attachment:fixed;margin:0;min-height:100vh}
 .hidden{display:none!important}:root{--accent:#0d9488;--sidebar-w:220px}
-.layout{display:flex;min-height:100vh}
-.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:40}
-.main-wrap{margin-left:var(--sidebar-w);flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh;background:transparent}
+.layout{display:flex;min-height:100vh;width:100%;max-width:100%;box-sizing:border-box}
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);max-width:var(--sidebar-w);background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:40;box-sizing:border-box;overflow-y:auto}
+.main-wrap{margin-left:var(--sidebar-w)!important;flex:1;min-width:0;width:auto;max-width:100%;display:flex;flex-direction:column;min-height:100vh;background:transparent;box-sizing:border-box}
+.main-wrap > header,.main-wrap > .p-4,.main-wrap > main,.app-main{width:100%;max-width:100%;box-sizing:border-box;padding-left:1rem;padding-right:1rem}
+body{margin:0;padding:0;width:100%;overflow-x:hidden}
+.main-wrap header{padding:12px 16px!important;width:100%;box-sizing:border-box}
+.main-wrap .content,.main-wrap main,#appContent{padding:16px!important;width:100%;box-sizing:border-box;margin:0 auto}
+#root{width:100%;min-height:100vh;box-sizing:border-box}
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%);transition:transform .2s}
+  .sidebar.mobile-open{transform:translateX(0)}
+  .main-wrap{margin-left:0!important;width:100%}
+}
 .nav-item{display:block;width:100%;text-align:left;padding:10px 14px;border-radius:8px;font-size:14px;color:#475569;border:0;background:transparent;cursor:pointer}
 .nav-item:hover{background:#f1f5f9}.nav-item.active{background:#ecfdf5;color:var(--accent);font-weight:600}
 .cat-chip{padding:8px 12px;border-radius:999px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;background:#fff;cursor:pointer}
@@ -1692,6 +1702,105 @@ function migrate(raw){
   return raw;
 }
 function load(){try{return migrate(JSON.parse(localStorage.getItem(KEY)))}catch(e){return migrate(null)}}
+
+function offlineAuthStore(){
+  try{return JSON.parse(localStorage.getItem('bh_offline_auth')||'{}')}catch(e){return {}}
+}
+function setOfflineAuthStore(o){
+  try{localStorage.setItem('bh_offline_auth',JSON.stringify(o||{}))}catch(e){}
+}
+async function hashOfflineCred(email,password){
+  const s=String(email||'').toLowerCase().trim()+'|'+String(password||'');
+  if(window.crypto&&crypto.subtle){
+    try{
+      const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));
+      return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+    }catch(e){}
+  }
+  // fallback non-crypto hash
+  let h=2166136261;
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}
+  return 'f'+((h>>>0).toString(16));
+}
+function rememberOfflineLogin(email,password){
+  const em=String(email||'').toLowerCase().trim();
+  if(!em||!password)return;
+  hashOfflineCred(em,password).then(hash=>{
+    const store=offlineAuthStore();
+    store[em]={hash:hash,at:new Date().toISOString()};
+    setOfflineAuthStore(store);
+  }).catch(()=>{});
+}
+async function verifyOfflineLogin(email,password){
+  const em=String(email||'').toLowerCase().trim();
+  const store=offlineAuthStore();
+  const row=store[em];
+  if(!row||!row.hash)return false;
+  const hash=await hashOfflineCred(em,password);
+  return hash===row.hash;
+}
+function findLocalUserByEmail(email){
+  const d=db();
+  const em=String(email||'').toLowerCase().trim();
+  return (d.users||[]).find(x=>String(x.email||'').toLowerCase()===em)||null;
+}
+
+function tryOfflineOwnerLogin(email,password,netErr){
+  const showErr=function(msg){
+    const el=document.getElementById('loginErr');
+    if(el){el.textContent=msg;el.classList.remove('hidden')}
+  };
+  const d=db();
+  const em=String(email||'').toLowerCase().trim();
+  // 1) Local plaintext password (registered offline on this device)
+  let u=(d.users||[]).find(x=>String(x.email||'').toLowerCase()===em&&x.password&&x.password===password);
+  if(u&&u.role!=='admin'&&u.email!==(d.adminEmail||'admin@businesshub.ke')){
+    rememberOfflineLogin(em,password);
+    completeLocalOwnerLogin(u);
+    toast('Logged in offline');
+    return;
+  }
+  // 2) Offline hash from a previous online login on this device
+  verifyOfflineLogin(em,password).then(ok=>{
+    if(!ok){
+      showErr((netErr&&netErr.message)?(netErr.message+' — offline login failed. Log in once online on this device first.'):('Invalid email or password. For offline login, sign in once while online on this device first.'));
+      return;
+    }
+    u=findLocalUserByEmail(em);
+    if(!u){
+      // create minimal local user shell so session works (businesses already on device from sync)
+      u={id:'local-'+em.replace(/[^a-z0-9]/g,''),email:em,password:'',name:em.split('@')[0],role:'owner'};
+      d.users.push(u);save(d);
+    }
+    // Attach owner to local businesses by email if ownerId mismatch
+    (d.businesses||[]).forEach(b=>{
+      if(!b.ownerId&&b.ownerEmail&&String(b.ownerEmail).toLowerCase()===em)b.ownerId=u.id;
+      if(b.ownerEmail&&String(b.ownerEmail).toLowerCase()===em)b.ownerId=u.id;
+    });
+    // Prefer businesses already on device
+    let mine=(d.businesses||[]).filter(b=>b.ownerId===u.id);
+    if(!mine.length)mine=(d.businesses||[]).filter(b=>String(b.ownerEmail||'').toLowerCase()===em);
+    if(mine.length){mine.forEach(b=>{b.ownerId=u.id});}
+    save(d);
+    completeLocalOwnerLogin(u);
+    toast('Logged in offline (this device)');
+  }).catch(function(){
+    showErr('Offline login failed');
+  });
+}
+
+function completeLocalOwnerLogin(u){
+  const d=db();
+  d.session=u.id;save(d);
+  const mine=(d.businesses||[]).filter(b=>b.ownerId===u.id);
+  if(!mine.length){S.view='onboard';render()}
+  else{
+    if(!d.currentBizId||!mine.find(b=>b.id===d.currentBizId))d.currentBizId=mine[0].id;
+    save(d);S.appView='dashboard';S.view='app';render();
+  }
+  clearWorkerSession();
+}
+
 function save(d){localStorage.setItem(KEY,JSON.stringify(d));return d}
 function db(){
   let d=load();
@@ -4281,7 +4390,7 @@ function secHelp(b,a){
     ['Wallet & reports','Sales vs expenses, profit/loss charts (daily/weekly/monthly/yearly). Printable financial views where available.'],
     ['M-Pesa & payments','Enter Till/Paybill in business profile. STK guided flow when Daraja keys are set on the server; otherwise record M-Pesa code manually. Cash and other methods always available.'],
     ['Backup','Settings → backup: download JSON, save to server BusinessHub folder, or auto-backup every 2 days. Restore only from trusted files. Data also stays in this browser until you clear site data.'],
-    ['Offline use','Install/open the app once online. Offline banner (top-right) means you are offline; sales and edits save on this device and sync when you reconnect. Login works offline for accounts already used on this device.'],
+    ['Offline use','Install/open the app once online and log in once online on each device. After that you can log in offline with the same email and password on that device. Offline banner (top-right) means you are offline; sales and edits save on this device and sync when you reconnect.'],
     ['Themes','Header Theme button or Settings → Appearance: Light, Dark, Teal, Warm.'],
     ['Admin (platform owner only)','Separate admin login. Manage clients, plans, installation fee, notices, suspend/delete clients, platform backup. Clients never see the admin menu.'],
     ['Tips','Never clear browser data without a backup. Use HTTPS (your Render URL). For Android, open the site in Chrome → Add to Home Screen or use the android-app project.']
@@ -5199,10 +5308,18 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
   const lf=document.getElementById('loginForm');
   if(lf)lf.onsubmit=e=>{e.preventDefault();const fd=new FormData(lf);const d=db();
     const email=String(fd.get('email')).toLowerCase().trim();
+    const password=fd.get('password');
+
+    // Prefer offline unlock when no network (passwords are not stored after server login)
+    if(navigator.onLine===false){
+      tryOfflineOwnerLogin(email,password,null);
+      return;
+    }
 
     if(SERVER_MODE){
       api('/api/login',{method:'POST',body:{email:email,password:fd.get('password'),clientOnly:true}}).then(function(data){
         API_TOKEN=data.token; localStorage.setItem('bh_api_token',API_TOKEN);
+        rememberOfflineLogin(email,fd.get('password'));
         const d=db();
         let u=d.users.find(x=>x.id===data.user.id);
         if(!u){u={id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:data.user.role};d.users.push(u)}
@@ -5216,21 +5333,13 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
           clearWorkerSession();toast('Logged in (server)');
         });
       }).catch(function(err){
-        // Offline or server down: use local account if available
-        const d2=db();
-        const local=d2.users.find(x=>x.email===email&&x.password&&x.password===fd.get('password'));
-        if(local&&local.role!=='admin'&&local.email!==(d2.adminEmail||'admin@businesshub.ke')){
-          d2.session=local.id;save(d2);
-          try{if(document.getElementById('rememberMe')&&document.getElementById('rememberMe').checked)localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
-          const mine=d2.businesses.filter(b=>b.ownerId===local.id);
-          if(!mine.length){S.view='onboard';render()}
-          else{d2.currentBizId=mine[0].id;save(d2);S.appView='dashboard';S.view='app';render()}
-          clearWorkerSession();toast('Logged in offline (this device)');
-          return;
-        }
-        document.getElementById('loginErr').textContent=(err&&err.message)||'Login failed — offline and no local account';
-        document.getElementById('loginErr').classList.remove('hidden');
+        tryOfflineOwnerLogin(email,fd.get('password'),err);
       });
+      return;
+    }
+
+    if(!navigator.onLine){
+      tryOfflineOwnerLogin(email,fd.get('password'),null);
       return;
     }
 
@@ -5241,6 +5350,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
       document.getElementById('loginErr').classList.remove('hidden');
       return;
     }
+    rememberOfflineLogin(email,fd.get('password'));
     d.session=u.id;save(d);
     const mine=d.businesses.filter(b=>b.ownerId===u.id);
     if(!mine.length){S.view='onboard';render()}
