@@ -16,7 +16,9 @@ const PORT = Number(process.env.PORT) || 3847;
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
 
-const BACKUP_ROOT = path.join(ROOT, 'data', 'businesshub');
+// Set BACKUP_DIR to a persistent volume path on Railway/Render, otherwise backups vanish on redeploy.
+const BACKUP_ROOT = process.env.BACKUP_DIR ? path.resolve(process.env.BACKUP_DIR) : path.join(ROOT, 'data', 'businesshub');
+const BACKUP_KEEP = Math.max(1, Number(process.env.BACKUP_KEEP) || 14); // newest files kept per business
 
 function safeEmailDir(email) {
   return String(email || 'unknown').toLowerCase().replace(/[^a-z0-9@._+-]/g, '_').slice(0, 120);
@@ -40,6 +42,11 @@ function writeBusinessBackupFile(email, business) {
     business
   };
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+  try { // retention: keep only the newest BACKUP_KEEP files of this business
+    const prefix = name.slice(0, name.length - stamp.length - 6);
+    fs.readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith('.json')).sort().reverse()
+      .slice(BACKUP_KEEP).forEach((f) => fs.unlinkSync(path.join(dir, f)));
+  } catch (e) { /* pruning is best-effort */ }
   return { filePath, name, dir, relative: path.join('businesshub', safeEmailDir(email), name) };
 }
 async function emailBackupOptional(to, subject, text, filename, jsonContent) {
@@ -84,7 +91,7 @@ const pool = new Pool({
 pool.on('error', (e) => console.error('pg pool error', e.message));
 
 const DEFAULT_PLANS = {
-  FREE: { name: 'Free', price: 0, installFee: 1000, price: 0, annual: 0, bizLimit: 1, workers: 1, products: 50, branches: 1, onlineStore: false, ai: false, label: 'Free · trial / limited' },
+  FREE: { name: 'Free', price: 0, installFee: 1000, annual: 0, bizLimit: 1, workers: 1, products: 50, branches: 1, onlineStore: false, ai: false, label: 'Free · trial / limited' },
   STARTER: { name: 'Starter', price: 800, installFee: 1000, quarterly: 2200, annual: 8000, bizLimit: 1, workers: 3, products: 500, branches: 1, onlineStore: false, ai: false, label: 'Starter · KES 800/mo' },
   PRO: { name: 'Professional', price: 1500, installFee: 1000, quarterly: 4000, annual: 15000, bizLimit: 3, workers: 10, products: 5000, branches: 3, onlineStore: true, ai: true, label: 'Professional · KES 1,500/mo' },
   BUSINESS: { name: 'Business', price: 4500, installFee: 1000, quarterly: 12000, annual: 45000, bizLimit: 10, workers: 50, products: 50000, branches: 10, onlineStore: true, ai: true, label: 'Business · KES 4,500/mo' },
@@ -103,7 +110,9 @@ const DEFAULT_PLATFORM = {
   country: 'Kenya', mpesaTill: '', paybill: '', bankName: '', bankAccount: '', supportEmail: '', website: '', notes: ''
 };
 // Fields a business owner may never set themselves
-const OWNER_LOCKED = ['id', 'ownerId', 'suspended', 'trialEndsAt', 'trialExtended'];
+const OWNER_LOCKED = ['id', 'ownerId', 'suspended', 'trialEndsAt', 'trialExtended', 'plan', 'planPaidAt', 'planReceipt', 'pendingPlan', 'createdAt'];
+const PUBLIC_PRODUCT_FIELDS = ['id', 'name', 'sub', 'category', 'unit', 'packQty', 'packUnit', 'price', 'stock', 'image', 'sku', 'barcode'];
+const publicProduct = (p) => { const o = {}; PUBLIC_PRODUCT_FIELDS.forEach((k) => { if (p[k] !== undefined) o[k] = p[k]; }); return o; };
 const HEAVY = ['orders', 'customers', 'quotations', 'expenses', 'purchases', 'cart'];
 
 /* ---------- helpers ---------- */
@@ -135,6 +144,12 @@ async function verifyPassword(pw, stored) {
 let DUMMY_HASH; // used so unknown emails cost the same time as wrong passwords
 
 /* ---------- rate limiting (in-memory, per instance) ---------- */
+const fails = new Map();
+const lockedOut = (key, max) => { const e = fails.get(key); return !!e && e.reset > Date.now() && e.n >= max; };
+function addFail(key, windowMs) {
+  const now = Date.now(); const e = fails.get(key);
+  if (!e || e.reset < now) fails.set(key, { n: 1, reset: now + windowMs }); else e.n++;
+}
 const hits = new Map();
 function limited(key, max, windowMs) {
   const now = Date.now();
@@ -143,7 +158,7 @@ function limited(key, max, windowMs) {
   e.n++;
   return e.n > max;
 }
-setInterval(() => { const now = Date.now(); for (const [k, e] of hits) if (e.reset < now) hits.delete(k); }, 60000).unref();
+setInterval(() => { const now = Date.now(); for (const [k, e] of hits) if (e.reset < now) hits.delete(k); for (const [k, e] of fails) if (e.reset < now) fails.delete(k); }, 60000).unref();
 function clientIp(req) {
   // Hosts append the real client IP last; earlier entries can be spoofed by the client.
   const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -319,12 +334,17 @@ async function handleApi(req, res, pathname) {
     const body = await readBody(req);
     const email = str(body.email, 254).toLowerCase().trim();
     const password = String(body.password || '').slice(0, 200);
-    if (limited('login-ip:' + ip, 30, 900000) || limited('login-em:' + email, 8, 900000)) {
-      return json(res, 429, { error: 'Too many login attempts. Try again in 15 minutes.' });
+    // only FAILED attempts count; a victim's account can't be locked from other networks
+    if (lockedOut('login-ip:' + ip, 30) || lockedOut('login-em:' + email + '|' + ip, 8)) {
+      return json(res, 429, { error: 'Too many failed login attempts. Try again in 15 minutes.' });
     }
     const user = (await pool.query('SELECT * FROM users WHERE email=$1', [email])).rows[0];
     const ok = await verifyPassword(password, user ? user.password_hash : DUMMY_HASH);
-    if (!user || !ok) return json(res, 401, { error: 'Invalid email or password' });
+    if (!user || !ok) {
+      addFail('login-ip:' + ip, 900000); addFail('login-em:' + email + '|' + ip, 900000);
+      return json(res, 401, { error: 'Invalid email or password' });
+    }
+    fails.delete('login-em:' + email + '|' + ip);
     if (body.adminOnly && !isAdmin(user)) return json(res, 403, { error: 'Not a platform admin account' });
     if (!body.adminOnly && isAdmin(user) && body.clientOnly) return json(res, 403, { error: 'Use admin login for this account' });
     return json(res, 200, { token: await newSession(user.id), user: publicUser(user), isAdmin: isAdmin(user) });
@@ -388,17 +408,46 @@ async function handleApi(req, res, pathname) {
 
     if (method === 'PUT' || method === 'PATCH') {
       const body = await readBody(req);
-      const out = await withBiz(id, async (b) => {
+      const out = await withBiz(id, async (b, c) => {
         let nb;
         if (!isAdmin(u)) {
           nb = { ...b, ...body };
           OWNER_LOCKED.forEach((k) => { nb[k] = b[k]; }); // server keeps control of these
+          if (Array.isArray(body.workers)) { // plan worker limit: existing workers stay, extra new ones are dropped
+            const plans = mergePlans(await getCfg('plans', DEFAULT_PLANS, c));
+            const pl = plans[b.plan || 'FREE'] || plans.FREE || {};
+            const lim = typeof pl.workers === 'number' ? pl.workers : Infinity;
+            const have = new Set((b.workers || []).map((w) => w && w.id));
+            const keep = body.workers.filter((w) => w && have.has(w.id));
+            const added = body.workers.filter((w) => w && !have.has(w.id));
+            nb.workers = [...keep, ...added.slice(0, Math.max(0, lim - keep.length))];
+          }
+          if (Array.isArray(body.orders) && Array.isArray(b.orders)) {
+            const known = new Set(body.orders.map((o) => o && o.id));
+            const missing = b.orders.filter((o) => o && !known.has(o.id));
+            if (missing.length) {
+              nb.orders = [...body.orders, ...missing];
+              const prods = Array.isArray(nb.products) ? nb.products : [];
+              missing.forEach((o) => {
+                if (o.status === 'CANCELLED') return;
+                (o.items || []).forEach((it) => {
+                  const p = prods.find((x) => x.id === it.product_id);
+                  if (!p) return;
+                  const lp = Number(it.listPrice);
+                  const used = (lp > 0 ? Number(it.qty) * Number(it.price) / lp : Number(it.qty)) || 0;
+                  p.stock = Math.max(0, Math.round(((Number(p.stock) || 0) - used) * 10000) / 10000);
+                });
+              });
+              ['orderN', 'onlineN'].forEach((k) => { nb[k] = Math.max(Number(nb[k]) || 0, Number(b[k]) || 0); });
+            }
+          }
         } else {
           nb = { ...b };
           ['plan', 'suspended', 'trialEndsAt', 'trialExtended', 'name', 'salesPin', 'pinLocked', 'pinFails', 'pinLockedAt'].forEach((k) => { if (body[k] !== undefined) nb[k] = body[k]; });
           if (body.plan && body.plan !== 'FREE') {
             nb.planPaidAt = today();
-            nb.planReceipt = b.planReceipt || 'ADMIN-' + Date.now();
+            nb.planReceipt = (b.pendingPlan && b.pendingPlan.receipt) || b.planReceipt || 'ADMIN-' + Date.now();
+            nb.pendingPlan = null;
           }
         }
         nb.id = id; nb.ownerId = row.owner_id;
@@ -411,6 +460,26 @@ async function handleApi(req, res, pathname) {
       await pool.query('DELETE FROM businesses WHERE id=$1', [id]);
       return json(res, 200, { ok: true });
     }
+  }
+
+  const planReq = pathname.match(/^\/api\/businesses\/([^/]+)\/plan-request$/);
+  if (planReq && method === 'POST') {
+    const u = await authUser(req);
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    const body = await readBody(req);
+    const plans = mergePlans(await getCfg('plans', DEFAULT_PLANS));
+    const plan = String(body.plan || '');
+    if (!plans[plan] || plan === 'FREE') return json(res, 400, { error: 'Unknown plan' });
+    const out = await withBiz(planReq[1], async (b, c) => {
+      if (!isAdmin(u) && b.ownerId !== u.id) return { status: 403, body: { error: 'Forbidden' } };
+      b.pendingPlan = { plan, receipt: str(body.receipt, 60), phone: str(body.phone, 40), at: new Date().toISOString() };
+      const alerts = await getCfg('adminAlerts', [], c);
+      alerts.push({ id: uid(), type: 'plan_payment', businessId: b.id, businessName: b.name || '', ownerId: b.ownerId, at: b.pendingPlan.at,
+        message: `Plan payment claimed: ${b.name || b.id} → ${plan}, receipt ${b.pendingPlan.receipt || 'n/a'}. Verify, then set the plan in Admin.` });
+      await setCfg('adminAlerts', alerts.slice(-100), c);
+      return { save: b, status: 200, body: { ok: true, pendingPlan: b.pendingPlan } };
+    });
+    return json(res, out.status, out.body);
   }
 
   if (pathname === '/api/admin/overview' && method === 'GET') {
@@ -472,19 +541,22 @@ async function handleApi(req, res, pathname) {
 
 
   if (pathname === '/api/auth/forgot' && method === 'POST') {
+    if (limited('forgot:' + ip, 5, 3600000)) return json(res, 429, { error: 'Too many requests, try again later' });
     const body = await readBody(req);
     const email = String(body.email || '').toLowerCase().trim();
     if (!email) return json(res, 400, { error: 'Email required' });
-    const u = (await pool.query('SELECT id, email, name, role FROM users WHERE email=$1', [email])).rows[0];
-    if (!u) return json(res, 200, { ok: true, message: 'If that email exists, a recovery code was issued.' });
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const generic = { ok: true, message: 'Request received. Your platform admin will give you a recovery code (valid 30 min).' };
+    const u = (await pool.query('SELECT id, email, name, role FROM users WHERE email=$1 AND role<>\'admin\'', [email])).rows[0];
+    if (!u) return json(res, 200, generic);
+    const code = String(crypto.randomInt(100000, 1000000));
     const tokens = await getCfg('resetTokens', {});
-    tokens[email] = { code, userId: u.id, expires: Date.now() + 30 * 60 * 1000 };
+    Object.keys(tokens).forEach((k) => { if (!tokens[k] || tokens[k].expires < Date.now()) delete tokens[k]; });
+    tokens[email] = { codeHash: sha(code), userId: u.id, expires: Date.now() + 30 * 60 * 1000, tries: 0 };
     await setCfg('resetTokens', tokens);
     const alerts = await getCfg('adminAlerts', []);
-    alerts.push({ id: uid(), type: 'password_reset_request', email, userId: u.id, name: u.name || '', at: new Date().toISOString(), message: 'Password recovery requested for ' + email });
+    alerts.push({ id: uid(), type: 'password_reset_request', email, userId: u.id, name: u.name || '', at: new Date().toISOString(), message: 'Password recovery for ' + email + ' — code: ' + code + ' (valid 30 min; give it only to the verified owner)' });
     await setCfg('adminAlerts', alerts.slice(-100));
-    return json(res, 200, { ok: true, message: 'Recovery code generated (valid 30 min).', recoveryCode: code, hint: 'No email SMTP — use this code now or ask admin to reset password.' });
+    return json(res, 200, generic);
   }
 
   if (pathname === '/api/auth/reset' && method === 'POST') {
@@ -492,11 +564,19 @@ async function handleApi(req, res, pathname) {
     const email = String(body.email || '').toLowerCase().trim();
     const code = String(body.code || '').trim();
     const password = String(body.password || '');
-    if (!email || !code || password.length < MIN_PASSWORD) return json(res, 400, { error: 'Email, recovery code and new password required' });
+    if (limited('reset:' + ip, 10, 900000)) return json(res, 429, { error: 'Too many attempts, try again later' });
+    if (!email || !code || password.length < MIN_PASSWORD || password.length > 200) return json(res, 400, { error: `Email, recovery code and new password (min ${MIN_PASSWORD} characters) required` });
     const tokens = await getCfg('resetTokens', {});
     const t = tokens[email];
-    if (!t || String(t.code) !== code || Date.now() > (t.expires || 0)) return json(res, 400, { error: 'Invalid or expired recovery code' });
+    if (!t || Date.now() > (t.expires || 0)) return json(res, 400, { error: 'Invalid or expired recovery code' });
+    if (t.codeHash !== sha(code)) {
+      t.tries = (t.tries || 0) + 1;
+      if (t.tries >= 5) delete tokens[email];
+      await setCfg('resetTokens', tokens);
+      return json(res, 400, { error: 'Invalid or expired recovery code' });
+    }
     await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [t.userId, await hashPassword(password)]);
+    await pool.query('DELETE FROM sessions WHERE user_id=$1', [t.userId]);
     delete tokens[email];
     await setCfg('resetTokens', tokens);
     return json(res, 200, { ok: true, message: 'Password updated' });
@@ -707,7 +787,7 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, {
       shop: {
         id: b.id, name: b.name, color: b.color, phone: b.phone, address: b.address, categoryLabel: b.categoryLabel,
-        products: (b.products || []).filter((p) => p.active !== false && (p.stock || 0) > 0),
+        products: (b.products || []).filter((p) => p.active !== false && (p.stock || 0) > 0).map(publicProduct),
         payments: { till: b.payments?.till || b.payinfo, provider: b.payments?.provider }
       }
     });
@@ -763,11 +843,11 @@ async function handleApi(req, res, pathname) {
     if (!isAdmin(u) && row.owner_id !== u.id) return json(res, 403, { error: 'Forbidden' });
     const body = await readBody(req);
     const b = bizOut(row);
-    const email = String(body.email || u.email || '').toLowerCase().trim();
+    const email = String((isAdmin(u) && body.email) || u.email || '').toLowerCase().trim();
     if (!email) return json(res, 400, { error: 'Email required for backup folder' });
     const written = writeBusinessBackupFile(email, b);
       b.lastAutoBackupAt = new Date().toISOString();
-      await pool.query('UPDATE businesses SET data=$2::jsonb WHERE id=$1', [id, JSON.stringify(b)]);;
+      await pool.query('UPDATE businesses SET data=$2::jsonb WHERE id=$1', [id, JSON.stringify(b)]);
     let mail = { sent: false, reason: 'not requested' };
     if (body.sendEmail) {
       const raw = fs.readFileSync(written.filePath, 'utf8');
@@ -830,7 +910,7 @@ async function handleApi(req, res, pathname) {
 /* ---------- static files ---------- */
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json',
-  '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
 };
 function sendFile(req, res, file) {
   const ext = path.extname(file).toLowerCase();
@@ -860,6 +940,8 @@ const server = http.createServer(async (req, res) => {
     if (file !== PUBLIC && !file.startsWith(PUBLIC + path.sep)) { res.writeHead(403); return res.end('Forbidden'); }
     if (fs.existsSync(file) && fs.statSync(file).isFile()) return sendFile(req, res, file);
     const index = path.join(PUBLIC, 'index.html');
+    if (!path.extname(decoded) && fs.existsSync(index)) return sendFile(req, res, index); // SPA routes only
+    if (path.extname(decoded)) { res.writeHead(404); return res.end('Not found'); }
     if (fs.existsSync(index)) return sendFile(req, res, index);
     res.writeHead(404);
     res.end('Not found');
@@ -921,6 +1003,7 @@ async function runScheduledBusinessBackups() {
           }
         };
         fs.writeFileSync(path.join(dir, 'platform_auto_' + stamp + '.json'), JSON.stringify(payload, null, 2));
+        fs.readdirSync(dir).filter((f) => f.startsWith('platform_auto_')).sort().reverse().slice(BACKUP_KEEP).forEach((f) => fs.unlinkSync(path.join(dir, f)));
         await setCfg('last_admin_auto_backup', new Date().toISOString());
         console.log('[auto-backup] platform snapshot saved');
       }
