@@ -30,8 +30,8 @@ if(window.refreshInstallUI)refreshInstallUI();if(window.toast)toast('MyBusinessH
 /* CDN fallback if local vendor files missing */
 (function(){
   function load(src){var s=document.createElement('script');s.src=src;document.head.appendChild(s)}
-  if(typeof tailwind==='undefined') load('https://cdn.tailwindcss.com');
-  setTimeout(function(){ if(typeof Chart==='undefined') load('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'); }, 50);
+  if(typeof tailwind==='undefined' && navigator.onLine) load('https://cdn.tailwindcss.com');
+  setTimeout(function(){ if(typeof Chart==='undefined' && navigator.onLine) load('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'); }, 50);
 })();
 </script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
@@ -144,7 +144,7 @@ button.lp-card{cursor:pointer}
 .ad.dark .text-amber-950,.ad.dark .text-sky-950{color:inherit}
 .ad.dark .ad-pill,.ad.dark .ad-ico{background:color-mix(in srgb,var(--c) 28%,#0b1220)}
 /* ---- status bars ---- */
-#netBar{position:fixed;top:0;left:0;right:0;z-index:120;background:#b45309;color:#fff;text-align:center;font-size:13px;padding:6px 12px;display:none}
+#netBar{position:fixed;top:10px;right:10px;left:auto;z-index:120;background:#b45309;color:#fff;text-align:left;font-size:11px;line-height:1.3;padding:6px 10px;display:none;max-width:160px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.2);pointer-events:none}
 #netBar.show{display:block}
 #updBar{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:120;background:#0f172a;color:#fff;border-radius:14px;padding:10px 14px;font-size:13px;display:none;gap:12px;align-items:center;box-shadow:0 12px 30px -10px rgba(0,0,0,.5)}
 #updBar.show{display:flex}
@@ -1223,9 +1223,12 @@ async function api(path, opts){
 
 async function detectServer(){
   if(!API_BASE || location.protocol==='file:'){ SERVER_MODE=false; return false; }
+  if(typeof navigator!=='undefined' && navigator.onLine===false){ SERVER_MODE=false; return false; }
   try{
-    const r = await fetch(API_BASE+'/api/health', {cache:'no-store'});
+    const ctrl=typeof AbortSignal!=='undefined'&&AbortSignal.timeout?AbortSignal.timeout(4000):undefined;
+    const r = await fetch(API_BASE+'/api/health', {cache:'no-store', signal:ctrl});
     SERVER_MODE = r.ok;
+    // Never wipe local passwords offline — only when server truly reachable
     if(SERVER_MODE){try{const d0=db();let ch=false;d0.users.forEach(u=>{if(u.password){u.password='';ch=true}});if(ch)save(d0)}catch(e){}}
   }catch(e){ SERVER_MODE=false; }
   return SERVER_MODE;
@@ -2952,7 +2955,7 @@ function viewApp(){
     ['quotations','Quotations'],['invoices','Invoices'],['expenses','Finance'],
     ['reports','Reports'],['onlineorders','Online store'],['orders','Online orders'],
     ['delivery','Delivery'],['branches','Branches'],['team','Workers'],
-    ['loyalty','Loyalty'],['shifts','Shifts'],['ai','AI assistant'],['settings','Settings']
+    ['loyalty','Loyalty'],['shifts','Shifts'],['ai','AI assistant'],['help','User guide'],['settings','Settings']
   ];
   const side=nav.map(([k,l])=>`<button type="button" class="nav-item ${S.appView===k?'active':''}" data-nav="${k}">${l}</button>`).join('');
   const mine=myBusinesses();
@@ -2979,10 +2982,11 @@ function viewApp(){
     else if(S.appView==='loyalty')main=secLoyalty(b,accent);
     else if(S.appView==='shifts')main=secShifts(b,accent);
     else if(S.appView==='ai')main=secAI(b,accent);
-    else if(S.appView==='settings')main=secSettings(b,accent);
+    else if(S.appView==='help')main=secHelp(b,a);
+  else if(S.appView==='settings')main=secSettings(b,accent);
     else main=secDash(b,accent);
   }catch(e){main=`<div class="p-4 text-red-600">${esc(String(e))}</div>`;console.error(e)}
-  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (POS)',stock:'Stock',products:'Products',purchases:'Purchases',customers:'Customers',quotations:'Quotations',invoices:'Invoices',expenses:'Finance',reports:'Reports',onlineorders:'Online store',orders:'Online orders',delivery:'Delivery',branches:'Branches',team:'Workers',loyalty:'Loyalty',shifts:'Cashier shifts',ai:'AI assistant',settings:'Settings'};
+  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (POS)',stock:'Stock',products:'Products',purchases:'Purchases',customers:'Customers',quotations:'Quotations',invoices:'Invoices',expenses:'Finance',reports:'Reports',onlineorders:'Online store',orders:'Online orders',delivery:'Delivery',branches:'Branches',team:'Workers',loyalty:'Loyalty',shifts:'Cashier shifts',ai:'AI assistant',help:'User guide',settings:'Settings'};
   return `<div class="layout">
   <aside class="sidebar">
     <div class="side-brand h-14 flex items-center gap-2 px-3 font-bold text-sm border-b" style="color:${accent}">
@@ -4260,6 +4264,49 @@ function secLoyalty(b,a){
   </div>`;
 }
 
+
+function secHelp(b,a){
+  const sections=[
+    ['Getting started','Create an owner account, verify email if prompted, then set up your business name, category, phone and M-Pesa details. Choose Solo (you run the shop) or Team (workers with limited menus). After a 3-day trial, pick a subscription plan.'],
+    ['Dashboard','Shows total sales, income, expenses, profit, stock value, low-stock alerts, recent invoices and charts. Filter by date where available. Use this as your daily overview.'],
+    ['Shop / POS','Browse products by category. Tap to add to cart. Use barcode box or camera scan. Set Unit and Qty on each line — unit price is taken from Products and auto-converts (e.g. 2000 for 100m → price per metre). Choose payment (Cash, M-Pesa, Bank, Card, Credit). Cash sales can use the change calculator. Optional sales PIN before completing a sale.'],
+    ['Cart units & pricing','Product price is the registered unit price. Pack size (e.g. 100) + pack unit (e.g. metre) means that price covers that pack. Changing cart unit recalculates price and line total. Cart prices are not typed in by hand.'],
+    ['Invoices & receipts','Every paid sale creates an invoice. Open it to view, print invoice + receipt, or receipt only. Refunds restore stock when authorised.'],
+    ['Products','Register name, category, unit, unit price, optional pack size/measure, SKU, barcode, stock, batch, expiry. Generate missing SKUs/barcodes. Scan codes when adding products. Edit catalog anytime and Save.'],
+    ['Stock / inventory','Overview, Receive, Issue, Transfer, Adjust, History, Valuation. Stock updates after sales and purchases. Low-stock and near-expiry appear on dashboard.'],
+    ['Purchases & expenses','Record supplier purchases (increases stock, logs expense). Add suppliers under Customers. Expenses reduce profit vs income from sales.'],
+    ['Customers & suppliers','Store contacts, company names, balances. Mark type Customer, Supplier or Both.'],
+    ['Workers','Team mode: add workers with username/password. Authorise menus (shop, invoices, stock, etc.). Workers use a separate login and mini dashboard. Optional sale password and shifts.'],
+    ['Online store & orders','Each business can take online orders. Share your store link. Manage order status: New → Confirmed → Processing → Ready → Dispatched → Delivered. Delivery or pickup.'],
+    ['Wallet & reports','Sales vs expenses, profit/loss charts (daily/weekly/monthly/yearly). Printable financial views where available.'],
+    ['M-Pesa & payments','Enter Till/Paybill in business profile. STK guided flow when Daraja keys are set on the server; otherwise record M-Pesa code manually. Cash and other methods always available.'],
+    ['Backup','Settings → backup: download JSON, save to server BusinessHub folder, or auto-backup every 2 days. Restore only from trusted files. Data also stays in this browser until you clear site data.'],
+    ['Offline use','Install/open the app once online. Offline banner (top-right) means you are offline; sales and edits save on this device and sync when you reconnect. Login works offline for accounts already used on this device.'],
+    ['Themes','Header Theme button or Settings → Appearance: Light, Dark, Teal, Warm.'],
+    ['Admin (platform owner only)','Separate admin login. Manage clients, plans, installation fee, notices, suspend/delete clients, platform backup. Clients never see the admin menu.'],
+    ['Tips','Never clear browser data without a backup. Use HTTPS (your Render URL). For Android, open the site in Chrome → Add to Home Screen or use the android-app project.']
+  ];
+  return `<div class="space-y-4 max-w-3xl">
+    <div class="bg-white rounded-2xl border p-5">
+      <h2 class="text-xl font-bold mb-1">User guide</h2>
+      <p class="text-sm text-slate-500 mb-4">MyBusinessHub — how to run your shop day to day. Tap a topic.</p>
+      <div class="space-y-2">
+        ${sections.map(([t,body],i)=>`
+          <details class="border rounded-xl bg-slate-50 open:bg-white open:shadow-sm" ${i===0?'open':''}>
+            <summary class="cursor-pointer px-4 py-3 font-semibold text-sm list-none flex justify-between items-center gap-2">
+              <span>${esc(t)}</span><span class="text-slate-400 text-xs">▼</span>
+            </summary>
+            <p class="px-4 pb-4 text-sm text-slate-600 leading-relaxed">${esc(body)}</p>
+          </details>`).join('')}
+      </div>
+    </div>
+    <div class="bg-teal-50 border border-teal-100 rounded-xl p-4 text-sm text-teal-950">
+      <p class="font-semibold mb-1">Need help?</p>
+      <p>Use Support / tickets if enabled, or contact your platform admin. Keep a backup file after big catalog changes.</p>
+    </div>
+  </div>`;
+}
+
 function secSettings(b,a){
   const selected=b.categories||[];
   const pills=Object.keys(CATALOG).filter(k=>k!=='empty').map(k=>{
@@ -5169,7 +5216,19 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
           clearWorkerSession();toast('Logged in (server)');
         });
       }).catch(function(err){
-        document.getElementById('loginErr').textContent=err.message||'Login failed';
+        // Offline or server down: use local account if available
+        const d2=db();
+        const local=d2.users.find(x=>x.email===email&&x.password&&x.password===fd.get('password'));
+        if(local&&local.role!=='admin'&&local.email!==(d2.adminEmail||'admin@businesshub.ke')){
+          d2.session=local.id;save(d2);
+          try{if(document.getElementById('rememberMe')&&document.getElementById('rememberMe').checked)localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
+          const mine=d2.businesses.filter(b=>b.ownerId===local.id);
+          if(!mine.length){S.view='onboard';render()}
+          else{d2.currentBizId=mine[0].id;save(d2);S.appView='dashboard';S.view='app';render()}
+          clearWorkerSession();toast('Logged in offline (this device)');
+          return;
+        }
+        document.getElementById('loginErr').textContent=(err&&err.message)||'Login failed — offline and no local account';
         document.getElementById('loginErr').classList.remove('hidden');
       });
       return;
@@ -5203,7 +5262,16 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
         else {u.role='admin';u.password=''}
         d.session=u.id;d.currentBizId=null;save(d);
         syncPull().then(function(){S.view='admin';S.adminTab='overview';render();toast('Admin login (server)')});
-      }).catch(function(e){err.textContent=e.message||'Login failed';err.classList.remove('hidden')});
+      }).catch(function(e){
+        const d2=db();
+        const local=d2.users.find(x=>x.email===email&&x.password&&x.password===fd.get('password'));
+        if(local&&(local.role==='admin'||local.email===(d2.adminEmail||'admin@businesshub.ke')||email==='admin@businesshub.ke')){
+          d2.session=local.id;d2.currentBizId=null;save(d2);
+          S.view='admin';S.adminTab='overview';render();toast('Admin offline (this device)');
+          return;
+        }
+        err.textContent=(e&&e.message)||'Login failed';err.classList.remove('hidden');
+      });
       return;
     }
 
@@ -6638,29 +6706,35 @@ detectServer().then(function(on){
 }).catch(function(){}).finally(function(){render();});
 
 </script>
-<div id="netBar">You are offline. Changes are saved on this device and sync when you reconnect.</div>
+<div id="netBar">Offline · saved on device</div>
 <div id="updBar"><span>A new version is ready.</span><button type="button" id="updBtn" class="px-3 py-1 rounded-lg bg-white text-slate-900 font-semibold">Refresh</button></div>
 <script>
 (function(){
   var net=document.getElementById('netBar');
   function setNet(){if(net)net.classList.toggle('show',!navigator.onLine)}
-  window.addEventListener('offline',setNet);
+  window.addEventListener('offline',function(){setNet();try{toast('Offline — data stays on this device')}catch(e){}});
   window.addEventListener('online',function(){
     setNet();
-    try{if(SERVER_MODE&&API_TOKEN&&!isAdmin()){myBusinesses().forEach(syncPushBiz);toast('Back online. Changes synced.')}}catch(e){}
+    try{
+      (typeof detectServer==='function'?detectServer():Promise.resolve()).then(function(){
+        try{if(typeof flushOfflineSales==='function')flushOfflineSales()}catch(e){}
+        try{if(SERVER_MODE&&API_TOKEN&&!isAdmin()){myBusinesses().forEach(syncPushBiz);toast('Back online. Syncing…')}}catch(e){}
+      });
+    }catch(e){}
   });
   setNet();
   function showUpd(){var b=document.getElementById('updBar');if(b)b.classList.add('show')}
   var ub=document.getElementById('updBtn');if(ub)ub.onclick=function(){location.reload()};
-  if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost')){
+  if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1')){
     var had=!!navigator.serviceWorker.controller;
     window.addEventListener('load',function(){
-      navigator.serviceWorker.register('/sw.js').then(function(reg){
+      navigator.serviceWorker.register('/sw.js',{scope:'/'}).then(function(reg){
         reg.addEventListener('updatefound',function(){var nw=reg.installing;if(!nw)return;
           nw.addEventListener('statechange',function(){if(nw.state==='activated'&&had)showUpd()})});
         setInterval(function(){reg.update().catch(function(){})},3600000);
-      }).catch(function(){});
+      }).catch(function(e){console.warn('SW register',e)});
     });
+    navigator.serviceWorker.addEventListener('controllerchange',function(){/* new SW took control */});
   }
 })();
 </script>
