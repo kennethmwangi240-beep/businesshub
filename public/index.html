@@ -1372,11 +1372,12 @@ async function flushPushes(){
 }
 window.addEventListener('beforeunload', function(){
   if(!SERVER_MODE || !API_TOKEN) return;
-  const ids = Object.keys(_pushPending);
-  ids.forEach(function(id){
+  // fetch+keepalive can carry the auth header (sendBeacon cannot). Anything that doesn't fit is
+  // still in localStorage and is pushed on next start by syncPull (local newer wins).
+  Object.keys(_pushPending).forEach(function(id){
     try{
-      const payload = _pushPending[id];
-      navigator.sendBeacon && navigator.sendBeacon('/api/businesses/'+id, new Blob([JSON.stringify(payload)],{type:'application/json'}));
+      const body = JSON.stringify(_pushPending[id]);
+      if(body.length < 60000) fetch('/api/businesses/'+id,{method:'PUT',keepalive:true,headers:{'Content-Type':'application/json',Authorization:'Bearer '+API_TOKEN},body:body}).catch(function(){});
     }catch(e){}
   });
 });
@@ -1403,7 +1404,14 @@ const UNIT_OPTIONS=[
   {id:'job',label:'Job / service',suffix:'job',step:1,whole:true},
   {id:'day',label:'Day (rental)',suffix:'day',step:1,whole:true},
   {id:'sqm',label:'Square metre',suffix:'m²',step:0.01,whole:false},
-  {id:'unit',label:'Unit',suffix:'unit',step:1,whole:true}
+  {id:'unit',label:'Unit',suffix:'unit',step:1,whole:true},
+  {id:'roll',label:'Roll',suffix:'roll',step:1,whole:true},
+  {id:'bottle',label:'Bottle',suffix:'bottle',step:1,whole:true},
+  {id:'tin',label:'Tin',suffix:'tin',step:1,whole:true},
+  {id:'bag',label:'Bag',suffix:'bag',step:1,whole:true},
+  {id:'pair',label:'Pair',suffix:'pair',step:1,whole:true},
+  {id:'carton',label:'Carton',suffix:'carton',step:1,whole:true},
+  {id:'bundle',label:'Bundle',suffix:'bundle',step:1,whole:true}
 ];
 
 
@@ -1424,7 +1432,7 @@ const UNIT_TO_BASE={
   m:1, cm:0.01, sqm:1,
   g:1, kg:1000,
   ml:1, l:1000,
-  pc:1, pack:1, set:1, dozen:12, unit:1, job:1, hr:1, day:1
+  pc:1, pack:1, set:1, dozen:12, unit:1, job:1, hr:1, day:1, roll:1, bottle:1, tin:1, bag:1, pair:1, carton:1, bundle:1
 };
 function unitToBase(u){
   const id=unitMeta(u).id;
@@ -1433,14 +1441,31 @@ function unitToBase(u){
 function unitsCompatible(a,b){
   const A=unitMeta(a).id,B=unitMeta(b).id;
   if(A===B)return true;
-  const groups=[['m','cm'],['g','kg'],['ml','l'],['pc','dozen','pack','set','unit']];
+  const groups=[['m','cm'],['g','kg'],['ml','l'],['pc','dozen','unit']];
   return groups.some(g=>g.includes(A)&&g.includes(B));
 }
 /**
- * Product lists price P for `unit` covering packQty of packUnit (default packQty=1, packUnit=unit).
- * Example: price 2000, unit pc, packQty 100, packUnit m → 2000 for 100 metres in one piece.
- * Returns { unitPrice, lineTotal, baseUnit } for selling `qty` of `sellUnit`.
+ * Product lists price P for ONE `unit` (the whole item, e.g. 1 pc / 1 roll).
+ * packQty + packUnit say what one whole item contains (e.g. 100 m).
+ * Example: price 2800, unit pc, packQty 100, packUnit m  =>  1 m = KES 28.
+ * Stock is kept in the whole `unit`; selling 1 m uses factor = 1/100 of a pc.
+ * factor = how many `unit`s are used by 1 sellUnit.
  */
+function sellFactor(p, sellUnit){
+  p=p||{};
+  const priceUnit=productPriceUnit(p);
+  const packQ=productPackQty(p);
+  const packU=productPackUnit(p);
+  const sellU=unitMeta(sellUnit||priceUnit).id;
+  if(sellU===priceUnit)return {factor:1,ok:true};
+  if(packQ>0&&packQ!==1||packU!==priceUnit){
+    if(unitsCompatible(sellU,packU)&&!unitsCompatible(packU,priceUnit)){
+      return {factor:unitToBase(sellU)/(packQ*unitToBase(packU)),ok:true};
+    }
+  }
+  if(unitsCompatible(sellU,priceUnit))return {factor:unitToBase(sellU)/unitToBase(priceUnit),ok:true};
+  return {factor:1,ok:false};
+}
 function calcCartPricing(p, sellUnit, qty){
   p=p||{};
   const listPrice=Number(p.price)||0;
@@ -1449,35 +1474,26 @@ function calcCartPricing(p, sellUnit, qty){
   const packU=productPackUnit(p);
   const sellU=unitMeta(sellUnit||priceUnit).id;
   qty=normalizeQty(sellU,qty);
-  // Amount of "measure" covered by one list-price unit
-  // 1 priceUnit costs listPrice and contains packQ packU
-  // Convert everything to a common base of packU / priceUnit
-  let unitPrice=listPrice; // price per 1 sellU
-  let ok=true;
-  if(sellU===priceUnit){
-    unitPrice=listPrice;
-  }else if(packQ>1&&(sellU===packU||unitsCompatible(sellU,packU))){
-    // listPrice buys packQ of packU
-    const packBase=unitToBase(packU);
-    const sellBase=unitToBase(sellU);
-    const measurePerPriceUnit=packQ*packBase; // in base units of packU family
-    const measureWanted=qty*sellBase;
-    // price per one base measure
-    const pricePerBase=listPrice/measurePerPriceUnit;
-    unitPrice=pricePerBase*sellBase; // price per 1 sellU
-  }else if(unitsCompatible(sellU,priceUnit)){
-    const priceBase=unitToBase(priceUnit);
-    const sellBase=unitToBase(sellU);
-    unitPrice=listPrice*(sellBase/priceBase);
-  }else{
-    // incompatible: keep list price per sell unit (same number) but flag
-    unitPrice=listPrice;
-    ok=false;
-  }
-  unitPrice=money(unitPrice);
+  const sf=sellFactor(p,sellU);
+  const unitPrice=money(listPrice*sf.factor);
   const lineTotal=money(unitPrice*qty);
-  return {unitPrice,lineTotal,qty,sellUnit:sellU,listPrice,priceUnit,packQ,packU,ok};
+  return {unitPrice,lineTotal,qty,sellUnit:sellU,listPrice,priceUnit,packQ,packU,ok:sf.ok,factor:sf.factor};
 }
+/** Stock (in the product's own unit) used by selling qty of sellUnit */
+function stockNeeded(p, sellUnit, qty){
+  const sf=sellFactor(p,sellUnit||productPriceUnit(p));
+  return Math.round((Number(qty)||0)*sf.factor*10000)/10000;
+}
+/** Units the cashier may sell this product in: its own unit + the pack-content unit family */
+function sellUnitOptions(p){
+  const base=productPriceUnit(p);
+  const ids=new Set([base]);
+  const packQ=productPackQty(p),packU=productPackUnit(p);
+  if(packQ!==1||packU!==base)ids.add(packU);
+  const out=UNIT_OPTIONS.filter(u=>[...ids].some(i=>unitsCompatible(u.id,i)));
+  return out.length?out:UNIT_OPTIONS.filter(u=>u.id===base);
+}
+function fmtStock(n){return String(Math.round((Number(n)||0)*100)/100)}
 function cartLineFromProduct(p, sellUnit, qty){
   const sell=sellUnit||productPriceUnit(p);
   const pr=calcCartPricing(p,sell,qty!=null?qty:unitStep(sell));
@@ -1515,26 +1531,27 @@ function unitSelectHtml(name, selected, attrs){
   </select>`;
 }
 
+const UNIT_ALIASES={metre:'m',meter:'m',metres:'m',meters:'m',mtr:'m',mtrs:'m',gram:'g',grams:'g',kilo:'kg',kilos:'kg',kilogram:'kg',kilograms:'kg',
+  litre:'l',liter:'l',litres:'l',liters:'l',millilitre:'ml',milliliter:'ml',piece:'pc',pieces:'pc',pcs:'pc',each:'pc',box:'pack',packet:'pack',packs:'pack',
+  bottles:'bottle',bags:'bag',rolls:'roll',tins:'tin',pairs:'pair',cartons:'carton',bundles:'bundle',hour:'hr',hours:'hr','sq m':'sqm','sq.m':'sqm',service:'job',sets:'set',dozens:'dozen'};
 function unitMeta(u){
-  const s=String(u||'pc').toLowerCase();
-  // match by id or suffix or "per m" style
-  let m=UNIT_OPTIONS.find(x=>x.id===s||x.suffix===s);
-  if(!m){
-    if(/metre|meter|\bm\b|per\s*m/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='m');
-    else if(/gram|\bg\b|per\s*g/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='g');
-    else if(/kg|kilo/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='kg');
-    else if(/litre|liter|\bl\b/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='l');
-    else if(/ml/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='ml');
-    else if(/hour|hr/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='hr');
-    else if(/pack|box/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='pack');
-    else if(/sq\.?\s*m|m²|square/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='sqm');
-    else if(/job|service/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='job');
-    else if(/day/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='day');
-    else if(/dozen/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='dozen');
-    else if(/set/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='set');
-    else if(/cm/i.test(s))m=UNIT_OPTIONS.find(x=>x.id==='cm');
-    else m=UNIT_OPTIONS.find(x=>x.id==='pc');
-  }
+  const s=String(u==null||u===''?'pc':u).toLowerCase().trim().replace(/^per\s+/,'');
+  let m=UNIT_OPTIONS.find(x=>x.id===s||x.suffix.toLowerCase()===s);
+  if(m)return m;
+  if(UNIT_ALIASES[s])return UNIT_OPTIONS.find(x=>x.id===UNIT_ALIASES[s]);
+  if(/sq\.?\s*m|m²|square/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='sqm');
+  else if(/kg|kilo/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='kg');
+  else if(/millilit|\bml\b/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='ml');
+  else if(/litre|liter|\bl\b/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='l');
+  else if(/gram|\bg\b/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='g');
+  else if(/metre|meter|\bm\b/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='m');
+  else if(/\bcm\b|centi/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='cm');
+  else if(/hour|\bhr\b/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='hr');
+  else if(/pack|box/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='pack');
+  else if(/job|service/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='job');
+  else if(/day/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='day');
+  else if(/dozen/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='dozen');
+  else if(/\bset\b/.test(s))m=UNIT_OPTIONS.find(x=>x.id==='set');
   return m||UNIT_OPTIONS[0];
 }
 function unitLabel(u){return unitMeta(u).label}
@@ -1562,7 +1579,8 @@ const UNIT_FACTOR={
   ml:{d:'vol',f:1},l:{d:'vol',f:1000},
   sqm:{d:'area',f:1},
   pc:{d:'count',f:1},pack:{d:'count',f:1},set:{d:'count',f:1},dozen:{d:'count',f:12},
-  unit:{d:'count',f:1},job:{d:'count',f:1},hr:{d:'time',f:1},day:{d:'time',f:24}
+  unit:{d:'count',f:1},job:{d:'count',f:1},hr:{d:'time',f:1},day:{d:'time',f:24},
+  roll:{d:'roll',f:1},bottle:{d:'bottle',f:1},tin:{d:'tin',f:1},bag:{d:'bag',f:1},pair:{d:'pair',f:1},carton:{d:'carton',f:1},bundle:{d:'bundle',f:1}
 };
 function unitFactor(u){const id=unitMeta(u).id;return UNIT_FACTOR[id]||{d:'count',f:1}}
 /** How many `to` units equal `qty` of `from` units (null if incompatible) */
@@ -1571,31 +1589,10 @@ function convertAmount(qty, fromU, toU){
   if(a.d!==b.d||!b.f)return null;
   return (Number(qty)||0)*a.f/b.f;
 }
-/**
- * Registered product price is for 1× product.unit.
- * Optional packSize + packSizeUnit: e.g. unit=pc, packSize=100, packSizeUnit=m, price=2000
- * means 1 piece = 100 metres = KES 2000.
- * Returns unit price in cartUnit (price for 1 cartUnit).
- */
+/** Price of 1 cartUnit of product p (single pricing engine) */
 function unitPriceIn(p, cartUnit){
   if(!p)return 0;
-  const price=Number(p.price)||0;
-  const reg=unitMeta(p.unit||'pc').id;
-  const want=unitMeta(cartUnit||reg).id;
-  if(want===reg)return price;
-  const packSize=Math.max(0.0001,Number(p.packSize)||1);
-  const packU=unitMeta(p.packSizeUnit||reg).id;
-  // Pack breakdown: 1 registered unit contains packSize of packSizeUnit
-  if(packSize!==1||packU!==reg){
-    if(want===packU)return money(price/packSize);
-    const packToWant=convertAmount(1,packU,want);
-    if(packToWant!=null&&packToWant>0)return money((price/packSize)/packToWant);
-    // want is reg already handled; try reg→want via dimension
-  }
-  const regToWant=convertAmount(1,reg,want);
-  if(regToWant!=null&&regToWant>0)return money(price/regToWant);
-  // cannot convert — keep registered unit price (user should use registered unit)
-  return price;
+  return calcCartPricing(p,cartUnit||productPriceUnit(p),1).unitPrice;
 }
 function cartLineUnitPrice(c,p){
   const prod=p||((biz()||{}).products||[]).find(x=>x.id===c.id);
@@ -1603,14 +1600,13 @@ function cartLineUnitPrice(c,p){
   return Number(c.price)||0;
 }
 function cartLineTotal(c,p){
-  return money(cartLineUnitPrice(c,p)*normalizeQty(c.unit||'pc',c.qty));
+  const prod=p||((biz()||{}).products||[]).find(x=>x.id===c.id);
+  if(prod)return calcCartPricing(prod,c.unit||prod.unit||'pc',c.qty).lineTotal;
+  return money((Number(c.price)||0)*(Number(c.qty)||0));
 }
 function packLabel(p){
-  const packSize=Number(p.packSize)||1;
-  const reg=unitSuffix(p.unit||'pc');
-  if(packSize>1&&p.packSizeUnit&&unitMeta(p.packSizeUnit).id!==unitMeta(p.unit||'pc').id){
-    return kes(p.price)+' ('+packSize+unitSuffix(p.packSizeUnit)+') per '+reg;
-  }
+  const q=productPackQty(p),reg=unitSuffix(p.unit||'pc');
+  if(q!==1||productPackUnit(p)!==productPriceUnit(p))return kes(p.price)+' ('+q+unitSuffix(productPackUnit(p))+') per '+reg;
   return kes(p.price)+' per '+reg;
 }
 
@@ -1618,9 +1614,9 @@ const PAY_METHODS=['Cash','M-Pesa','Bank transfer','Card','Credit'];
 const DEFAULT_PLANS={
   FREE:{name:'Free',price:0,installFee:1000,bizLimit:1,workers:1,products:50,branches:1,onlineStore:false,ai:false,label:'Free'},
   STARTER:{name:'Starter',price:800,installFee:1000,bizLimit:1,workers:3,products:500,branches:1,onlineStore:false,ai:false,label:'Starter · KES 800/mo'},
-  PRO:{name:'Professional',price:1500,bizLimit:3,workers:10,products:5000,branches:3,onlineStore:true,workers:[],ai:true,label:'Pro · KES 1,500/mo'},
-  BUSINESS:{name:'Business',price:4500,bizLimit:10,workers:50,products:50000,branches:10,onlineStore:true,workers:[],ai:true,label:'Business · KES 4,500/mo'},
-  ENTERPRISE:{name:'Enterprise',price:0,bizLimit:99,workers:999,products:999999,branches:99,onlineStore:true,workers:[],ai:true,label:'Enterprise · custom'}
+  PRO:{name:'Professional',price:1500,bizLimit:3,workers:10,products:5000,branches:3,onlineStore:true,ai:true,label:'Pro · KES 1,500/mo'},
+  BUSINESS:{name:'Business',price:4500,bizLimit:10,workers:50,products:50000,branches:10,onlineStore:true,ai:true,label:'Business · KES 4,500/mo'},
+  ENTERPRISE:{name:'Enterprise',price:0,bizLimit:99,workers:999,products:999999,branches:99,onlineStore:true,ai:true,label:'Enterprise · custom'}
 };
 function mergePlans(stored){
   const base=JSON.parse(JSON.stringify(DEFAULT_PLANS));
@@ -1699,7 +1695,7 @@ function db(){
   if(!d){d={users:[],session:null,currentBizId:null,businesses:[],plans:JSON.parse(JSON.stringify(DEFAULT_PLANS)),adminEmail:'admin@businesshub.ke',platform:{company:'MyBusinessHub',ownerName:'',phone:'',email:'admin@businesshub.ke',address:'',city:'Nairobi',country:'Kenya',mpesaTill:'',paybill:'',bankName:'',bankAccount:'',supportEmail:'',website:'',notes:''},notices:[],daraja:{}};save(d)}
   if(!d.businesses)d.businesses=[];
   if(!d.plans)d.plans=JSON.parse(JSON.stringify(DEFAULT_PLANS));
-  d.businesses.forEach(b=>{if(b.onlineStore===undefined)b.onlineStore=true;if(!b.trialEndsAt)b.trialEndsAt=addDays(b.createdAt||today(),3);if(!b.payments)b.payments={provider:'mpesa'};(b.products||[]).forEach(p=>{if(!p.image)p.image=autoImageFor(p.name,p.sourceCat,p.sub)});});
+  d.businesses.forEach(b=>{if(b.onlineStore===undefined)b.onlineStore=true;if(!b.trialEndsAt)b.trialEndsAt=addDays(b.createdAt||today(),3);if(!b.payments)b.payments={provider:'mpesa'};(b.products||[]).forEach(p=>{if(!p.image)p.image=autoImageFor(p.name,p.sourceCat,p.sub);if(p.packQty==null&&Number(p.packSize)>0){p.packQty=Number(p.packSize);p.packUnit=p.packSizeUnit||p.unit||'pc'}});});
   return d;
 }
 function currentUser(){const d=db();return d.users.find(u=>u.id===d.session)||null}
@@ -2072,6 +2068,32 @@ function trialExpired(b){
   if(planIsPaid(b))return false;
   return daysLeftInTrial(b)<0;
 }
+/** Max workers allowed by the business's plan (Infinity when the plan sets no number) */
+function workerLimit(b){
+  const plans=db().plans||DEFAULT_PLANS;
+  const key=String((b&&b.plan)||'FREE').toUpperCase();
+  const pl=plans[key]||plans.FREE||DEFAULT_PLANS.FREE||{};
+  return (typeof pl.workers==='number'&&pl.workers>=0)?pl.workers:Infinity;
+}
+function workerPlanName(b){
+  const plans=db().plans||DEFAULT_PLANS;
+  const pl=plans[String((b&&b.plan)||'FREE').toUpperCase()]||{};
+  return pl.name||String((b&&b.plan)||'Free');
+}
+function canAddWorker(b){
+  const lim=workerLimit(b);
+  if((b.workers||[]).length>=lim){
+    alert('Your '+workerPlanName(b)+' plan allows '+lim+' worker'+(lim===1?'':'s')+'. Remove a worker or upgrade your plan (Settings → Plans) to add more.');
+    return false;
+  }
+  return true;
+}
+function workerUsageHtml(b){
+  const lim=workerLimit(b),n=(b.workers||[]).length;
+  if(lim===Infinity)return `<p class="text-xs text-slate-500 mb-2">${n} worker${n===1?'':'s'} · ${esc(workerPlanName(b))} plan</p>`;
+  const full=n>=lim;
+  return `<p class="text-xs mb-2 ${full?'text-amber-800 font-semibold':'text-slate-500'}">Workers: ${n} / ${lim} on the ${esc(workerPlanName(b))} plan${full?' — limit reached, upgrade to add more':''}</p>`;
+}
 function needsPlanPaywall(b){
   return b&&!planIsPaid(b)&&trialExpired(b)&&!b.suspended;
 }
@@ -2262,6 +2284,7 @@ function productThumbWide(p){
 function normalizeProductUnits(b){
   if(!b||!b.products)return;
   b.products.forEach(p=>{
+    if(p.packQty==null&&Number(p.packSize)>0){p.packQty=Number(p.packSize);p.packUnit=p.packSizeUnit||p.unit||'pc'}
     if(!p.unit)p.unit='pc';
     else{
       const m=unitMeta(p.unit);
@@ -3212,16 +3235,18 @@ function secShop(b,a){
       const listU=c.priceUnit||p.unit||'pc';
       const packQ=Number(c.packQty||p.packQty||1);
       const packU=c.packUnit||p.packUnit||listU;
+      const cpr=calcCartPricing(p,c.unit||'pc',c.qty);
+      const unitWarn=(!cpr.ok&&p.id)?`<p class="text-xs text-red-600 font-medium">⚠ No pack size set for ${esc(unitSuffix(c.unit||'pc'))} — set Pack size in Products to convert the price.</p>`:'';
       const listHint=packQ>1?`${kes(c.listPrice||p.price)} (${packQ}${unitSuffix(packU)}) per ${unitSuffix(listU)}`:`${kes(c.listPrice||p.price)} ${pricePerLabel(listU)}`;
       return `<div class="flex flex-col gap-2 py-3 border-b border-slate-100">
       <div class="min-w-0"><p class="text-sm font-medium truncate">${esc(c.name)}</p>
         <p class="text-xs text-slate-500">Registered: ${listHint}</p>
-        <p class="text-xs text-teal-800 font-medium">Selling at ${kes(c.price)} ${pricePerLabel(c.unit||'pc')} · line total ${kes(c.lineTotal!=null?c.lineTotal:(c.price||0)*(c.qty||0))}</p>
+        <p class="text-xs text-teal-800 font-medium">Selling at ${kes(c.price)} ${pricePerLabel(c.unit||'pc')} · line total ${kes(c.lineTotal!=null?c.lineTotal:(c.price||0)*(c.qty||0))}</p>${unitWarn}
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <label class="text-xs text-slate-500 shrink-0">Unit</label>
         <select data-cunit="${c.id}" class="text-sm border-2 border-teal-600 rounded-xl px-2 py-1.5 bg-white font-medium min-w-[120px]" title="Select sell unit">
-          ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(c.unit||'pc')===u.id?'selected':''}>${esc(u.label)}</option>`).join('')}
+          ${(p.id?sellUnitOptions(p):UNIT_OPTIONS).map(u=>`<option value="${u.id}" ${(c.unit||'pc')===u.id?'selected':''}>${esc(u.label)}</option>`).join('')}
         </select>
         <label class="text-xs text-slate-500 shrink-0">Qty</label>
         <button type="button" data-dec="${c.id}" class="w-8 h-8 rounded-lg border">−</button>
@@ -3518,7 +3543,7 @@ function secStock(b,a){
         <td class="px-3 py-2 text-xs"><select data-punit="${p.id}" class="border rounded px-1 py-0.5 text-xs max-w-[80px]">
           ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(p.unit||'pc')===u.id?'selected':''}>${esc(u.suffix)}</option>`).join('')}
         </select></td>
-        <td class="px-3 py-2 font-semibold">${p.stock||0}</td>
+        <td class="px-3 py-2 font-semibold">${fmtStock(p.stock)}</td>
         <td class="px-3 py-2 text-xs">${esc(p.batch||'—')}</td>
         <td class="px-3 py-2 text-xs">${esc(p.expiry||'—')}</td>
         <td class="px-3 py-2 text-xs">${p.reorder||5}</td>
@@ -3604,14 +3629,14 @@ function secProducts(b,a){
     <td class="px-2 py-2"><input data-pbarcode="${p.id}" value="${esc(p.barcode||'')}" class="w-28 border rounded-lg px-2 py-1 text-xs" placeholder="Barcode"/>${p.barcode?`<div class="mt-1 overflow-x-auto">${barcodeSvg(p.barcode,{height:28})}</div>`:''}</td>
     <td class="px-2 py-2"><input data-psub="${p.id}" value="${esc(p.sub||'')}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Sub"/></td>
     <td class="px-2 py-2"><select data-punit="${p.id}" class="border rounded-lg px-1 py-1 text-xs max-w-[100px]">
-      ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(p.unit||'pc')===u.id||String(p.unit||'').includes(u.suffix)?'selected':''}>${esc(u.suffix)}</option>`).join('')}
+      ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${productPriceUnit(p)===u.id?'selected':''}>${esc(u.suffix)}</option>`).join('')}
     </select></td>
     <td class="px-2 py-2"><input type="number" data-ppack="${p.id}" value="${p.packQty!=null?p.packQty:1}" step="0.01" class="w-16 border rounded-lg px-1 py-1 text-xs" title="Pack size"/><select data-ppacku="${p.id}" class="border rounded-lg px-1 py-1 text-xs max-w-[70px]">
-      ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(p.packUnit||p.unit||'pc')===u.id?'selected':''}>${esc(u.suffix)}</option>`).join('')}
+      ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${productPackUnit(p)===u.id?'selected':''}>${esc(u.suffix)}</option>`).join('')}
     </select></td>
-    <td class="px-2 py-2"><input type="number" data-price="${p.id}" value="${p.price}" class="w-20 border rounded-lg px-2 py-1 text-sm" title="Unit price"/></td>
+    <td class="px-2 py-2"><input type="number" data-price="${p.id}" step="any" min="0" value="${p.price}" class="w-20 border rounded-lg px-2 py-1 text-sm" title="Unit price"/></td>
     <td class="px-2 py-2"><input type="number" data-pcost="${p.id}" value="${p.cost!=null?p.cost:''}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Cost"/></td>
-    <td class="px-2 py-2"><input type="number" data-stock="${p.id}" value="${p.stock||0}" class="w-16 border rounded-lg px-2 py-1 text-sm"/></td>
+    <td class="px-2 py-2"><input type="number" data-stock="${p.id}" step="any" min="0" value="${fmtStock(p.stock)}" class="w-16 border rounded-lg px-2 py-1 text-sm"/></td>
     <td class="px-2 py-2"><input data-pbatch="${p.id}" value="${esc(p.batch||'')}" class="w-20 border rounded-lg px-2 py-1 text-xs"/></td>
     <td class="px-2 py-2"><input type="date" data-pexpiry="${p.id}" value="${esc(p.expiry||'')}" class="border rounded-lg px-1 py-1 text-xs"/></td>
     <td class="px-2 py-2"><button type="button" data-del-prod="${p.id}" class="text-xs text-red-600">×</button></td>
@@ -3633,10 +3658,10 @@ function secProducts(b,a){
       <select name="unit" class="border rounded-xl px-3 py-2">
         ${UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('')}
       </select>
-      <input name="price" type="number" step="0.01" placeholder="Unit price (for 1 unit above)" class="border rounded-xl px-3 py-2"/>
-      <input name="packQty" type="number" step="0.01" min="0" placeholder="Pack size (e.g. 100 if 1 pc = 100m)" class="border rounded-xl px-3 py-2"/>
+      <input name="price" type="number" step="0.01" placeholder="Price of ONE whole item (unit above)" class="border rounded-xl px-3 py-2"/>
+      <input name="packQty" type="number" step="0.01" min="0" placeholder="Pack size: what 1 whole item contains (e.g. 100)" class="border rounded-xl px-3 py-2"/>
       <select name="packUnit" class="border rounded-xl px-3 py-2">
-        <option value="">Pack measure unit (optional)</option>
+        <option value="">Pack size unit (e.g. Metre)</option>
         ${UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('')}
       </select>
       <input name="cost" type="number" step="0.01" placeholder="Cost (per unit)" class="border rounded-xl px-3 py-2"/>
@@ -3662,7 +3687,7 @@ function secProducts(b,a){
   <input id="prodSearch" type="search" placeholder="Search name, SKU, barcode, category…" value="${esc(S.prodSearch||'')}" class="w-full border rounded-xl px-3 py-2 bg-white"/>
   <div class="bg-white rounded-2xl border overflow-x-auto"><table class="w-full text-sm min-w-[900px]">
     <thead class="bg-slate-50 text-left text-slate-500 text-xs"><tr>
-      <th class="px-2 py-3">Img</th><th class="px-2 py-3">Name</th><th class="px-2 py-3">SKU</th><th class="px-2 py-3">Barcode</th><th class="px-2 py-3">Sub</th><th class="px-2 py-3">Unit</th><th class="px-2 py-3">Pack</th><th class="px-2 py-3">Unit price</th><th class="px-2 py-3">Cost</th><th class="px-2 py-3">Stock</th><th class="px-2 py-3">Batch</th><th class="px-2 py-3">Expiry</th><th></th>
+      <th class="px-2 py-3">Img</th><th class="px-2 py-3">Name</th><th class="px-2 py-3">SKU</th><th class="px-2 py-3">Barcode</th><th class="px-2 py-3">Sub</th><th class="px-2 py-3" title="The whole item you stock and price, e.g. roll / pc / bag">Whole item unit</th><th class="px-2 py-3" title="What ONE whole item contains, e.g. 100 + m">Pack size · unit</th><th class="px-2 py-3" title="Price of ONE whole item">Price per whole item</th><th class="px-2 py-3">Cost</th><th class="px-2 py-3">Stock</th><th class="px-2 py-3">Batch</th><th class="px-2 py-3">Expiry</th><th></th>
     </tr></thead>
     <tbody>${rows||'<tr><td colspan="11" class="p-8 text-center text-slate-400">Empty catalog</td></tr>'}</tbody>
   </table></div>
@@ -4131,6 +4156,7 @@ function secTeam(b,a){
   return `<div class="space-y-4">
     <div class="bg-white rounded-2xl border p-4">
       <h3 class="font-semibold">Worker management</h3>
+      ${workerUsageHtml(b)}
       <p class="text-xs text-slate-500 mb-3">Assign login credentials and which menu sections each worker may open. They never access full owner settings.</p>
       <label class="flex items-center gap-2 text-sm mb-2 p-3 rounded-xl bg-slate-50 border">
         <input type="checkbox" id="requireWorkerSalePw" ${b.requireWorkerSalePassword?'checked':''}/>
@@ -4345,6 +4371,7 @@ function secSettings(b,a){
   </div>
   <div class="bg-white rounded-2xl border p-6">
     <h3 class="font-semibold mb-1">Workers</h3>
+    ${workerUsageHtml(b)}
     <p class="text-xs text-slate-500 mb-3">Team members who can help run the shop. Worker logins expand in a later V3 phase — records are stored on this business now.</p>
     <div class="space-y-2 mb-3" id="workersList">
       ${((b.workers)||[]).map((w,i)=>`<div class="flex justify-between items-center border rounded-xl px-3 py-2 text-sm">
@@ -4975,6 +5002,7 @@ function bind(){
       const fd=new FormData(addWorkerForm2);
       const b=biz();if(!b)return;
       if(!b.workers)b.workers=[];
+      if(!canAddWorker(b))return;
       const username=String(fd.get('username')||'').toLowerCase().trim();
       if(b.workers.some(w=>String(w.username||'').toLowerCase()===username)){alert('Username already used');return}
       const firstName=String(fd.get('firstName')||fd.get('name')||'').trim();
@@ -5261,7 +5289,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
     const password2=fd.get('password2')||'';
     if(codeStep && !codeStep.classList.contains('hidden') && code){
       if(password!==password2){err.textContent='Passwords do not match';err.classList.remove('hidden');return}
-      if(String(password).length<6){err.textContent='Password must be at least 6 characters';err.classList.remove('hidden');return}
+      if(String(password).length<8){err.textContent='Password must be at least 8 characters';err.classList.remove('hidden');return}
       if(SERVER_MODE){
         btn.disabled=true;btn.textContent='Updating…';
         api('/api/auth/reset',{method:'POST',body:{email:email,code:code,password:password}}).then(function(){
@@ -5287,8 +5315,10 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
           btn.textContent='Update password';
           ok.textContent=data.message||'Enter code and new password';ok.classList.remove('hidden');
         }else{
-          ok.textContent=data.message||'Check your email';ok.classList.remove('hidden');
-          btn.textContent='Get recovery code';
+          codeStep.classList.remove('hidden');
+          document.getElementById('codeDisplay').textContent='Ask your platform admin for the code';
+          btn.textContent='Update password';
+          ok.textContent=data.message||'Request sent. Get the recovery code from your admin.';ok.classList.remove('hidden');
         }
       }).catch(function(ex){err.textContent=ex.message||'Failed';err.classList.remove('hidden');btn.disabled=false;btn.textContent='Get recovery code'});
       return;
@@ -5366,7 +5396,7 @@ render();
     const u=productPriceUnit(p);const step=unitStep(u);
     const row=(b.cart||[]).find(c=>c.id===p.id);
     const next=normalizeQty(u,(row?Number(row.qty):0)+step);
-    if(next>(Number(p.stock)||0)){toast('Only '+p.stock+' '+unitSuffix(u)+' in stock');return}
+    if(stockNeeded(p,u,next)>(Number(p.stock)||0)+1e-9){toast('Only '+fmtStock(p.stock)+' '+unitSuffix(productPriceUnit(p))+' in stock');return}
     if(row){row.qty=next;row.unit=u;refreshCartLinePrice(row,p)}
     else{if(!b.cart)b.cart=[];b.cart.push(cartLineFromProduct(p,u,step))}
     saveBiz(b);render();toast('Added to cart')});
@@ -5376,7 +5406,7 @@ render();
     const u=row.unit||(p&&p.unit)||'pc';
     const step=unitStep(u);
     const next=normalizeQty(u,(Number(row.qty)||0)+step);
-    if(p&&next>(Number(p.stock)||0)){toast('Only '+p.stock+' '+unitSuffix(u)+' in stock');return}
+    if(p&&stockNeeded(p,u,next)>(Number(p.stock)||0)+1e-9){toast('Only '+fmtStock(p.stock)+' '+unitSuffix(productPriceUnit(p))+' in stock');return}
     row.qty=next;row.unit=u;refreshCartLinePrice(row,p||{});saveBiz(b);safeRender()});
   document.querySelectorAll('[data-dec]').forEach(btn=>btn.onclick=()=>{
     const b=biz();const id=btn.getAttribute('data-dec');const row=(b.cart||[]).find(c=>c.id===id);
@@ -5394,7 +5424,7 @@ render();
       const p=b.products.find(x=>x.id===row.id);
       const u=row.unit||(p&&p.unit)||'pc';
       let q=normalizeQty(u,inp.value);
-      if(p&&q>(Number(p.stock)||0)){q=normalizeQty(u,p.stock);toast('Max stock '+p.stock+' '+unitSuffix(u))}
+      if(p&&stockNeeded(p,u,q)>(Number(p.stock)||0)+1e-9){const f=sellFactor(p,u).factor||1;q=normalizeQty(u,Math.floor((Number(p.stock)||0)/f*100)/100);toast('Max stock '+fmtStock(p.stock)+' '+unitSuffix(productPriceUnit(p)))}
       if(q<=0){b.cart=b.cart.filter(c=>c.id!==row.id)}
       else{row.qty=q;row.unit=u;refreshCartLinePrice(row,p||{})}
       saveBiz(b);
@@ -5413,11 +5443,11 @@ render();
 
   function checkoutSale(){
     const b=biz();if(!b||!(b.cart||[]).length){alert('Cart empty');return null}
-    for(const c of b.cart){const p=b.products.find(x=>x.id===c.id);if(!p||(p.stock||0)<c.qty){alert('Not enough stock for '+(c.name||''));return null}}
+    for(const c of b.cart){const p=b.products.find(x=>x.id===c.id);if(!p||(p.stock||0)+1e-9<stockNeeded(p,c.unit,c.qty)){alert('Not enough stock for '+(c.name||''));return null}}
     let total=cartTotal();const subtotal=cartSubtotal();const discountPct=Number(S.cartDiscount||0);
     b.orderN=(b.orderN||0)+1;
     const items=b.cart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id,unit:c.unit||'pc',listPrice:c.listPrice,packQty:c.packQty,packUnit:c.packUnit}));
-    b.cart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,(p.stock||0)-c.qty)});
+    b.cart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,Math.round(((p.stock||0)-stockNeeded(p,c.unit,c.qty))*10000)/10000)});
     const fulfillEl=document.querySelector('input[name="fulfill"]:checked');
     const fulfillment=(fulfillEl&&fulfillEl.value)||'pickup';
     const delivAddr=(document.getElementById('delivAddr')||{}).value||'';
@@ -5512,6 +5542,11 @@ render();
     const b=biz();if(!b)return 0;
     document.querySelectorAll('[data-price]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-price'));if(p){p.price=Number(inp.value)||0;p.reviewed=true}});
     document.querySelectorAll('[data-pname]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-pname'));if(p)p.name=(inp.value||p.name).trim()});
+    document.querySelectorAll('[data-punit]').forEach(sel=>{const p=b.products.find(x=>x.id===sel.getAttribute('data-punit'));if(p&&sel.value&&sel.closest('#regProductForm')==null&&p.unit!==sel.value){p.unit=sel.value;p.reviewed=true}});
+    document.querySelectorAll('[data-ppack]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-ppack'));if(p){const q=Number(inp.value);const nq=q>0?q:1;if(p.packQty!==nq){p.packQty=nq;p.reviewed=true}}});
+    document.querySelectorAll('[data-ppacku]').forEach(sel=>{const p=b.products.find(x=>x.id===sel.getAttribute('data-ppacku'));if(p&&sel.value&&p.packUnit!==sel.value){p.packUnit=sel.value;p.reviewed=true}});
+    // an unset pack always follows the whole-item unit
+    b.products.forEach(p=>{if(!(Number(p.packQty)>1))p.packUnit=p.unit||'pc'});
     document.querySelectorAll('[data-psku]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-psku'));if(p)p.sku=(inp.value||'').trim()});
     document.querySelectorAll('[data-pbarcode]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-pbarcode'));if(p)p.barcode=(inp.value||'').trim()});
     document.querySelectorAll('[data-psub]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-psub'));if(p)p.sub=(inp.value||'Custom').trim()});
@@ -5523,7 +5558,7 @@ render();
     document.querySelectorAll('[data-stock]').forEach(inp=>{const p=b.products.find(x=>x.id===inp.getAttribute('data-stock'));if(p)p.stock=Math.max(0,Number(inp.value)||0)});
     saveBiz(b);return b.products.length;
   }
-  document.querySelectorAll('[data-price],[data-pname],[data-psub],[data-pimage],[data-stock]').forEach(inp=>{inp.onchange=()=>{saveProductFields();toast('Saved')}});
+  document.querySelectorAll('[data-price],[data-pname],[data-psku],[data-pbarcode],[data-psub],[data-pimage],[data-stock],[data-pcost],[data-pbatch],[data-pexpiry],[data-ppack],[data-ppacku]').forEach(inp=>{inp.onchange=()=>{saveProductFields();toast('Saved')}});
   const autoImgBtn=document.getElementById('autoImages');
   if(autoImgBtn)autoImgBtn.onclick=()=>{const b=biz();let n=0;(b.products||[]).forEach(p=>{p.image=autoImageFor(p.name,p.sourceCat,p.sub);n++});saveBiz(b);render();toast('Images set on '+n+' products')};
   const sap=document.getElementById('saveAllProd');
@@ -5644,7 +5679,7 @@ render();
     if(!confirm('Cancel this online order and restore stock?'))return;
     const b=biz();const o=b.orders.find(x=>x.id===btn.getAttribute('data-cancel-online'));
     if(!o||o.status==='CANCELLED')return;
-    (o.items||[]).forEach(it=>{const p=b.products.find(x=>x.id===it.product_id);if(p)p.stock=(p.stock||0)+(it.qty||0)});
+    (o.items||[]).forEach(it=>{const p=b.products.find(x=>x.id===it.product_id);if(p)p.stock=Math.round(((p.stock||0)+stockNeeded(p,it.unit||p.unit,it.qty||0))*10000)/10000});
     o.status='CANCELLED';saveBiz(b);render();toast('Order cancelled · stock restored')});
 
 
@@ -5662,6 +5697,12 @@ render();
     if(!phone)return;
     darajaStkPush({payments:b.payments||{},phone:phone,amount:p.price,accountRef:'PLAN',description:p.name+' plan'}).then(result=>{
       showStkModal({phone:phone,amount:p.price,orderRef:p.name,color:S.accent(),result:result,till:(b.payments&&(b.payments.till||b.payments.shortcode))||'',onDone:function(code){
+        if(SERVER_MODE){
+          api('/api/businesses/'+b.id+'/plan-request',{method:'POST',body:{plan:plan,receipt:code,phone:phone}}).then(function(r){
+            b.pendingPlan=r.pendingPlan;saveBiz(b);alert('Payment submitted ('+(code||'no code')+'). Your '+p.name+' plan is activated as soon as the admin confirms the payment.');render();
+          }).catch(function(e){alert(String(e.message||e))});
+          return;
+        }
         b.plan=plan;b.planPaidAt=today();b.planReceipt=code;saveBiz(b);toast(p.name+' plan activated');render();
       }});
     }).catch(e=>alert(String(e.message||e)));
@@ -6066,6 +6107,7 @@ render();
   if(addWorkerForm)addWorkerForm.onsubmit=e=>{
     e.preventDefault();const fd=new FormData(addWorkerForm);const b=biz();if(!b)return;
     if(!b.workers)b.workers=[];
+    if(!canAddWorker(b))return;
     b.workers.push({id:uid(),name:fd.get('name'),phone:fd.get('phone')||'',role:fd.get('role')||'cashier',createdAt:today()});
     saveBiz(b);toast('Worker added');render();
   };
@@ -6380,7 +6422,8 @@ render();
       const p=(b.products||[]).find(x=>x.id===row.id)||{};
       row.unit=sel.value||productPriceUnit(p);
       row.qty=normalizeQty(row.unit,row.qty);
-      refreshCartLinePrice(row,p);
+      if(p.id&&stockNeeded(p,row.unit,row.qty)>(Number(p.stock)||0)+1e-9){row.qty=normalizeQty(row.unit,Math.floor((Number(p.stock)||0)/(sellFactor(p,row.unit).factor||1)*100)/100);toast('Qty reduced to available stock')}
+      if(row.qty<=0)b.cart=b.cart.filter(c=>c.id!==row.id);else refreshCartLinePrice(row,p);
       saveBiz(b);toast('Unit '+unitLabel(row.unit)+' · '+kes(row.price)+' each');safeRender();
     };
   });
@@ -6390,6 +6433,8 @@ render();
       const o=(b.orders||[]).find(x=>x.id===oid);if(!o||!o.items||!o.items[idx])return;
       o.items[idx].unit=sel.value||'pc';
       o.items[idx].qty=normalizeQty(o.items[idx].unit,o.items[idx].qty);
+      const ip=(b.products||[]).find(x=>x.id===o.items[idx].product_id);
+      if(ip){const pr=calcCartPricing(ip,o.items[idx].unit,o.items[idx].qty);if(pr.ok){o.items[idx].price=pr.unitPrice;o.items[idx].listPrice=pr.listPrice}else toast('No pack size for that unit — price not converted')}
       o.total=money((o.items||[]).reduce((s,it)=>s+Number(it.price||0)*Number(it.qty||0),0));
       saveBiz(b);safeRender();
     };
@@ -6412,7 +6457,9 @@ render();
     if(sel._boundUnit)return;sel._boundUnit=true;
     sel.onchange=()=>{
       const b=biz();const p=(b.products||[]).find(x=>x.id===sel.getAttribute('data-punit'));
-      if(!p)return;p.unit=sel.value||'pc';saveBiz(b);toast(p.name+': '+unitLabel(p.unit));
+      if(!p)return;const old=productPriceUnit(p);p.unit=sel.value||'pc';p.reviewed=true;
+      if(!(Number(p.packQty)>1)||p.packUnit===old)p.packUnit=Number(p.packQty)>1?p.packUnit:p.unit;
+      saveBiz(b);toast(p.name+': '+unitLabel(p.unit));render();
     };
   });
   // Stock form: when product chosen, set unit dropdown
@@ -6460,17 +6507,18 @@ render();
     }
     render();toast(next?'Business suspended':'Business activated')});
   document.querySelectorAll('[data-reset-client]').forEach(btn=>btn.onclick=()=>{
-    if(!confirm('Reset this client password to 1234?'))return;
+    if(!confirm('Reset this client password? A temporary password will be shown once.'))return;
+    const tmpPw='Bh'+Math.random().toString(36).slice(2,8)+'9x';
     const id=btn.getAttribute('data-reset-client');
     const d=db();const u=d.users.find(x=>x.id===id);
     if(!u)return;
     if(SERVER_MODE){
-      api('/api/admin/users/reset-password',{method:'POST',body:{userId:id,password:'1234'}}).then(function(){
-        u.password='';save(d);toast('Password reset on server to 1234');
+      api('/api/admin/users/reset-password',{method:'POST',body:{userId:id,password:tmpPw}}).then(function(){
+        u.password='';save(d);alert('Temporary password (give it to the client, shown once):\n\n'+tmpPw);
       }).catch(function(err){alert(err.message||err);});
       return;
     }
-    u.password='1234';save(d);toast('Password reset to 1234')});
+    u.password=tmpPw;save(d);alert('Temporary password: '+tmpPw)});
   document.querySelectorAll('[data-delete-client]').forEach(btn=>btn.onclick=()=>{
     const id=btn.getAttribute('data-delete-client');
     const d=db();
