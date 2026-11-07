@@ -3961,6 +3961,7 @@ function secProducts(b,a){
     <td class="px-2 py-2"><input type="date" data-pexpiry="${p.id}" value="${esc(p.expiry||'')}" class="border rounded-lg px-1 py-1 text-xs"/></td>
     <td class="px-2 py-2"><button type="button" data-del-prod="${p.id}" class="text-xs text-red-600">×</button></td>
   </tr>`).join('');
+  const bulkCatKeys=[...new Set([...(b.categories||[]).filter(k=>CATALOG[k]&&CATALOG[k].groups),...(b.products||[]).map(p=>p.sourceCat).filter(k=>k&&CATALOG[k]),'custom'])];
   return `<div class="space-y-4">
   <div class="bg-white rounded-2xl border p-4">
     <h3 class="font-semibold mb-2">Register product</h3>
@@ -4000,8 +4001,9 @@ function secProducts(b,a){
       <form id="bulkForm" class="mt-3 space-y-3 text-sm">
         <div class="grid sm:grid-cols-4 gap-2">
           <input name="name" required placeholder="Product name * (e.g. Kienyeji layers)" class="border rounded-xl px-3 py-2 sm:col-span-2"/>
-          <input name="category" placeholder="Category" list="catList" class="border rounded-xl px-3 py-2"/>
           <select name="unit" class="border rounded-xl px-3 py-2">${UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('')}</select>
+          <select name="sourceCat" id="bulkCat" class="border rounded-xl px-3 py-2">${bulkCatKeys.map(k=>`<option value="${k}">${esc(k==='custom'?'Other / custom':(CATALOG[k]?CATALOG[k].label:k))}</option>`).join('')}</select>
+          <div class="sm:col-span-2"><input name="sub" id="bulkSub" list="bulkSubList" placeholder="Subcategory (pick or type a new one)" class="border rounded-xl px-3 py-2 w-full"/><datalist id="bulkSubList"></datalist></div>
         </div>
         <div class="overflow-x-auto"><table class="w-full text-xs min-w-[760px]">
           <thead><tr class="text-left text-slate-500"><th class="px-1">Company / brand</th><th class="px-1">Pack size</th><th class="px-1">Pack unit</th><th class="px-1">Price of 1 item</th><th class="px-1">Cost</th><th class="px-1">Opening stock</th><th class="px-1">Reorder</th><th></th></tr></thead>
@@ -6865,6 +6867,15 @@ render();
       rowsEl.appendChild(tr);
     };
     addRow();addRow();
+    const catSel=document.getElementById('bulkCat'),subList=document.getElementById('bulkSubList'),subIn=document.getElementById('bulkSub');
+    const fillSubs=()=>{
+      const k=catSel.value,b=biz();
+      const subs=new Set(CATALOG[k]&&CATALOG[k].groups?Object.keys(CATALOG[k].groups):[]);
+      (b.products||[]).forEach(p=>{if((p.sourceCat||'custom')===k&&p.sub)subs.add(p.sub)});
+      subList.innerHTML=[...subs].map(x=>`<option value="${esc(x)}">`).join('');
+      subIn.value='';
+    };
+    catSel.onchange=fillSubs;fillSubs();
     document.getElementById('bulkAddRow').onclick=()=>addRow();
     document.getElementById('bulkDupRow').onclick=()=>addRow(rowsEl.lastElementChild);
     bulkForm.onsubmit=e=>{
@@ -6873,7 +6884,9 @@ render();
       const b=biz();if(!b.products)b.products=[];
       const base=String(fd.get('name')||'').trim();if(!base)return;
       const unit=String(fd.get('unit')||'pc')||'pc';
-      const category=String(fd.get('category')||'').trim()||(b.categories&&b.categories[0])||'General';
+      const sourceCat=String(fd.get('sourceCat')||'custom');
+      const category=sourceCat==='custom'?((b.categories&&b.categories[0])||'General'):(CATALOG[sourceCat]?CATALOG[sourceCat].label:sourceCat);
+      const subName=String(fd.get('sub')||'').trim();
       const unitLabel=id=>{const u=UNIT_OPTIONS.find(x=>x.id===id);return u?(u.suffix||u.id):id};
       const made=[],seen={};
       for(const tr of rowsEl.children){
@@ -6887,7 +6900,7 @@ render();
         if(seen[key]||b.products.some(x=>String(x.name||'').toLowerCase()===key)){alert('"'+name+'" already exists or is repeated. Change the company or pack size on that row.');return}
         seen[key]=1;
         const stock=Number(g('stock'))||0;
-        made.push({id:uid(),name,sku:genSKU(b,name),barcode:genBarcode(),unit,packQty,packUnit,brand,category,sub:brand||'Custom',
+        made.push({id:uid(),name,sku:genSKU(b,name),barcode:genBarcode(),unit,packQty,packUnit,brand,category,sourceCat,sub:subName||'Custom',
           price:Number(g('price'))||0,cost:g('cost')===''?null:Number(g('cost')),stock:normalizeQty(unit,stock),reorder:Number(g('reorder'))||5,
           batch:'',expiry:'',serial:'',image:'',active:true,_open:stock});
       }
