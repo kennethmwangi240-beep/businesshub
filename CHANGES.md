@@ -12,6 +12,11 @@
 - FIXED: wallet/trend chart buckets used UTC dates; in Kenya (UTC+3) the monthly chart ended last month and the
   daily chart broke 00:00-03:00. Now local dates.
 - Register password hint said "Min. 4"; the server requires 8.
+- Offline: account creation and password reset now save the offline login (before, only typing the password on the
+  login form did), and login falls back to the on-device login when the server is unreachable but the browser says
+  "online". Clear message when an account was never logged in on that device.
+- Offline shell: service worker (v7) no longer ignores failed downloads - it re-fetches any missing file (page, styling
+  engine, charts) on activate, when the app comes online and on request, so an offline refresh can't end up unstyled.
 - tests/api-smoke.js: 66 server checks (run against a fresh DB: BASE_URL / ADMIN_EMAIL / ADMIN_PASSWORD env vars).
 
 # Fixes in this build
