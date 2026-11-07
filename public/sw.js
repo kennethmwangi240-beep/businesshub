@@ -1,5 +1,5 @@
 /* MyBusinessHub offline shell — local assets first, API never cached */
-const CACHE = 'bh-offline-v6';
+const CACHE = 'bh-offline-v7';
 const PRECACHE = [
   '/',
   '/index.html',
@@ -24,22 +24,34 @@ const PRECACHE = [
   '/favicon-48.png'
 ];
 
+/* Download anything in PRECACHE that is not cached yet. Never fails the install: a missing file is retried later
+   (on activate, whenever the page comes online, and after any message from the page), so the offline shell
+   (page + styling engine + charts) is completed even if the first download was interrupted. */
+async function fillCache() {
+  const c = await caches.open(CACHE);
+  for (const url of PRECACHE) {
+    try {
+      if (await c.match(url)) continue;
+      const res = await fetch(url, { cache: 'reload' });
+      if (res && res.ok) await c.put(url, res);
+    } catch (err) { /* offline or optional asset: retry next time */ }
+  }
+}
+
 self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE).then(async (c) => {
-      for (const url of PRECACHE) {
-        try { await c.add(url); } catch (err) { /* optional asset */ }
-      }
-    }).then(() => self.skipWaiting())
-  );
+  e.waitUntil(fillCache().then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((ks) =>
       Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    ).then(() => self.clients.claim()).then(() => fillCache())
   );
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data === 'ensure-cache') e.waitUntil(fillCache());
 });
 
 self.addEventListener('fetch', (e) => {

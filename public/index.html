@@ -1854,7 +1854,7 @@ function tryOfflineOwnerLogin(email,password,netErr){
   // 2) Offline hash from a previous online login on this device
   verifyOfflineLogin(em,password).then(ok=>{
     if(!ok){
-      showErr((netErr&&netErr.message)?(netErr.message+' — offline login failed. Log in once online on this device first.'):('Invalid email or password. For offline login, sign in once while online on this device first.'));
+      showErr((netErr&&netErr.message&&!/fetch|network|failed to/i.test(netErr.message))?netErr.message:'Could not log in offline. Check the email and password. Offline login only works for accounts you have already logged in to (with internet) on this device — connect once and log in, then it works offline.');
       return;
     }
     u=findLocalUserByEmail(em);
@@ -5555,7 +5555,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
     }
 
     const u=d.users.find(x=>x.email===email&&x.password&&x.password===fd.get('password'));
-    if(!u){document.getElementById('loginErr').textContent='Invalid email or password';document.getElementById('loginErr').classList.remove('hidden');return}
+    if(!u){tryOfflineOwnerLogin(email,fd.get('password'),null);return}
     if(u.role==='admin'||u.email===(d.adminEmail||'admin@businesshub.ke')){
       document.getElementById('loginErr').textContent='This is a platform admin account. Use Admin login.';
       document.getElementById('loginErr').classList.remove('hidden');
@@ -5644,6 +5644,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
     if(SERVER_MODE){
       api('/api/register',{method:'POST',body:{email:email,password:fd.get('password'),name:fd.get('name')||''}}).then(function(data){
         API_TOKEN=data.token; localStorage.setItem('bh_api_token',API_TOKEN);
+        rememberOfflineLogin(email,fd.get('password'));
         const d=db();
         d.users.push({id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:'owner'});
         d.session=data.user.id;save(d);
@@ -5681,7 +5682,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
       if(String(password).length<8){err.textContent='Password must be at least 8 characters';err.classList.remove('hidden');return}
       if(SERVER_MODE){
         btn.disabled=true;btn.textContent='Updating…';
-        api('/api/auth/reset',{method:'POST',body:{email:email,code:code,password:password}}).then(function(){
+        api('/api/auth/reset',{method:'POST',body:{email:email,code:code,password:password}}).then(function(){rememberOfflineLogin(email,password);
           ok.textContent='Password updated. You can log in.';ok.classList.remove('hidden');
           setTimeout(function(){S.view='login';render()},1000);
         }).catch(function(ex){err.textContent=ex.message||'Reset failed';err.classList.remove('hidden');btn.disabled=false;btn.textContent='Update password'});
@@ -7069,6 +7070,8 @@ setInterval(function(){if(document.visibilityState==='visible')pullOnlineOrders(
   if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1')){
     var had=!!navigator.serviceWorker.controller;
     window.addEventListener('load',function(){
+      var heal=function(){try{navigator.serviceWorker.ready.then(function(r){if(navigator.onLine&&r.active)r.active.postMessage('ensure-cache')})}catch(e){}};
+      window.addEventListener('online',heal);setTimeout(heal,4000);
       navigator.serviceWorker.register('/sw.js',{scope:'/'}).then(function(reg){
         reg.addEventListener('updatefound',function(){var nw=reg.installing;if(!nw)return;
           nw.addEventListener('statechange',function(){if(nw.state==='activated'&&had)showUpd()})});
