@@ -65,5 +65,5 @@
 - The super-admin sidebar now sits beside the content on desktop (stacks only on phones). The CSS fallback utilities in `public/index.html` were marked `!important`, which overrode Tailwind's responsive classes and the admin dark theme. Removed `!important`; dark mode now shows dark cards with light text.
 
 ### Bulk product variants
-- Products page: new "Add many variants at once" panel. Enter the product name once, then one row per company / pack size (price, cost, opening stock, reorder). Each row becomes its own product named "Name - Company - 20 kg", with its own SKU, barcode, price and stock. Duplicate names are refused.
+- Products page: new "Add many variants at once" panel (choose the business category and a subcategory from that category, or type a new subcategory). Enter the product name once, then one row per company / pack size (price, cost, opening stock, reorder). Each row becomes its own product named "Name - Company - 20 kg", with its own SKU, barcode, price and stock. Duplicate names are refused.
 - Fixed: barcodes generated in the same millisecond could be identical (also affected "Generate missing barcodes"); they are now always unique.
