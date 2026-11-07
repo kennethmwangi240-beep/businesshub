@@ -60,3 +60,6 @@
   Both add-worker forms are blocked at the limit with an upgrade message, and both worker sections show "Workers: n / limit".
   The server also enforces it on save (existing workers are kept, extra new ones dropped), so it can't be bypassed.
   Downgrading never deletes existing workers; it only blocks adding more.
+
+### Admin dashboard layout and dark theme
+- The super-admin sidebar now sits beside the content on desktop (stacks only on phones). The CSS fallback utilities in `public/index.html` were marked `!important`, which overrode Tailwind's responsive classes and the admin dark theme. Removed `!important`; dark mode now shows dark cards with light text.
