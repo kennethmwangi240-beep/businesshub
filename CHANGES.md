@@ -1,3 +1,19 @@
+# Fixes in the latest verification pass
+- Customers can now order from their OWN phone: the shop list / shop page / checkout use the server's public API
+  (/api/public/shops...). Before, the store only listed shops saved in the same browser, so anyone else saw "No shops".
+  Server prices the order, checks + deducts stock, and the owner's app picks new orders up within ~20 s (toast + list).
+  Local/no-server mode still works as before.
+- Server: public order lines are whitelisted, orders carry orderStatus NEW / paymentStatus PENDING (shown under NEW),
+  public products include sourceCat so shops show one section per business category.
+- FIXED: recording a supplier purchase crashed ("qty is not defined") and saved nothing - stock + expense now update.
+- FIXED: refunding a POS sale restored raw quantity (refund of 10 m of a 100 m roll added 10 rolls). Now unit-aware.
+- FIXED: a local online order deducted stock twice and skipped order numbers.
+- FIXED: cancelling an online order from the status dropdown did not put stock back.
+- FIXED: wallet/trend chart buckets used UTC dates; in Kenya (UTC+3) the monthly chart ended last month and the
+  daily chart broke 00:00-03:00. Now local dates.
+- Register password hint said "Min. 4"; the server requires 8.
+- tests/api-smoke.js: 66 server checks (run against a fresh DB: BASE_URL / ADMIN_EMAIL / ADMIN_PASSWORD env vars).
+
 # Fixes in this build
 ## Pricing / products (index.html)
 - ONE pricing engine (calcCartPricing). Cart subtotal/total/checkout now use it (they used a second formula reading

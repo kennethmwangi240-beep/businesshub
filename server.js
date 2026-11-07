@@ -111,7 +111,7 @@ const DEFAULT_PLATFORM = {
 };
 // Fields a business owner may never set themselves
 const OWNER_LOCKED = ['id', 'ownerId', 'suspended', 'trialEndsAt', 'trialExtended', 'plan', 'planPaidAt', 'planReceipt', 'pendingPlan', 'createdAt'];
-const PUBLIC_PRODUCT_FIELDS = ['id', 'name', 'sub', 'category', 'unit', 'packQty', 'packUnit', 'price', 'stock', 'image', 'sku', 'barcode'];
+const PUBLIC_PRODUCT_FIELDS = ['id', 'name', 'sub', 'category', 'sourceCat', 'unit', 'packQty', 'packUnit', 'price', 'stock', 'image', 'sku', 'barcode'];
 const publicProduct = (p) => { const o = {}; PUBLIC_PRODUCT_FIELDS.forEach((k) => { if (p[k] !== undefined) o[k] = p[k]; }); return o; };
 const HEAVY = ['orders', 'customers', 'quotations', 'expenses', 'purchases', 'cart'];
 
@@ -814,7 +814,7 @@ async function handleApi(req, res, pathname) {
         const price = Number(p.price ?? p.sellPrice ?? it.price);
         if (!Number.isFinite(price) || price < 0) return { status: 400, body: { error: 'Invalid price' } };
         total += price * qty;
-        lines.push({ ...it, qty, price, p });
+        lines.push({ name: str(p.name), qty, price, product_id: p.id, unit: p.unit || 'pc', p });
       }
       lines.forEach((l) => { l.p.stock = Math.max(0, (l.p.stock || 0) - l.qty); });
       b.onlineN = (b.onlineN || 0) + 1;
@@ -825,7 +825,10 @@ async function handleApi(req, res, pathname) {
         status: 'PENDING', // payment is confirmed by the shop owner, never by the customer
         payMethod: str(body.payMethod || 'mpesa', 30), phone: str(body.phone, 40), customerName: str(body.customerName),
         fulfillment: body.fulfillment === 'delivery' ? 'delivery' : 'pickup', deliveryAddress: str(body.deliveryAddress, 300),
-        receipt: str(body.receipt || 'PENDING-PAY', 60), source: 'online'
+        receipt: str(body.receipt || 'PENDING-PAY', 60), source: 'online',
+        // same shape the owner's "Online orders" screen uses for orders placed from the shop page
+        method: str(body.payMethod || 'mpesa', 30), orderStatus: 'NEW', paymentStatus: 'PENDING',
+        deliveryFee: body.fulfillment === 'delivery' ? (Number(b.deliveryFee) || 0) : 0
       };
       b.orders = [...(b.orders || []), order];
       return { save: b, status: 201, body: { order } };
