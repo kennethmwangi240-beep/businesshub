@@ -1598,6 +1598,20 @@ function sellUnitOptions(p){
   return out.length?out:UNIT_OPTIONS.filter(u=>u.id===base);
 }
 function fmtStock(n){return String(Math.round((Number(n)||0)*100)/100)}
+/** Human stock label. Stock is kept as a number of whole items (19.95 rolls); for packs holding more than one
+    smaller unit it is shown as full packs + the one opened pack, e.g. "19 full + 1 open (95 m)". */
+function stockLabel(p,short){
+  p=p||{};
+  const st=Math.round((Number(p.stock)||0)*10000)/10000;
+  const q=productPackQty(p),u=productPackUnit(p);
+  if(!(q>1)||Math.abs(st-Math.round(st))<1e-9)return fmtStock(st);
+  let whole=Math.floor(st+1e-9);
+  let rem=Math.round((st-whole)*q*100)/100;
+  if(rem>=q){whole+=1;rem=0}
+  if(rem<=0)return String(whole);
+  const us=unitSuffix(u);
+  return short?(whole+' full + '+rem+us):(whole+' full + 1 open ('+rem+' '+us+')');
+}
 function cartLineFromProduct(p, sellUnit, qty){
   const sell=sellUnit||productPriceUnit(p);
   const pr=calcCartPricing(p,sell,qty!=null?qty:unitStep(sell));
@@ -1614,16 +1628,23 @@ function cartLineFromProduct(p, sellUnit, qty){
     lineTotal:pr.lineTotal
   };
 }
+/** Cashier-typed selling price (per selected unit) that replaces the registered price for this cart line; null = none */
+function customPriceOf(row){
+  if(!row||row.customPrice==null||row.customPrice==='')return null;
+  const v=Number(row.customPrice);
+  return isFinite(v)&&v>=0?v:null;
+}
 function refreshCartLinePrice(row,p){
   if(!row)return;
   p=p||{};
   const pr=calcCartPricing(p,row.unit||p.unit||'pc',row.qty);
-  row.price=pr.unitPrice;
+  const cp=customPriceOf(row);
+  row.price=cp!=null?cp:pr.unitPrice;
   row.listPrice=pr.listPrice;
   row.priceUnit=pr.priceUnit;
   row.packQty=pr.packQ;
   row.packUnit=pr.packU;
-  row.lineTotal=pr.lineTotal;
+  row.lineTotal=cp!=null?money(cp*pr.qty):pr.lineTotal;
   row.qty=pr.qty;
 }
 
@@ -1699,11 +1720,13 @@ function unitPriceIn(p, cartUnit){
   return calcCartPricing(p,cartUnit||productPriceUnit(p),1).unitPrice;
 }
 function cartLineUnitPrice(c,p){
+  const cp=customPriceOf(c);if(cp!=null)return cp;
   const prod=p||((biz()||{}).products||[]).find(x=>x.id===c.id);
   if(prod)return unitPriceIn(prod,c.unit||prod.unit||'pc');
   return Number(c.price)||0;
 }
 function cartLineTotal(c,p){
+  const cp=customPriceOf(c);if(cp!=null)return money(cp*(Number(c.qty)||0));
   const prod=p||((biz()||{}).products||[]).find(x=>x.id===c.id);
   if(prod)return calcCartPricing(prod,c.unit||prod.unit||'pc',c.qty).lineTotal;
   return money((Number(c.price)||0)*(Number(c.qty)||0));
@@ -2502,7 +2525,9 @@ function normalizeProductUnits(b){
 
 function cartCount(){const b=biz();return ((b&&b.cart)||[]).reduce((s,c)=>s+(c.qty||0),0)}
 function cartSubtotal(){const b=biz();let t=0;((b&&b.cart)||[]).forEach(c=>{const p=(b.products||[]).find(x=>x.id===c.id);t+=cartLineTotal(c,p)});return money(t)}
-function cartTotal(){const sub=cartSubtotal();const disc=Math.min(100,Math.max(0,Number(S.cartDiscount||0)));return money(sub*(1-disc/100))}
+/** Discount is a shilling amount taken off the cart subtotal (never more than the subtotal) */
+function cartDiscountAmt(){const sub=cartSubtotal();return money(Math.min(sub,Math.max(0,Number(S.cartDiscount||0))))}
+function cartTotal(){return money(cartSubtotal()-cartDiscountAmt())}
 function go(v){S.view=v;S.viewInvoiceId=null;render()}
 
 function workerSession(){
@@ -3404,7 +3429,7 @@ function secDash(b,a){
       </div>
       <div class="rounded-2xl border p-4 bg-white">
         <h3 class="font-semibold mb-2">Low stock & expiry</h3>
-        ${lowStock.length?lowStock.map(p=>`<p class="text-sm text-amber-800">⚠ ${esc(p.name)} · ${p.stock} left</p>`).join(''):'<p class="text-sm text-slate-400">No low stock</p>'}
+        ${lowStock.length?lowStock.map(p=>`<p class="text-sm text-amber-800">⚠ ${esc(p.name)} · ${stockLabel(p,true)} left</p>`).join(''):'<p class="text-sm text-slate-400">No low stock</p>'}
         ${expiryAlerts.length?'<hr class="my-2"/>'+expiryAlerts.map(p=>`<p class="text-sm text-red-700">📅 ${esc(p.name)} · exp ${esc(p.expiry)}</p>`).join(''):''}
       </div>
     </div>
@@ -3504,7 +3529,7 @@ function secShop(b,a){
         ${productThumb(p,64)}
         <div class="min-w-0 flex-1">
           <div class="flex justify-between gap-2"><p class="font-semibold text-sm leading-snug">${esc(p.name)}</p>
-          <span class="text-xs px-2 py-0.5 rounded-full shrink-0 h-fit ${st<=0?'bg-red-100 text-red-700':st<=5?'bg-amber-100 text-amber-800':'bg-emerald-50 text-emerald-700'}">${st<=0?'Out':st+' left'}</span></div>
+          <span class="text-xs px-2 py-0.5 rounded-full shrink-0 h-fit ${st<=0?'bg-red-100 text-red-700':st<=5?'bg-amber-100 text-amber-800':'bg-emerald-50 text-emerald-700'}">${st<=0?'Out':stockLabel(p,true)+' left'}</span></div>
           <p class="text-xs text-slate-400 mt-1">${esc(pricePerLabel(p.unit||'pc'))} · ${esc(p.sub||'')}</p>
           <p class="font-bold mt-1" style="color:${bc}">${kes(p.price)}${inC?` ×${inC}`:''}</p>
         </div>
@@ -3525,7 +3550,8 @@ function secShop(b,a){
       return `<div class="flex flex-col gap-2 py-3 border-b border-slate-100">
       <div class="min-w-0"><p class="text-sm font-medium truncate">${esc(c.name)}</p>
         <p class="text-xs text-slate-500">Registered: ${listHint}</p>
-        <p class="text-xs text-teal-800 font-medium">Selling at ${kes(c.price)} ${pricePerLabel(c.unit||'pc')} · line total ${kes(c.lineTotal!=null?c.lineTotal:(c.price||0)*(c.qty||0))}</p>${unitWarn}
+        <p class="text-xs text-teal-800 font-medium">Selling at ${kes(c.price)} ${pricePerLabel(c.unit||'pc')}${customPriceOf(c)!=null?' <span class="text-amber-700">(price changed)</span>':''} · line total ${kes(c.lineTotal!=null?c.lineTotal:(c.price||0)*(c.qty||0))}</p>${unitWarn}
+        ${p.id?`<p class="text-xs text-slate-500">In stock: ${esc(stockLabel(p))}${stockNeeded(p,c.unit||'pc',c.qty)>0?` → after this sale: <b>${esc(stockLabel(Object.assign({},p,{stock:Math.max(0,(Number(p.stock)||0)-stockNeeded(p,c.unit||'pc',c.qty))})))}</b>`:''}</p>`:''}
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <label class="text-xs text-slate-500 shrink-0">Unit</label>
@@ -3536,6 +3562,12 @@ function secShop(b,a){
         <button type="button" data-dec="${c.id}" class="w-8 h-8 rounded-lg border">−</button>
         <input type="number" data-cqty="${c.id}" value="${c.qty}" step="${unitStep(c.unit||'pc')}" min="0" class="w-16 text-center text-sm font-semibold border rounded-lg py-1.5"/>
         <button type="button" data-inc="${c.id}" class="w-8 h-8 rounded-lg border">+</button>
+        <button type="button" data-cdel="${c.id}" class="ml-auto px-2 h-8 rounded-lg border border-red-200 text-red-600 text-xs font-semibold" title="Remove this item from the cart">✕ Remove</button>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="text-xs text-slate-500 shrink-0">Sell price (KES ${esc(pricePerLabel(c.unit||'pc'))})</label>
+        <input type="number" data-cprice="${c.id}" min="0" step="any" value="${c.price}" class="w-28 text-sm font-semibold border rounded-lg px-2 py-1.5" title="Change to sell at a different price than registered"/>
+        ${customPriceOf(c)!=null?`<button type="button" data-cprice-reset="${c.id}" class="text-xs text-teal-700 underline">Use registered price</button>`:''}
       </div></div>`}).join('');
   const payOpts=PAY_METHODS.map(m=>`<button type="button" data-pay="${m}" class="pay-opt ${S.payMethod===m?'on':''}">${m}</button>`).join('');
   const shiftOpen=currentShift(b);
@@ -3555,20 +3587,20 @@ function secShop(b,a){
     <h3 class="font-bold text-lg mb-2">Cart ${cartCount()?`(${cartCount()})`:''}</h3>
     ${cartRows}
     ${cart.length?`<div class="mt-3 pt-3 border-t space-y-3">
-      <p class="text-lg font-bold">Total ${kes(cartTotal())}</p>
+      <p class="text-lg font-bold">Total <span id="cartTotalTop">${kes(cartTotal())}</span></p>
       <div>
         <label class="block text-sm font-medium mb-2">Payment method</label>
-        <div class="grid grid-cols-2 gap-2">${payOpts}
+        <div class="grid grid-cols-2 gap-2">${payOpts}</div>
       ${shiftWarn||''}
       <div class="mt-2 flex items-center gap-2 text-sm">
-        <label class="text-xs text-slate-500">Discount %</label>
-        <input id="cartDiscount" type="number" min="0" max="100" step="0.5" value="${disc}" class="w-20 border rounded-lg px-2 py-1"/>
-        <span class="text-xs text-slate-500">Subtotal ${kes(sub)} → <b>${kes(tot)}</b></span>
+        <label class="text-xs text-slate-500">Discount (KES)</label>
+        <input id="cartDiscount" type="number" min="0" max="${sub}" step="any" value="${disc||''}" placeholder="0" class="w-24 border rounded-lg px-2 py-1"/>
+        <span class="text-xs text-slate-500" id="discSummary">Subtotal ${kes(sub)} → <b>${kes(tot)}</b></span>
       </div>
       <div class="mt-2 p-3 rounded-xl border bg-slate-50">
         <label class="text-xs font-medium text-slate-600">Barcode scan</label>
         <div class="flex gap-2 mt-1">
-          <input id="barcodeScan" class="flex-1 border rounded-xl px-3 py-2 text-sm" placeholder="USB scanner or type code → Enter" autocomplete="off" inputmode="none"/>
+          <input id="barcodeScan" class="flex-1 min-w-0 border rounded-xl px-3 py-2 text-sm" placeholder="USB scanner or type code → Enter" autocomplete="off" inputmode="none"/>
           <button type="button" id="cameraScanBtn" class="px-3 py-2 rounded-xl border-2 border-teal-600 bg-teal-50 text-teal-900 text-sm font-semibold whitespace-nowrap" title="Open camera">📷 Scan</button>
         </div>
         <label class="flex items-center gap-2 text-xs mt-2 text-slate-500">
@@ -3580,7 +3612,7 @@ function secShop(b,a){
           <option value="58" ${S.receiptWidth==='58'?'selected':''}>58 mm</option>
           <option value="80" ${S.receiptWidth!=='58'?'selected':''}>80 mm</option>
         </select>
-      </div></div>
+      </div>
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Fulfillment</label>
@@ -3827,7 +3859,7 @@ function secStock(b,a){
         <td class="px-3 py-2 text-xs"><select data-punit="${p.id}" class="border rounded px-1 py-0.5 text-xs max-w-[80px]">
           ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${(p.unit||'pc')===u.id?'selected':''}>${esc(u.suffix)}</option>`).join('')}
         </select></td>
-        <td class="px-3 py-2 font-semibold">${fmtStock(p.stock)}</td>
+        <td class="px-3 py-2 font-semibold">${stockLabel(p)}</td>
         <td class="px-3 py-2 text-xs">${esc(p.batch||'—')}</td>
         <td class="px-3 py-2 text-xs">${esc(p.expiry||'—')}</td>
         <td class="px-3 py-2 text-xs">${p.reorder||5}</td>
@@ -3920,7 +3952,7 @@ function secProducts(b,a){
     </select></td>
     <td class="px-2 py-2"><input type="number" data-price="${p.id}" step="any" min="0" value="${p.price}" class="w-20 border rounded-lg px-2 py-1 text-sm" title="Unit price"/></td>
     <td class="px-2 py-2"><input type="number" data-pcost="${p.id}" value="${p.cost!=null?p.cost:''}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Cost"/></td>
-    <td class="px-2 py-2"><input type="number" data-stock="${p.id}" step="any" min="0" value="${fmtStock(p.stock)}" class="w-16 border rounded-lg px-2 py-1 text-sm"/></td>
+    <td class="px-2 py-2"><input type="number" data-stock="${p.id}" step="any" min="0" value="${fmtStock(p.stock)}" class="w-16 border rounded-lg px-2 py-1 text-sm"/>${stockLabel(p)!==fmtStock(p.stock)?`<div class="text-[10px] text-slate-500 mt-0.5">${esc(stockLabel(p))}</div>`:''}</td>
     <td class="px-2 py-2"><input data-pbatch="${p.id}" value="${esc(p.batch||'')}" class="w-20 border rounded-lg px-2 py-1 text-xs"/></td>
     <td class="px-2 py-2"><input type="date" data-pexpiry="${p.id}" value="${esc(p.expiry||'')}" class="border rounded-lg px-1 py-1 text-xs"/></td>
     <td class="px-2 py-2"><button type="button" data-del-prod="${p.id}" class="text-xs text-red-600">×</button></td>
@@ -4083,7 +4115,7 @@ function secInvoiceDetail(b,a){
       ${(o.items||[]).map(it=>`<div class="flex justify-between gap-2"><span>${esc(it.name)} ×${fmtQty(it.unit||'pc',it.qty)}</span><span>${kes(it.price*it.qty)}</span></div>`).join('')}
     </div>
     <div class="border-t pt-2 text-sm">
-      ${o.discountPct?`<div class="flex justify-between"><span>Discount</span><span>${o.discountPct}%</span></div>`:''}
+      ${o.discountAmt?`<div class="flex justify-between"><span>Discount</span><span>- ${kes(o.discountAmt)}</span></div>`:(o.discountPct?`<div class="flex justify-between"><span>Discount</span><span>${o.discountPct}%</span></div>`:'')}
       <div class="flex justify-between font-bold text-base"><span>TOTAL</span><span>${kes(o.total)}</span></div>
       <p class="text-xs mt-1">Paid: ${esc(o.payMethod||o.method||'—')} ${o.receipt?'· '+esc(o.receipt):''}</p>
       ${o.servedBy?`<p class="text-xs font-semibold mt-2">SERVED BY: ${esc(o.servedBy.name)}</p>`:''}
@@ -5405,7 +5437,16 @@ function bind(){
   }
 
   const cartDiscount=document.getElementById('cartDiscount');
-  if(cartDiscount)cartDiscount.onchange=cartDiscount.oninput=()=>{S.cartDiscount=Number(cartDiscount.value)||0;render()};
+  if(cartDiscount){
+    cartDiscount.oninput=()=>{
+      S.cartDiscount=Math.max(0,Number(cartDiscount.value)||0);
+      const t=kes(cartTotal());
+      const a=document.getElementById('cartTotalTop');if(a)a.textContent=t;
+      const c=document.getElementById('cashDue');if(c)c.textContent=t;
+      const d=document.getElementById('discSummary');if(d)d.innerHTML='Subtotal '+kes(cartSubtotal())+' → <b>'+t+'</b>';
+    };
+    cartDiscount.onchange=()=>{S.cartDiscount=cartDiscountAmt();safeRender()};
+  }
   const receiptWidth=document.getElementById('receiptWidth');
   if(receiptWidth)receiptWidth.onchange=()=>{S.receiptWidth=receiptWidth.value;render()};
   const barcodeScan=document.getElementById('barcodeScan');
@@ -5786,7 +5827,7 @@ render();
     const u=productPriceUnit(p);const step=unitStep(u);
     const row=(b.cart||[]).find(c=>c.id===p.id);
     const next=normalizeQty(u,(row?Number(row.qty):0)+step);
-    if(stockNeeded(p,u,next)>(Number(p.stock)||0)+1e-9){toast('Only '+fmtStock(p.stock)+' '+unitSuffix(productPriceUnit(p))+' in stock');return}
+    if(stockNeeded(p,u,next)>(Number(p.stock)||0)+1e-9){toast('Only '+stockLabel(p)+' in stock');return}
     if(row){row.qty=next;row.unit=u;refreshCartLinePrice(row,p)}
     else{if(!b.cart)b.cart=[];b.cart.push(cartLineFromProduct(p,u,step))}
     saveBiz(b);render();toast('Added to cart')});
@@ -5796,7 +5837,7 @@ render();
     const u=row.unit||(p&&p.unit)||'pc';
     const step=unitStep(u);
     const next=normalizeQty(u,(Number(row.qty)||0)+step);
-    if(p&&stockNeeded(p,u,next)>(Number(p.stock)||0)+1e-9){toast('Only '+fmtStock(p.stock)+' '+unitSuffix(productPriceUnit(p))+' in stock');return}
+    if(p&&stockNeeded(p,u,next)>(Number(p.stock)||0)+1e-9){toast('Only '+stockLabel(p)+' in stock');return}
     row.qty=next;row.unit=u;refreshCartLinePrice(row,p||{});saveBiz(b);safeRender()});
   document.querySelectorAll('[data-dec]').forEach(btn=>btn.onclick=()=>{
     const b=biz();const id=btn.getAttribute('data-dec');const row=(b.cart||[]).find(c=>c.id===id);
@@ -5808,13 +5849,34 @@ render();
     if(row.qty<=0)b.cart=b.cart.filter(c=>c.id!==id);
     else refreshCartLinePrice(row,p||{});
     saveBiz(b);safeRender()});
+  document.querySelectorAll('[data-cdel]').forEach(btn=>btn.onclick=()=>{
+    const b=biz();const id=btn.getAttribute('data-cdel');
+    b.cart=(b.cart||[]).filter(c=>c.id!==id);
+    if(!b.cart.length)S.cartDiscount=0;
+    saveBiz(b);safeRender();
+  });
+  document.querySelectorAll('[data-cprice]').forEach(inp=>{
+    inp.onchange=()=>{
+      const b=biz();const row=(b.cart||[]).find(c=>c.id===inp.getAttribute('data-cprice'));if(!row)return;
+      const p=(b.products||[]).find(x=>x.id===row.id)||{};
+      const v=inp.value===''?NaN:Number(inp.value);
+      const reg=calcCartPricing(p,row.unit||'pc',row.qty).unitPrice;
+      if(!isFinite(v)||v<0||Math.abs(v-reg)<0.005)delete row.customPrice;else row.customPrice=money(v);
+      refreshCartLinePrice(row,p);
+      saveBiz(b);safeRender();
+    };
+  });
+  document.querySelectorAll('[data-cprice-reset]').forEach(btn=>btn.onclick=()=>{
+    const b=biz();const row=(b.cart||[]).find(c=>c.id===btn.getAttribute('data-cprice-reset'));if(!row)return;
+    delete row.customPrice;refreshCartLinePrice(row,(b.products||[]).find(x=>x.id===row.id)||{});saveBiz(b);safeRender();
+  });
   document.querySelectorAll('[data-cqty]').forEach(inp=>{
     const applyQty=()=>{
       const b=biz();const row=(b.cart||[]).find(c=>c.id===inp.getAttribute('data-cqty'));if(!row)return;
       const p=b.products.find(x=>x.id===row.id);
       const u=row.unit||(p&&p.unit)||'pc';
       let q=normalizeQty(u,inp.value);
-      if(p&&stockNeeded(p,u,q)>(Number(p.stock)||0)+1e-9){const f=sellFactor(p,u).factor||1;q=normalizeQty(u,Math.floor((Number(p.stock)||0)/f*100)/100);toast('Max stock '+fmtStock(p.stock)+' '+unitSuffix(productPriceUnit(p)))}
+      if(p&&stockNeeded(p,u,q)>(Number(p.stock)||0)+1e-9){const f=sellFactor(p,u).factor||1;q=normalizeQty(u,Math.floor((Number(p.stock)||0)/f*100)/100);toast('Max stock '+stockLabel(p))}
       if(q<=0){b.cart=b.cart.filter(c=>c.id!==row.id)}
       else{row.qty=q;row.unit=u;refreshCartLinePrice(row,p||{})}
       saveBiz(b);
@@ -5824,7 +5886,7 @@ render();
     inp.onblur=()=>{setTimeout(applyQty,0)};
   });
   const bc=document.getElementById('btnClear');
-  if(bc)bc.onclick=()=>{const b=biz();b.cart=[];saveBiz(b);render()};
+  if(bc)bc.onclick=()=>{const b=biz();b.cart=[];S.cartDiscount=0;saveBiz(b);render()};
 
   document.querySelectorAll('input[name="fulfill"]').forEach(r=>{
     r.onchange=()=>{const addr=document.getElementById('delivAddr');if(!addr)return;
@@ -5834,7 +5896,7 @@ render();
   function checkoutSale(){
     const b=biz();if(!b||!(b.cart||[]).length){alert('Cart empty');return null}
     for(const c of b.cart){const p=b.products.find(x=>x.id===c.id);if(!p||(p.stock||0)+1e-9<stockNeeded(p,c.unit,c.qty)){alert('Not enough stock for '+(c.name||''));return null}}
-    let total=cartTotal();const subtotal=cartSubtotal();const discountPct=Number(S.cartDiscount||0);
+    let total=cartTotal();const subtotal=cartSubtotal();const discountAmt=cartDiscountAmt();
     b.orderN=(b.orderN||0)+1;
     const items=b.cart.map(c=>({name:c.name,qty:c.qty,price:c.price,product_id:c.id,unit:c.unit||'pc',listPrice:c.listPrice,packQty:c.packQty,packUnit:c.packUnit}));
     b.cart.forEach(c=>{const p=b.products.find(x=>x.id===c.id);if(p)p.stock=Math.max(0,Math.round(((p.stock||0)-stockNeeded(p,c.unit,c.qty))*10000)/10000)});
@@ -5851,8 +5913,8 @@ render();
       else receipt=payMethod.toUpperCase().replace(/\s/g,'')+'-'+String(b.orderN).padStart(4,'0');
     }
     const order={id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items,total,status:(payMethod==='Credit'?'CREDIT':'PAID'),
-      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',discountPct:Number(S.cartDiscount||0),subtotal:cartSubtotal(),cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null,branchId:(biz()&&biz().currentBranchId)||'main'};S._servedBy=null;S.cartDiscount=0;
-    if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];saveBiz(b);if(!navigator.onLine){enqueueOfflineSale(Object.assign({},order));}else if(SERVER_MODE){/* synced via saveBiz */}pushAudit('sale',order.number);return order;
+      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',discountAmt:discountAmt,discountPct:subtotal>0?Math.round(discountAmt/subtotal*10000)/100:0,subtotal:subtotal,cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null,branchId:(biz()&&biz().currentBranchId)||'main'};S._servedBy=null;S.cartDiscount=0;
+    if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];S.cartDiscount=0;saveBiz(b);if(!navigator.onLine){enqueueOfflineSale(Object.assign({},order));}else if(SERVER_MODE){/* synced via saveBiz */}pushAudit('sale',order.number);return order;
   }
 
   
@@ -6829,7 +6891,7 @@ render();
       const b=biz();const row=(b.cart||[]).find(c=>c.id===sel.getAttribute('data-cunit'));
       if(!row)return;
       const p=(b.products||[]).find(x=>x.id===row.id)||{};
-      row.unit=sel.value||productPriceUnit(p);
+      row.unit=sel.value||productPriceUnit(p);delete row.customPrice;
       row.qty=normalizeQty(row.unit,row.qty);
       if(p.id&&stockNeeded(p,row.unit,row.qty)>(Number(p.stock)||0)+1e-9){row.qty=normalizeQty(row.unit,Math.floor((Number(p.stock)||0)/(sellFactor(p,row.unit).factor||1)*100)/100);toast('Qty reduced to available stock')}
       if(row.qty<=0)b.cart=b.cart.filter(c=>c.id!==row.id);else refreshCartLinePrice(row,p);
