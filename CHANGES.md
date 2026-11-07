@@ -17,6 +17,13 @@
   "online". Clear message when an account was never logged in on that device.
 - Offline shell: service worker (v7) no longer ignores failed downloads - it re-fetches any missing file (page, styling
   engine, charts) on activate, when the app comes online and on request, so an offline refresh can't end up unstyled.
+- Cart: discount is now an amount in KES (was %); per-item "Sell price" box to sell above/below the registered price
+  (stored on the invoice, registered price kept as listPrice; resets when the unit changes); "✕ Remove" on every cart
+  line; discount no longer carries over to the next sale; discount box keeps focus while typing; payment/discount/barcode
+  layout fixed (a missing </div> squeezed them into the payment-method grid). Old invoices with % discounts still display.
+- Stock display: items sold in parts now show full packs + the open pack ("19 full + 1 open (95 m)") on the POS tile,
+  Stock page, Products page, dashboard low-stock and stock warnings; each cart line shows "In stock ... after this sale ...".
+  (Underlying stock is unchanged: a number of whole items, e.g. 19.95.)
 - tests/api-smoke.js: 66 server checks (run against a fresh DB: BASE_URL / ADMIN_EMAIL / ADMIN_PASSWORD env vars).
 
 # Fixes in this build
