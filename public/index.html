@@ -3764,9 +3764,12 @@ async function startCameraBarcodeScan(onCode){
 }
 
 
+let _bcLast=0;
 function genBarcode(){
   // Generate 12 digits + EAN-13 check digit (local barcodes, not GS1-registered)
-  let s='200'+String(Date.now()).slice(-9);
+  // monotonic counter: several barcodes made in the same millisecond must still differ
+  const now=Date.now();_bcLast=now>_bcLast?now:_bcLast+1;
+  let s='200'+String(_bcLast).slice(-9);
   s=s.slice(0,12);
   let sum=0;
   for(let i=0;i<12;i++)sum+=parseInt(s[i],10)*(i%2===0?1:3);
@@ -3991,6 +3994,26 @@ function secProducts(b,a){
       <button class="py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Add product</button>
     </form>
     <p class="text-xs text-slate-400 mt-2">SKU and barcode auto-generate if left blank. Categories from onboarding stay intact.</p>
+    <details id="bulkBox" class="mt-4 rounded-xl border bg-slate-50 p-3">
+      <summary class="cursor-pointer font-semibold text-sm">➕ Add many variants at once (same product, different company / pack size)</summary>
+      <p class="text-xs text-slate-500 mt-2">Example: <b>Kienyeji layers</b> from two companies in 2 pack sizes = 4 rows. Each row becomes its own product with its own price and stock, named like <i>Kienyeji layers - Company A - 20 kg</i>.</p>
+      <form id="bulkForm" class="mt-3 space-y-3 text-sm">
+        <div class="grid sm:grid-cols-4 gap-2">
+          <input name="name" required placeholder="Product name * (e.g. Kienyeji layers)" class="border rounded-xl px-3 py-2 sm:col-span-2"/>
+          <input name="category" placeholder="Category" list="catList" class="border rounded-xl px-3 py-2"/>
+          <select name="unit" class="border rounded-xl px-3 py-2">${UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('')}</select>
+        </div>
+        <div class="overflow-x-auto"><table class="w-full text-xs min-w-[760px]">
+          <thead><tr class="text-left text-slate-500"><th class="px-1">Company / brand</th><th class="px-1">Pack size</th><th class="px-1">Pack unit</th><th class="px-1">Price of 1 item</th><th class="px-1">Cost</th><th class="px-1">Opening stock</th><th class="px-1">Reorder</th><th></th></tr></thead>
+          <tbody id="bulkRows"></tbody>
+        </table></div>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" id="bulkAddRow" class="px-3 py-2 rounded-xl border bg-white">+ Add row</button>
+          <button type="button" id="bulkDupRow" class="px-3 py-2 rounded-xl border bg-white">Duplicate last row</button>
+          <button class="px-4 py-2 rounded-xl text-white font-semibold" style="background:${a}">Add all products</button>
+        </div>
+      </form>
+    </details>
   </div>
   <div class="flex flex-wrap justify-between gap-2">
     <p class="text-sm text-slate-500">${(b.products||[]).length} products · full catalog</p>
@@ -6829,6 +6852,50 @@ render();
     if(stock)recordMovement(b,{type:'RECEIVE',productId:p.id,productName:p.name,qty:stock,batch:p.batch,note:'Opening stock'});
     saveBiz(b);toast('Product registered');render();
   };
+  const bulkForm=document.getElementById('bulkForm');
+  if(bulkForm){
+    const rowsEl=document.getElementById('bulkRows');
+    const unitOpts='<option value="">-</option>'+UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('');
+    const addRow=(src)=>{
+      const tr=document.createElement('tr');
+      const inp=(n,ph,t,w)=>`<td class="px-1 py-1"><input data-f="${n}" ${t?'type="number" step="0.01" min="0"':''} placeholder="${ph}" class="border rounded-lg px-2 py-1.5 ${w||'w-24'}"/></td>`;
+      tr.innerHTML=inp('brand','Company',0,'w-36')+inp('packQty','e.g. 20',1,'w-20')+`<td class="px-1 py-1"><select data-f="packUnit" class="border rounded-lg px-1 py-1.5">${unitOpts}</select></td>`+inp('price','Price',1)+inp('cost','Cost',1)+inp('stock','0',1)+inp('reorder','5',1,'w-16')+'<td class="px-1"><button type="button" data-rm class="text-red-600 px-2" title="Remove row">✕</button></td>';
+      if(src){tr.querySelectorAll('[data-f]').forEach(el=>{el.value=src.querySelector(`[data-f="${el.dataset.f}"]`).value});}
+      tr.querySelector('[data-rm]').onclick=()=>{if(rowsEl.children.length>1)tr.remove()};
+      rowsEl.appendChild(tr);
+    };
+    addRow();addRow();
+    document.getElementById('bulkAddRow').onclick=()=>addRow();
+    document.getElementById('bulkDupRow').onclick=()=>addRow(rowsEl.lastElementChild);
+    bulkForm.onsubmit=e=>{
+      e.preventDefault();
+      const fd=new FormData(bulkForm);
+      const b=biz();if(!b.products)b.products=[];
+      const base=String(fd.get('name')||'').trim();if(!base)return;
+      const unit=String(fd.get('unit')||'pc')||'pc';
+      const category=String(fd.get('category')||'').trim()||(b.categories&&b.categories[0])||'General';
+      const unitLabel=id=>{const u=UNIT_OPTIONS.find(x=>x.id===id);return u?(u.suffix||u.id):id};
+      const made=[],seen={};
+      for(const tr of rowsEl.children){
+        const g=n=>String(tr.querySelector(`[data-f="${n}"]`).value||'').trim();
+        const brand=g('brand'),pq=Number(g('packQty'))||0,pu=g('packUnit');
+        if(!brand&&!pq&&!g('price')&&!g('stock'))continue; // blank row
+        const packQty=pq>0?pq:1,packUnit=pu||unit;
+        const parts=[base];if(brand)parts.push(brand);if(pq>0)parts.push(pq+' '+unitLabel(packUnit));
+        const name=parts.join(' - ');
+        const key=name.toLowerCase();
+        if(seen[key]||b.products.some(x=>String(x.name||'').toLowerCase()===key)){alert('"'+name+'" already exists or is repeated. Change the company or pack size on that row.');return}
+        seen[key]=1;
+        const stock=Number(g('stock'))||0;
+        made.push({id:uid(),name,sku:genSKU(b,name),barcode:genBarcode(),unit,packQty,packUnit,brand,category,sub:brand||'Custom',
+          price:Number(g('price'))||0,cost:g('cost')===''?null:Number(g('cost')),stock:normalizeQty(unit,stock),reorder:Number(g('reorder'))||5,
+          batch:'',expiry:'',serial:'',image:'',active:true,_open:stock});
+      }
+      if(!made.length){alert('Fill in at least one row');return}
+      made.forEach(p=>{const o=p._open;delete p._open;b.products.push(p);if(o)recordMovement(b,{type:'RECEIVE',productId:p.id,productName:p.name,qty:o,batch:'',note:'Opening stock'})});
+      saveBiz(b);toast(made.length+' products registered');render();
+    };
+  }
   const genMissingSku=document.getElementById('genMissingSku');
   if(genMissingSku)genMissingSku.onclick=()=>{
     const b=biz();let n=0;
