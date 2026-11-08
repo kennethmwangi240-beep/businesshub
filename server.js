@@ -413,6 +413,16 @@ async function handleApi(req, res, pathname) {
         if (!isAdmin(u)) {
           nb = { ...b, ...body };
           OWNER_LOCKED.forEach((k) => { nb[k] = b[k]; }); // server keeps control of these
+          { // deleted products stay deleted, even if a stale device pushes them again
+            const m = {};
+            [...(Array.isArray(b.deletedProducts) ? b.deletedProducts : []), ...(Array.isArray(body.deletedProducts) ? body.deletedProducts : [])]
+              .forEach((t) => { if (t && t.id) m[t.id] = t; });
+            nb.deletedProducts = Object.values(m).slice(-5000);
+            if (Array.isArray(nb.products) && nb.deletedProducts.length) {
+              const gone = new Set(nb.deletedProducts.map((t) => t.id));
+              nb.products = nb.products.filter((p) => !(p && gone.has(p.id)));
+            }
+          }
           if (Array.isArray(body.workers)) { // plan worker limit: existing workers stay, extra new ones are dropped
             const plans = mergePlans(await getCfg('plans', DEFAULT_PLANS, c));
             const pl = plans[b.plan || 'FREE'] || plans.FREE || {};

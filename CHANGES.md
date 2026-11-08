@@ -67,3 +67,7 @@
 ### Bulk product variants
 - Products page: new "Add many variants at once" panel (choose the business category and a subcategory from that category, or type a new subcategory). Enter the product name once, then one row per company / pack size (price, cost, opening stock, reorder). Each row becomes its own product named "Name - Company - 20 kg", with its own SKU, barcode, price and stock. Duplicate names are refused.
 - Fixed: barcodes generated in the same millisecond could be identical (also affected "Generate missing barcodes"); they are now always unique.
+
+### Search boxes and deleted products
+- Search boxes (Shop, Stock, Products) no longer lose focus or stop after a few letters: Products search had no handler at all, Stock search's handler was overwritten, and the page redraw dropped the cursor. The cursor is now kept across redraws.
+- Deleted products now stay deleted: deletions are remembered (tombstones) on the device and on the server, so "Merge catalog products", a stale browser tab or another device cannot bring them back.
