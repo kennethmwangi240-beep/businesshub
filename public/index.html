@@ -1414,6 +1414,7 @@ async function syncPull(){
       localMine.forEach(b=>{ localMap[b.id]=b; });
       const merged = remote.map(rb=>{
         const lb = localMap[rb.id];
+        if(lb){ const t=mergeTombstones(lb.deletedProducts,rb.deletedProducts); lb.deletedProducts=t; rb.deletedProducts=t; applyTombstones(lb); applyTombstones(rb); }
         if(lb && lb.updatedAt && rb.updatedAt && lb.updatedAt > rb.updatedAt){
           // local newer — keep local and push
           syncPushBiz(lb);
@@ -1956,7 +1957,20 @@ function productsFromCategories(catKeys){
   });
   return out;
 }
-function mergeProducts(existing,incoming){
+/* Deleted products are remembered (tombstones) so catalog merges and stale devices cannot bring them back */
+function applyTombstones(b){
+  if(!b||!Array.isArray(b.deletedProducts)||!b.deletedProducts.length||!Array.isArray(b.products))return b;
+  const ids=new Set(b.deletedProducts.map(t=>t&&t.id));
+  b.products=b.products.filter(p=>!ids.has(p.id));
+  return b;
+}
+function mergeTombstones(a,b2){
+  const m={};[...(a||[]),...(b2||[])].forEach(t=>{if(t&&t.id)m[t.id]=t});
+  return Object.values(m).slice(-5000);
+}
+function mergeProducts(existing,incoming,tombs){
+  const gone=new Set((tombs||[]).map(t=>String(t&&t.name||'').toLowerCase()).filter(Boolean));
+  incoming=(incoming||[]).filter(i=>!gone.has(String(i.name||'').toLowerCase()));
   const byName={};
   existing.forEach(p=>{byName[p.name.toLowerCase()]=p});
   incoming.forEach(inc=>{
@@ -2663,6 +2677,13 @@ function safeRender(){
   setTimeout(()=>{try{render()}catch(e){console.error(e)}},0);
 }
 function render(){
+  /* keep the cursor in a search/text box across the re-draw so typing never "stops" */
+  let keep=null;
+  try{const ae=document.activeElement;if(ae&&ae.id&&/^(INPUT|TEXTAREA)$/.test(ae.tagName)&&/search/i.test(ae.id)){keep={id:ae.id,a:ae.selectionStart,b:ae.selectionEnd}}}catch(e){}
+  _renderInner();
+  if(keep){try{const el=document.getElementById(keep.id);if(el){el.focus();if(keep.a!=null&&el.setSelectionRange&&el.type!=='search'||(el.type==='search'&&keep.a!=null)){try{el.setSelectionRange(keep.a,keep.b)}catch(e){}}}}catch(e){}}
+}
+function _renderInner(){
   try{applyTheme(S.theme||localStorage.getItem('bh_theme')||'light')}catch(e){try{document.documentElement.setAttribute('data-theme','light')}catch(e2){}}
   const d=db();
   // Worker session (no owner session) → restricted worker UI only
@@ -5844,6 +5865,8 @@ render();
 
   const ss=document.getElementById('shopSearch');
   if(ss)ss.oninput=()=>{S.search=ss.value;clearTimeout(S._st);S._st=setTimeout(render,150)};
+  const ps=document.getElementById('prodSearch');
+  if(ps)ps.oninput=()=>{S.prodSearch=ps.value;clearTimeout(S._pst);S._pst=setTimeout(render,150)};
   const stockS=document.getElementById('stockSearch');
   if(stockS)stockS.oninput=()=>{S.stockSearch=stockS.value;clearTimeout(S._sts);S._sts=setTimeout(render,150)};
 
@@ -6044,7 +6067,7 @@ render();
   const ss2=document.getElementById('saveStock');
   if(ss2)ss2.onclick=()=>{saveProductFields();render();toast('Stock saved')};
   document.querySelectorAll('[data-del-prod]').forEach(btn=>btn.onclick=()=>{
-    if(!confirm('Remove?'))return;const b=biz();b.products=b.products.filter(p=>p.id!==btn.getAttribute('data-del-prod'));saveBiz(b);render()});
+    if(!confirm('Remove?'))return;const b=biz();const did=btn.getAttribute('data-del-prod');const gone=b.products.find(p=>p.id===did);b.deletedProducts=mergeTombstones(b.deletedProducts,[{id:did,name:gone&&gone.name}]);b.products=b.products.filter(p=>p.id!==did);saveBiz(b);render()});
   const ap=document.getElementById('addProd');
   if(ap)ap.onclick=()=>{
     openModal(`<h3 class="text-lg font-bold mb-4">Add product</h3><form id="prodForm" class="space-y-3 text-sm">
@@ -6146,7 +6169,7 @@ render();
       b.categories=cats;b.categoryLabel=cats.map(c=>CATALOG[c]?CATALOG[c].label:c).join(', ');saveBiz(b);render()}});
   const applyCats=document.getElementById('applyCats');
   if(applyCats)applyCats.onclick=()=>{const b=biz();const before=b.products.length;
-    b.products=mergeProducts(b.products,productsFromCategories(b.categories||[]));saveBiz(b);render();
+    b.products=mergeProducts(b.products,productsFromCategories(b.categories||[]),b.deletedProducts);saveBiz(b);render();
     toast('Merged · total '+b.products.length)};
   const to=document.getElementById('toggleOnline');
   if(to)to.onchange=()=>{const b=biz();b.onlineStore=to.checked;saveBiz(b);render();toast(b.onlineStore?'Online shop OPEN':'Online shop CLOSED')};
@@ -6769,9 +6792,6 @@ render();
 
   
   document.querySelectorAll('[data-inv-tab]').forEach(btn=>btn.onclick=()=>{S.invTab=btn.getAttribute('data-inv-tab');render()});
-  const stockSearch=document.getElementById('stockSearch');
-  if(stockSearch)stockSearch.oninput=()=>{S.stockSearch=stockSearch.value;/* debounce free */};
-  if(stockSearch)stockSearch.onchange=()=>{S.stockSearch=stockSearch.value;render()};
   const stockMoveForm=document.getElementById('stockMoveForm');
   if(stockMoveForm)stockMoveForm.onsubmit=e=>{
     e.preventDefault();
