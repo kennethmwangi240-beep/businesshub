@@ -90,3 +90,8 @@
 - Service worker cache bumped to v8 so installed copies download all of the above. An installed app now reloads itself onto the new version when nobody is mid-sale (open sale, form or window); otherwise it shows the "new version ready" bar.
 - Manifest no longer locks the installed app to portrait, so POS works on desktop and landscape tablets.
 - Printer (WebUSB / Web Serial) and admin pop-up alerts work in the installed app as well as in the browser tab.
+
+### Password recovery: code delivery
+- Bug: every click of "Get recovery code" created a NEW code and cancelled the previous one, so a code the admin had passed on (or an older alert's code) said "Invalid or expired recovery code". An active code is now kept for its 30 minutes, however many times it is requested.
+- The admin no longer copies codes by hand. The client's recovery page waits ("Waiting for admin approval...") and the admin presses "Approve - send code to client's page" on the Alerts tab (admins also get a toast and a badge for new requests). The code then appears on that client's page by itself and is filled in. It is released only to the browser that made the request and only after approval, so typing someone else's email never reveals their code.
+- With SMTP configured the code is emailed to the account instead (no admin step).

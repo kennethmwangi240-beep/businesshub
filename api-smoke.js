@@ -62,8 +62,13 @@ r=await f('GET','/api/backups/mine',null,T);ok('list backups',r.j.files.length>=
 r=await f('GET','/api/admin/backup',null,A);ok('admin backup',r.s===200&&r.j.data.users.length===3&&r.j.data.businesses.length===2,r.j.data&&r.j.data.users.length);
 r=await f('GET','/api/admin/audit',null,A);ok('audit endpoint',r.s===200);
 // forgot/reset
-r=await f('POST','/api/auth/forgot',{email:'own1@test.com'});ok('forgot generic no code leak',r.s===200&&!JSON.stringify(r.j).match(/\d{6}/));
-r=await f('GET','/api/admin/alerts',null,A);const al=r.j.alerts.find(a=>a.type==='password_reset_request');const code=al&&al.message.match(/code: (\d{6})/)[1];ok('admin gets code',!!code);
+r=await f('POST','/api/auth/forgot',{email:'own1@test.com'});ok('forgot generic no code leak',r.s===200&&!JSON.stringify({...r.j,requestId:''}).match(/\d{6}/));const RID=r.j.requestId;
+r=await f('POST','/api/auth/forgot/status',{email:'own1@test.com',requestId:RID});ok('code withheld before admin approval',r.j.ready===false);
+r=await f('GET','/api/admin/alerts',null,A);ok('admin sees recovery request',!!r.j.alerts.find(a=>a.type==='password_reset_request'&&a.email==='own1@test.com'));
+r=await f('POST','/api/admin/recovery/approve',{email:'own1@test.com'},A);ok('admin approves',r.s===200,r);
+r=await f('POST','/api/auth/forgot/status',{email:'own1@test.com',requestId:'z'.repeat(32)});ok('other browser cannot get the code',r.j.ready===false);
+r=await f('POST','/api/auth/forgot/status',{email:'own1@test.com',requestId:RID});const code=r.j.code;ok('requesting browser receives code',r.j.ready===true&&/^\d{6}$/.test(code),r);
+r=await f('POST','/api/auth/forgot',{email:'own1@test.com'});r=await f('POST','/api/auth/forgot/status',{email:'own1@test.com',requestId:RID});ok('second request keeps the same code',r.j.code===code);
 r=await f('POST','/api/auth/reset',{email:'own1@test.com',code:'000000',password:'newpassword1'});ok('bad code',r.s===400);
 r=await f('POST','/api/auth/reset',{email:'own1@test.com',code,password:'newpassword1'});ok('reset',r.s===200,r);
 r=await f('GET','/api/me',null,T);ok('sessions revoked after reset',r.s===401);

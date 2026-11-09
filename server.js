@@ -581,25 +581,65 @@ async function handleApi(req, res, pathname) {
 
 
   if (pathname === '/api/auth/forgot' && method === 'POST') {
-    if (limited('forgot:' + ip, 5, 3600000)) return json(res, 429, { error: 'Too many requests, try again later' });
+    if (limited('forgot:' + ip, 8, 3600000)) return json(res, 429, { error: 'Too many requests, try again later' });
     const body = await readBody(req);
     const email = String(body.email || '').toLowerCase().trim();
     if (!email) return json(res, 400, { error: 'Email required' });
+    const requestId = crypto.randomBytes(16).toString('hex'); // lets ONLY this browser receive the code once approved
     const generic = MAIL_ON
-      ? { ok: true, emailed: true, message: 'If that email has an account, a 6-digit recovery code has been sent to it (valid 30 min). Check your spam folder too.' }
-      : { ok: true, message: 'Request received. Your platform admin will give you a recovery code (valid 30 min).' };
+      ? { ok: true, emailed: true, requestId, message: 'If that email has an account, a 6-digit recovery code has been sent to it (valid 30 min). Check your spam folder too.' }
+      : { ok: true, waiting: true, requestId, message: 'Request sent to the platform admin. As soon as they approve it, your recovery code appears on this page automatically (valid 30 min). Keep this page open.' };
     const u = (await pool.query('SELECT id, email, name, role FROM users WHERE email=$1 AND role<>\'admin\'', [email])).rows[0];
     if (!u) return json(res, 200, generic);
-    const code = String(crypto.randomInt(100000, 1000000));
     const tokens = await getCfg('resetTokens', {});
     Object.keys(tokens).forEach((k) => { if (!tokens[k] || tokens[k].expires < Date.now()) delete tokens[k]; });
-    tokens[email] = { codeHash: sha(code), userId: u.id, expires: Date.now() + 30 * 60 * 1000, tries: 0 };
+    let t = tokens[email];
+    let code;
+    if (t && t.userId === u.id && t.plain) {
+      // a code is already active: keep it (a second click must NOT replace the code the admin approved / was emailed)
+      code = t.plain;
+      t.reqs = [...(t.reqs || []), sha(requestId)].slice(-10);
+    } else {
+      code = String(crypto.randomInt(100000, 1000000));
+      t = { codeHash: sha(code), plain: code, userId: u.id, expires: Date.now() + 30 * 60 * 1000, tries: 0, approved: MAIL_ON ? false : false, reqs: [sha(requestId)] };
+      tokens[email] = t;
+    }
     await setCfg('resetTokens', tokens);
-    const alerts = await getCfg('adminAlerts', []);
-    alerts.push({ id: uid(), type: 'password_reset_request', email, userId: u.id, name: u.name || '', at: new Date().toISOString(), message: 'Password recovery for ' + email + ' — code: ' + code + ' (valid 30 min; give it only to the verified owner)' });
+    let alerts = await getCfg('adminAlerts', []);
+    alerts = alerts.filter((x) => !(x.type === 'password_reset_request' && x.email === email));
+    alerts.push({ id: uid(), type: 'password_reset_request', email, userId: u.id, name: u.name || '', at: new Date().toISOString(), message: 'Password recovery requested by ' + email + '. Press Approve to send the code straight to their recovery page (valid 30 min). Only approve if you trust the request.' });
     await setCfg('adminAlerts', alerts.slice(-100));
     if (MAIL_ON) sendMail(email, 'Your BusinessHub recovery code', 'Your BusinessHub password recovery code is ' + code + '.\nIt is valid for 30 minutes. If you did not ask for this, ignore this email.').catch(() => {});
     return json(res, 200, generic);
+  }
+
+  // The recovery page asks this every few seconds; the code is released only to the browser that made the request, and only after approval
+  if (pathname === '/api/auth/forgot/status' && method === 'POST') {
+    if (limited('fstat:' + ip, 400, 3600000)) return json(res, 429, { error: 'Too many requests' });
+    const body = await readBody(req);
+    const email = String(body.email || '').toLowerCase().trim();
+    const requestId = String(body.requestId || '');
+    const tokens = await getCfg('resetTokens', {});
+    const t = tokens[email];
+    if (t && Date.now() < (t.expires || 0) && t.approved && t.plain && requestId && (t.reqs || []).includes(sha(requestId))) {
+      return json(res, 200, { ready: true, code: t.plain, expiresAt: t.expires });
+    }
+    return json(res, 200, { ready: false });
+  }
+
+  if (pathname === '/api/admin/recovery/approve' && method === 'POST') {
+    const u = await authUser(req);
+    if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
+    const body = await readBody(req);
+    const email = String(body.email || '').toLowerCase().trim();
+    const tokens = await getCfg('resetTokens', {});
+    const t = tokens[email];
+    if (!t || Date.now() > (t.expires || 0)) return json(res, 404, { error: 'That request has expired. Ask the client to request a new code.' });
+    t.approved = true;
+    await setCfg('resetTokens', tokens);
+    const alerts = (await getCfg('adminAlerts', [])).filter((x) => !(x.type === 'password_reset_request' && x.email === email));
+    await setCfg('adminAlerts', alerts);
+    return json(res, 200, { ok: true });
   }
 
   if (pathname === '/api/auth/reset' && method === 'POST') {
