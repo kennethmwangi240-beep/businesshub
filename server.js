@@ -137,6 +137,91 @@ const DEFAULT_MARKETPLACE = {
   payoutNotes: 'Commission is recorded on marketplace orders. Settle with sellers per your agreement.',
   merchantFeedEnabled: true
 };
+
+async function appendPlatformAudit(entry) {
+  try {
+    const logs = await getCfg('auditLogs', []);
+    const row = {
+      id: uid(),
+      at: new Date().toISOString(),
+      action: entry.action || 'event',
+      detail: entry.detail || '',
+      user: entry.user || 'system',
+      businessId: entry.businessId || null,
+      businessName: entry.businessName || null,
+      clientEmail: entry.clientEmail || null,
+      source: entry.source || 'platform'
+    };
+    logs.unshift(row);
+    await setCfg('auditLogs', logs.slice(0, 5000));
+    return row;
+  } catch (e) {
+    console.warn('audit', e.message);
+  }
+}
+function deriveAuditFromBusinesses(businesses) {
+  const logs = [];
+  (businesses || []).forEach((b) => {
+    const bName = b.name || 'Business';
+    const bId = b.id;
+    const owner = b.ownerEmail || '';
+    (b.orders || []).slice(0, 80).forEach((o) => {
+      logs.push({
+        id: 'ord-' + (o.id || o.number),
+        at: o.createdAt || (o.date ? o.date + 'T12:00:00.000Z' : null) || new Date().toISOString(),
+        action: o.source === 'marketplace' ? 'marketplace_order' : (o.source === 'online' ? 'online_order' : 'sale'),
+        detail: `${bName}: ${o.number || o.id || 'order'} · ${o.total != null ? o.total : ''} · ${o.payment || o.paymentStatus || ''} · ${o.orderStatus || o.status || ''}`,
+        user: o.customer || (o.servedBy && (o.servedBy.name || o.servedBy.id)) || owner || 'client',
+        businessId: bId,
+        businessName: bName,
+        clientEmail: owner,
+        source: 'business'
+      });
+    });
+    (b.expenses || []).slice(0, 30).forEach((e) => {
+      logs.push({
+        id: 'exp-' + (e.id || Math.random()),
+        at: e.createdAt || e.date || new Date().toISOString(),
+        action: 'expense',
+        detail: `${bName}: ${e.category || e.name || 'expense'} · ${e.amount != null ? e.amount : ''}`,
+        user: owner || 'client',
+        businessId: bId,
+        businessName: bName,
+        clientEmail: owner,
+        source: 'business'
+      });
+    });
+    (b.workers || []).forEach((w) => {
+      if (!w.createdAt && !w.id) return;
+      logs.push({
+        id: 'wrk-' + w.id,
+        at: w.createdAt || b.createdAt || new Date().toISOString(),
+        action: 'worker',
+        detail: `${bName}: worker ${w.username || w.name || w.id}`,
+        user: owner || 'owner',
+        businessId: bId,
+        businessName: bName,
+        clientEmail: owner,
+        source: 'business'
+      });
+    });
+    if (b.updatedAt) {
+      logs.push({
+        id: 'biz-upd-' + bId,
+        at: b.updatedAt,
+        action: 'business_update',
+        detail: `${bName}: profile/data updated`,
+        user: owner || 'owner',
+        businessId: bId,
+        businessName: bName,
+        clientEmail: owner,
+        source: 'business'
+      });
+    }
+  });
+  return logs;
+}
+
 async function getMarketplaceCfg() {
   const raw = await getCfg('marketplace', DEFAULT_MARKETPLACE);
   return { ...DEFAULT_MARKETPLACE, ...(raw || {}) };
@@ -860,7 +945,46 @@ async function handleApi(req, res, pathname) {
   if (pathname === '/api/admin/audit' && method === 'GET') {
     const u = await authUser(req);
     if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
-    return json(res, 200, { logs: await getCfg('auditLogs', []) });
+    const platformLogs = await getCfg('auditLogs', []);
+    let businesses = [];
+    try {
+      businesses = (await pool.query('SELECT id, owner_id, data FROM businesses')).rows.map(bizOut);
+      // enrich owner email
+      const users = (await pool.query('SELECT id, email FROM users')).rows;
+      const byId = Object.fromEntries(users.map((x) => [x.id, x.email]));
+      businesses.forEach((b) => {
+        if (!b.ownerEmail && b.ownerId && byId[b.ownerId]) b.ownerEmail = byId[b.ownerId];
+      });
+    } catch (e) {
+      console.warn('audit businesses', e.message);
+    }
+    const derived = deriveAuditFromBusinesses(businesses);
+    const q = (qparams.get('q') || '').toLowerCase();
+    const bizFilter = qparams.get('businessId') || '';
+    let logs = [...(platformLogs || []), ...derived];
+    // de-dupe by id
+    const seen = new Set();
+    logs = logs.filter((l) => {
+      const id = l.id || l.at + l.action + l.detail;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    logs.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+    if (bizFilter) logs = logs.filter((l) => l.businessId === bizFilter);
+    if (q) {
+      logs = logs.filter((l) =>
+        [l.action, l.detail, l.user, l.businessName, l.clientEmail].join(' ').toLowerCase().includes(q)
+      );
+    }
+    return json(res, 200, {
+      logs: logs.slice(0, 1000),
+      counts: {
+        platform: (platformLogs || []).length,
+        derived: derived.length,
+        businesses: businesses.length
+      }
+    });
   }
 
   if (pathname === '/api/admin/alerts' && method === 'GET') {
@@ -1289,6 +1413,14 @@ async function handleApi(req, res, pathname) {
     };
     if (!b.orders) b.orders = [];
     b.orders.unshift(order);
+    await appendPlatformAudit({
+      action: 'marketplace_order',
+      detail: `${b.name}: ${order.number} total ${order.total}`,
+      businessId: b.id,
+      businessName: b.name,
+      user: order.customer || order.phone || 'customer',
+      source: 'marketplace'
+    });
     b.updatedAt = new Date().toISOString();
     // strip circular / store only data fields
     const { id: _id, ownerId: _oid, ...data } = b;
