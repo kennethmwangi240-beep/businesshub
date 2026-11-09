@@ -127,11 +127,201 @@ const DEFAULT_PLATFORM = {
   company: 'MyBusinessHub', ownerName: '', phone: '', email: '', address: '', city: 'Nairobi',
   country: 'Kenya', mpesaTill: '', paybill: '', bankName: '', bankAccount: '', supportEmail: '', website: '', notes: ''
 };
+const DEFAULT_MARKETPLACE = {
+  commissionEnabled: true,
+  commissionPercent: 2.5,          // default % of order subtotal (ex delivery)
+  commissionMinKes: 0,             // minimum commission per order
+  commissionMaxKes: 0,             // 0 = no max
+  commissionOnDeliveryFee: false,  // charge % on delivery fee too
+  planRates: {},                   // optional { PRO: 2, BUSINESS: 1.5 }
+  payoutNotes: 'Commission is recorded on marketplace orders. Settle with sellers per your agreement.',
+  merchantFeedEnabled: true
+};
+async function getMarketplaceCfg() {
+  const raw = await getCfg('marketplace', DEFAULT_MARKETPLACE);
+  return { ...DEFAULT_MARKETPLACE, ...(raw || {}) };
+}
+function calcCommission(cfg, plan, subtotal, deliveryFee) {
+  if (!cfg || cfg.commissionEnabled === false) return { rate: 0, amount: 0 };
+  let rate = Number(cfg.commissionPercent) || 0;
+  const pr = cfg.planRates || {};
+  if (plan && pr[plan] != null && pr[plan] !== '') rate = Number(pr[plan]) || 0;
+  let base = Number(subtotal) || 0;
+  if (cfg.commissionOnDeliveryFee) base += Number(deliveryFee) || 0;
+  let amount = money2(base * rate / 100);
+  const min = Number(cfg.commissionMinKes) || 0;
+  const max = Number(cfg.commissionMaxKes) || 0;
+  if (min > 0 && amount < min) amount = min;
+  if (max > 0 && amount > max) amount = max;
+  if (amount < 0) amount = 0;
+  return { rate, amount, base };
+}
+function money2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+
 // Fields a business owner may never set themselves
 const OWNER_LOCKED = ['id', 'ownerId', 'suspended', 'trialEndsAt', 'trialExtended', 'plan', 'planPaidAt', 'planReceipt', 'pendingPlan', 'createdAt'];
 const PUBLIC_PRODUCT_FIELDS = ['id', 'name', 'sub', 'category', 'sourceCat', 'unit', 'packQty', 'packUnit', 'price', 'stock', 'image', 'sku', 'barcode'];
 const publicProduct = (p) => { const o = {}; PUBLIC_PRODUCT_FIELDS.forEach((k) => { if (p[k] !== undefined) o[k] = p[k]; }); return o; };
 const HEAVY = ['orders', 'customers', 'quotations', 'expenses', 'purchases', 'cart'];
+
+/* ---------- marketplace helpers ---------- */
+function slugify(t) {
+  return String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || 'item';
+}
+function productMatchKey(p) {
+  const brand = String(p.brand || '').toLowerCase().trim();
+  const model = String(p.model || p.sku || '').toLowerCase().trim();
+  const name = String(p.name || '').toLowerCase().trim();
+  const unit = String(p.unit || p.packUnit || '').toLowerCase();
+  const pack = p.packQty ? String(p.packQty) : '';
+  const base = [brand, model, name].filter(Boolean).join(' ') || name;
+  const norm = base.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return slugify(norm + (pack ? ' ' + pack : '') + (unit ? ' ' + unit : ''));
+}
+function marketStatus(b) {
+  if (!b || b.suspended) return 'disabled';
+  const m = b.marketplace || {};
+  if (m.status === 'unavailable') return 'unavailable';
+  if (m.status === 'disabled' || m.enabled === false) return 'disabled';
+  if (b.onlineStore === false) return 'disabled';
+  if (m.enabled === true || b.onlineStore === true || m.status === 'active') return 'active';
+  return (b.onlineStore !== false) ? 'active' : 'disabled';
+}
+function isMarketSeller(b) {
+  return marketStatus(b) === 'active' && b.name;
+}
+function publicStore(b) {
+  const m = b.marketplace || {};
+  return {
+    id: b.id,
+    slug: slugify(m.storeSlug || b.name),
+    name: m.storeName || b.name,
+    description: m.description || b.categoryLabel || '',
+    location: m.location || b.address || '',
+    phone: m.contactPhone || b.phone || '',
+    deliveryAreas: m.deliveryAreas || '',
+    pickup: m.pickup !== false,
+    deliveryFee: Number(m.deliveryFee || 0),
+    paymentMethods: m.paymentMethods || ['mpesa', 'cash'],
+    logo: m.logo || b.logoData || '',
+    color: b.color || '#0d9488',
+    categoryLabel: b.categoryLabel || '',
+    rating: Number(m.rating || 0) || null,
+    status: marketStatus(b)
+  };
+}
+function listMarketOffers(businesses, q) {
+  const qn = String(q || '').toLowerCase().trim();
+  const tokens = qn ? qn.split(/[^a-z0-9]+/).filter(Boolean) : [];
+  const offers = [];
+  businesses.forEach((b) => {
+    if (!isMarketSeller(b)) return;
+    const store = publicStore(b);
+    (b.products || []).forEach((p) => {
+      if (p.active === false) return;
+      if (p.online === false) return;
+      if ((p.stock || 0) <= 0 && p.allowZeroStock !== true) return;
+      const hay = [p.name, p.brand, p.model, p.sub, p.category, p.description, p.sku, p.barcode, p.sourceCat]
+        .join(' ').toLowerCase();
+      if (tokens.length && !tokens.every((t) => hay.includes(t))) return;
+      const key = p.marketKey || productMatchKey(p);
+      offers.push({
+        key,
+        product: publicProduct({ ...p, marketKey: key }),
+        price: Number(p.price) || 0,
+        stock: Number(p.stock) || 0,
+        currency: 'KES',
+        store
+      });
+    });
+  });
+  return offers;
+}
+function groupOffersByProduct(offers) {
+  const map = {};
+  offers.forEach((o) => {
+    if (!map[o.key]) {
+      map[o.key] = {
+        key: o.key,
+        slug: o.key,
+        name: o.product.name,
+        brand: o.product.brand || '',
+        category: o.product.category || '',
+        image: o.product.image || '',
+        description: o.product.description || o.product.sub || '',
+        offers: []
+      };
+    }
+    map[o.key].offers.push({
+      storeId: o.store.id,
+      storeSlug: o.store.slug,
+      storeName: o.store.name,
+      location: o.store.location,
+      deliveryFee: o.store.deliveryFee,
+      pickup: o.store.pickup,
+      price: o.price,
+      stock: o.stock,
+      productId: o.product.id,
+      unit: o.product.unit,
+      image: o.product.image || map[o.key].image,
+      rating: o.store.rating
+    });
+    if (!map[o.key].image && o.product.image) map[o.key].image = o.product.image;
+  });
+  Object.values(map).forEach((g) => {
+    g.offers.sort((a, b) => a.price - b.price);
+    g.minPrice = g.offers[0] ? g.offers[0].price : 0;
+    g.sellerCount = g.offers.length;
+  });
+  return Object.values(map).sort((a, b) => a.minPrice - b.minPrice);
+}
+async function loadAllBusinesses() {
+  const r = await pool.query(`SELECT id, owner_id, data FROM businesses`);
+  return r.rows.map(bizOut);
+}
+function escapeHtml(t) {
+  return String(t || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function marketHtmlPage({ title, description, canonical, body, jsonLd }) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>${escapeHtml(title)}</title>
+<meta name="description" content="${escapeHtml(description)}"/>
+<link rel="canonical" href="${escapeHtml(canonical)}"/>
+<meta property="og:title" content="${escapeHtml(title)}"/>
+<meta property="og:description" content="${escapeHtml(description)}"/>
+${jsonLd ? `<script type="application/ld+json">${jsonLd}</script>` : ''}
+<style>
+body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;color:#0f172a}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+header.mh{background:#0f172a;color:#fff;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header.mh a{color:#fff;text-decoration:none;font-weight:600}
+.search{flex:1;min-width:200px;display:flex;gap:8px}
+.search input{flex:1;padding:10px 12px;border-radius:10px;border:0}
+.search button{padding:10px 16px;border-radius:10px;border:0;background:#0d9488;color:#fff;font-weight:600;cursor:pointer}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.price{font-weight:700;color:#0d9488;font-size:1.1rem}
+.muted{color:#64748b;font-size:.85rem}
+.btn{display:inline-block;padding:8px 14px;border-radius:10px;background:#0d9488;color:#fff;text-decoration:none;font-weight:600;font-size:.9rem}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{padding:10px;border-top:1px solid #e2e8f0;text-align:left}
+</style>
+</head>
+<body>
+<header class="mh">
+  <a href="/marketplace">MyBusinessHub Marketplace</a>
+  <form class="search" method="get" action="/search"><input name="q" placeholder="Search products…" /><button type="submit">Search</button></form>
+  <a href="/" style="font-size:13px;opacity:.85">Business login</a>
+</header>
+<div class="wrap">${body}</div>
+</body></html>`;
+}
+
+
 
 /* ---------- helpers ---------- */
 const uid = () => crypto.randomBytes(8).toString('hex');
@@ -305,6 +495,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function handleApi(req, res, pathname) {
   const method = req.method;
+  const reqUrl = new URL(req.url || '/', 'http://localhost');
+  const qparams = reqUrl.searchParams;
   const origin = req.headers.origin;
   if (origin && CORS_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -990,6 +1182,349 @@ async function handleApi(req, res, pathname) {
     });
   }
 
+
+  /* ===== Marketplace discovery APIs ===== */
+  if (pathname === '/api/marketplace/search' && method === 'GET') {
+    const q = qparams.get('q') || qparams.get('query') || '';
+    const all = await loadAllBusinesses();
+    const offers = listMarketOffers(all, q);
+    const groups = groupOffersByProduct(offers);
+    return json(res, 200, { q, count: groups.length, results: groups.slice(0, 100) });
+  }
+  if (pathname === '/api/marketplace/product' && method === 'GET') {
+    const key = String(qparams.get('key') || qparams.get('slug') || '');
+    if (!key) return json(res, 400, { error: 'key required' });
+    const all = await loadAllBusinesses();
+    const groups = groupOffersByProduct(listMarketOffers(all, ''));
+    const g = groups.find((x) => x.key === key || x.slug === key);
+    if (!g) return json(res, 404, { error: 'Product not found' });
+    return json(res, 200, { product: g });
+  }
+  if (pathname.match(/^\/api\/marketplace\/product\/[^/]+$/) && method === 'GET') {
+    const key = decodeURIComponent(pathname.split('/').pop());
+    const all = await loadAllBusinesses();
+    const groups = groupOffersByProduct(listMarketOffers(all, ''));
+    const g = groups.find((x) => x.key === key || x.slug === key);
+    if (!g) return json(res, 404, { error: 'Product not found' });
+    return json(res, 200, { product: g });
+  }
+  if (pathname === '/api/marketplace/categories' && method === 'GET') {
+    const all = await loadAllBusinesses();
+    const cats = {};
+    listMarketOffers(all, '').forEach((o) => {
+      const c = o.product.category || 'General';
+      cats[c] = (cats[c] || 0) + 1;
+    });
+    return json(res, 200, { categories: Object.entries(cats).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count) });
+  }
+  if (pathname === '/api/marketplace/stores' && method === 'GET') {
+    const all = await loadAllBusinesses();
+    const stores = all.filter(isMarketSeller).map(publicStore);
+    return json(res, 200, { stores });
+  }
+  if (pathname.match(/^\/api\/marketplace\/stores\/[^/]+$/) && method === 'GET') {
+    const slug = decodeURIComponent(pathname.split('/').pop());
+    const all = await loadAllBusinesses();
+    const b = all.find((x) => isMarketSeller(x) && (publicStore(x).slug === slug || x.id === slug));
+    if (!b) return json(res, 404, { error: 'Store not found' });
+    const store = publicStore(b);
+    const products = (b.products || []).filter((p) => p.active !== false && p.online !== false && ((p.stock || 0) > 0 || p.allowZeroStock))
+      .map((p) => publicProduct({ ...p, marketKey: p.marketKey || productMatchKey(p) }));
+    return json(res, 200, { store, products });
+  }
+  if (pathname === '/api/marketplace/checkout' && method === 'POST') {
+    if (limited('mkt:' + ip, 20, 600000)) return json(res, 429, { error: 'Too many checkouts' });
+    const body = await readBody(req);
+    const storeId = body.storeId;
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!storeId || !items.length) return json(res, 400, { error: 'storeId and items required' });
+    const row = await pool.query('SELECT * FROM businesses WHERE id=$1', [storeId]);
+    if (!row.rows[0]) return json(res, 404, { error: 'Store not found' });
+    const b = bizOut(row.rows[0]);
+    if (!isMarketSeller(b)) return json(res, 400, { error: 'Store not accepting online orders' });
+    const orderItems = [];
+    let total = 0;
+    for (const it of items.slice(0, 50)) {
+      const p = (b.products || []).find((x) => x.id === it.productId || x.id === it.id);
+      if (!p || p.active === false) return json(res, 400, { error: 'Product unavailable: ' + (it.name || it.productId) });
+      const qty = Math.max(1, Number(it.qty) || 1);
+      if ((p.stock || 0) < qty) return json(res, 400, { error: 'Insufficient stock for ' + p.name });
+      const price = Number(p.price) || 0;
+      orderItems.push({ product_id: p.id, name: p.name, qty, price, unit: p.unit || 'pc' });
+      total += price * qty;
+    }
+    const fee = Number((b.marketplace || {}).deliveryFee || 0);
+    const fulfill = body.fulfill === 'pickup' ? 'pickup' : 'delivery';
+    if (fulfill === 'delivery') total += fee;
+    orderItems.forEach((oi) => {
+      const p = b.products.find((x) => x.id === oi.product_id);
+      if (p) p.stock = Math.max(0, (Number(p.stock) || 0) - oi.qty);
+    });
+    const itemsSubtotal = Math.round(orderItems.reduce((s, oi) => s + oi.price * oi.qty, 0) * 100) / 100;
+    const deliveryFee = fulfill === 'delivery' ? fee : 0;
+    const mcfg = await getMarketplaceCfg();
+    const comm = calcCommission(mcfg, b.plan, itemsSubtotal, deliveryFee);
+    const order = {
+      id: uid(),
+      number: 'MKT-' + Date.now().toString(36).toUpperCase(),
+      date: new Date().toISOString().slice(0, 10),
+      createdAt: new Date().toISOString(),
+      source: 'marketplace',
+      orderStatus: 'NEW',
+      status: 'unpaid',
+      payment: body.payMethod || 'mpesa',
+      paymentStatus: 'pending',
+      fulfill,
+      customer: body.customerName || body.name || 'Marketplace customer',
+      phone: body.phone || '',
+      address: body.address || '',
+      items: orderItems,
+      subtotal: itemsSubtotal,
+      total: Math.round((itemsSubtotal + deliveryFee) * 100) / 100,
+      deliveryFee,
+      notes: body.notes || '',
+      commission: { enabled: !!mcfg.commissionEnabled, rate: comm.rate, amount: comm.amount, currency: 'KES' },
+      platformCommission: comm.amount,
+      sellerNet: money2(itemsSubtotal + deliveryFee - comm.amount)
+    };
+    if (!b.orders) b.orders = [];
+    b.orders.unshift(order);
+    b.updatedAt = new Date().toISOString();
+    // strip circular / store only data fields
+    const { id: _id, ownerId: _oid, ...data } = b;
+    data.id = b.id;
+    data.ownerId = b.ownerId;
+    await pool.query('UPDATE businesses SET data=$2, updated_at=NOW() WHERE id=$1', [b.id, JSON.stringify(data)]);
+    return json(res, 200, { ok: true, order: { id: order.id, number: order.number, total: order.total, storeId: b.id, storeName: b.name } });
+  }
+  if (pathname === '/api/marketplace/admin/stats' && method === 'GET') {
+    const c = await requireAuth(req);
+    if (!c || !c.isAdmin) return json(res, 401, { error: 'Admin only' });
+    const all = await loadAllBusinesses();
+    const sellers = all.filter(isMarketSeller);
+    const offers = listMarketOffers(all, '');
+    const groups = groupOffersByProduct(offers);
+    return json(res, 200, {
+      sellers: sellers.length,
+      products: groups.length,
+      offers: offers.length,
+      stores: sellers.map(publicStore)
+    });
+  }
+
+
+  if (pathname === '/api/marketplace/config' && method === 'GET') {
+    const c = await requireAuth(req);
+    // public-safe subset for sellers; full for admin
+    const cfg = await getMarketplaceCfg();
+    if (c && c.isAdmin) return json(res, 200, { config: cfg });
+    return json(res, 200, {
+      config: {
+        commissionEnabled: cfg.commissionEnabled,
+        commissionPercent: cfg.commissionPercent,
+        commissionMinKes: cfg.commissionMinKes,
+        commissionMaxKes: cfg.commissionMaxKes,
+        commissionOnDeliveryFee: cfg.commissionOnDeliveryFee,
+        planRates: cfg.planRates || {},
+        payoutNotes: cfg.payoutNotes || ''
+      }
+    });
+  }
+  if (pathname === '/api/marketplace/config' && method === 'PUT') {
+    const c = await requireAuth(req);
+    if (!c || !c.isAdmin) return json(res, 401, { error: 'Admin only' });
+    const body = await readBody(req);
+    const cur = await getMarketplaceCfg();
+    const next = {
+      ...cur,
+      commissionEnabled: body.commissionEnabled != null ? !!body.commissionEnabled : cur.commissionEnabled,
+      commissionPercent: body.commissionPercent != null ? Number(body.commissionPercent) : cur.commissionPercent,
+      commissionMinKes: body.commissionMinKes != null ? Number(body.commissionMinKes) : cur.commissionMinKes,
+      commissionMaxKes: body.commissionMaxKes != null ? Number(body.commissionMaxKes) : cur.commissionMaxKes,
+      commissionOnDeliveryFee: body.commissionOnDeliveryFee != null ? !!body.commissionOnDeliveryFee : cur.commissionOnDeliveryFee,
+      planRates: body.planRates && typeof body.planRates === 'object' ? body.planRates : (cur.planRates || {}),
+      payoutNotes: body.payoutNotes != null ? String(body.payoutNotes) : cur.payoutNotes,
+      merchantFeedEnabled: body.merchantFeedEnabled != null ? !!body.merchantFeedEnabled : cur.merchantFeedEnabled
+    };
+    await setCfg('marketplace', next);
+    return json(res, 200, { ok: true, config: next });
+  }
+
+  /* Google Merchant Center product feed (XML) */
+  if ((pathname === '/feeds/google-merchant.xml' || pathname === '/api/marketplace/google-merchant.xml') && method === 'GET') {
+    const cfg = await getMarketplaceCfg();
+    if (cfg.merchantFeedEnabled === false) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Merchant feed disabled');
+    }
+    const base = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '') || ('https://' + (req.headers.host || 'localhost'));
+    const all = await loadAllBusinesses();
+    const offers = listMarketOffers(all, '');
+    // One feed entry per seller offer (unique id per store+product)
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+    xml += `<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">\n<channel>\n`;
+    xml += `<title>MyBusinessHub Marketplace</title>\n<link>${escapeHtml(base)}/marketplace</link>\n`;
+    xml += `<description>Products from MyBusinessHub participating sellers</description>\n`;
+    const seen = new Set();
+    for (const o of offers.slice(0, 20000)) {
+      const id = String(o.store.id) + '_' + String(o.product.id || o.key);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const title = o.product.name || 'Product';
+      const desc = o.product.description || o.product.sub || title;
+      const link = base + '/product/' + encodeURIComponent(o.key);
+      const image = o.product.image || (base + '/logo-mark.png');
+      const availability = (o.stock > 0) ? 'in_stock' : 'out_of_stock';
+      const price = (Number(o.price) || 0).toFixed(2) + ' KES';
+      const brand = o.product.brand || o.store.name || 'MyBusinessHub';
+      const condition = 'new';
+      const gtin = o.product.barcode || '';
+      const mpn = o.product.sku || o.product.model || '';
+      xml += `<item>\n`;
+      xml += `<g:id>${escapeHtml(id)}</g:id>\n`;
+      xml += `<g:title>${escapeHtml(title).slice(0, 150)}</g:title>\n`;
+      xml += `<g:description>${escapeHtml(desc).slice(0, 5000)}</g:description>\n`;
+      xml += `<g:link>${escapeHtml(link)}</g:link>\n`;
+      xml += `<g:image_link>${escapeHtml(image)}</g:image_link>\n`;
+      xml += `<g:availability>${availability}</g:availability>\n`;
+      xml += `<g:price>${price}</g:price>\n`;
+      xml += `<g:condition>${condition}</g:condition>\n`;
+      xml += `<g:brand>${escapeHtml(brand).slice(0, 70)}</g:brand>\n`;
+      if (gtin) xml += `<g:gtin>${escapeHtml(String(gtin))}</g:gtin>\n`;
+      if (mpn) xml += `<g:mpn>${escapeHtml(String(mpn))}</g:mpn>\n`;
+      xml += `<g:identifier_exists>${gtin || mpn ? 'yes' : 'no'}</g:identifier_exists>\n`;
+      xml += `<g:seller_name>${escapeHtml(o.store.name)}</g:seller_name>\n`;
+      if (o.store.location) xml += `<g:custom_label_0>${escapeHtml(o.store.location).slice(0, 100)}</g:custom_label_0>\n`;
+      xml += `</item>\n`;
+    }
+    xml += `</channel>\n</rss>`;
+    res.writeHead(200, {
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=600'
+    });
+    return res.end(xml);
+  }
+
+
+  if (pathname === '/sitemap.xml' && method === 'GET') {
+    const base = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '') || ('https://' + (req.headers.host || 'localhost'));
+    const all = await loadAllBusinesses();
+    const groups = groupOffersByProduct(listMarketOffers(all, ''));
+    const stores = all.filter(isMarketSeller).map(publicStore);
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
+    xml += `<url><loc>${base}/marketplace</loc><changefreq>hourly</changefreq></url>\n`;
+    stores.forEach((st) => { xml += `<url><loc>${base}/store/${encodeURIComponent(st.slug)}</loc><changefreq>daily</changefreq></url>\n`; });
+    groups.slice(0, 5000).forEach((g) => { xml += `<url><loc>${base}/product/${encodeURIComponent(g.slug)}</loc><changefreq>daily</changefreq></url>\n`; });
+    xml += `</urlset>`;
+    res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'public, max-age=300' });
+    return res.end(xml);
+  }
+
+  if ((pathname === '/marketplace' || pathname === '/search' || pathname.startsWith('/product/') || pathname.startsWith('/store/') ||
+      pathname === '/feeds/google-merchant.xml') && method === 'GET') {
+    const base = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '') || ('https://' + (req.headers.host || 'localhost'));
+    const all = await loadAllBusinesses();
+    if (pathname === '/marketplace' || pathname === '/search') {
+      const q = qparams.get('q') || '';
+      const groups = groupOffersByProduct(listMarketOffers(all, q)).slice(0, 48);
+      const body = `<h1>Marketplace</h1>
+        <p class="muted">${q ? 'Results for “' + escapeHtml(q) + '”' : 'Compare prices from MyBusinessHub sellers'}</p>
+        <div class="grid">${groups.map((g) => `
+          <a class="card" href="/product/${encodeURIComponent(g.slug)}" style="text-decoration:none;color:inherit">
+            <div class="price">From KES ${g.minPrice.toLocaleString()}</div>
+            <div style="font-weight:600;margin-top:6px">${escapeHtml(g.name)}</div>
+            <div class="muted">${g.sellerCount} seller${g.sellerCount === 1 ? '' : 's'}</div>
+          </a>`).join('') || '<p>No products yet. Sellers can enable Marketplace in Settings.</p>'}
+        </div>
+        <p class="muted" style="margin-top:24px"><a href="/#view=marketplace">Open app marketplace</a></p>`;
+      const html = marketHtmlPage({
+        title: (q ? q + ' — ' : '') + 'MyBusinessHub Marketplace',
+        description: 'Compare prices and buy from multiple MyBusinessHub businesses in Kenya.',
+        canonical: base + pathname + (q ? ('?q=' + encodeURIComponent(q)) : ''),
+        body,
+        jsonLd: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'WebSite',
+          name: 'MyBusinessHub Marketplace',
+          url: base + '/marketplace',
+          potentialAction: { '@type': 'SearchAction', target: base + '/search?q={search_term_string}', 'query-input': 'required name=search_term_string' }
+        })
+      });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
+    if (pathname.startsWith('/product/')) {
+      const key = decodeURIComponent(pathname.replace('/product/', ''));
+      const groups = groupOffersByProduct(listMarketOffers(all, ''));
+      const g = groups.find((x) => x.key === key || x.slug === key);
+      if (!g) { res.writeHead(404, { 'Content-Type': 'text/html' }); return res.end('<h1>Product not found</h1><a href="/marketplace">Marketplace</a>'); }
+      const offersHtml = g.offers.map((o) => `<tr>
+        <td><a href="/store/${encodeURIComponent(o.storeSlug)}">${escapeHtml(o.storeName)}</a><div class="muted">${escapeHtml(o.location || '')}</div></td>
+        <td class="price">KES ${Number(o.price).toLocaleString()}</td>
+        <td>${o.stock > 0 ? o.stock + ' in stock' : 'Out of stock'}</td>
+        <td>Delivery KES ${Number(o.deliveryFee || 0).toLocaleString()}${o.pickup ? ' · Pickup' : ''}</td>
+        <td><a class="btn" href="/#view=marketplace&buy=${encodeURIComponent(g.key)}:${encodeURIComponent(o.storeId)}:${encodeURIComponent(o.productId)}">Buy</a></td>
+      </tr>`).join('');
+      const body = `<p class="muted"><a href="/marketplace">← Marketplace</a></p>
+        <h1>${escapeHtml(g.name)}</h1>
+        <p class="muted">${escapeHtml(g.brand || '')} ${escapeHtml(g.category || '')}</p>
+        <p>${escapeHtml(g.description || '')}</p>
+        <div class="card"><table><thead><tr><th>Seller</th><th>Price</th><th>Stock</th><th>Delivery</th><th></th></tr></thead>
+        <tbody>${offersHtml}</tbody></table></div>`;
+      const jsonLd = JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'Product',
+        name: g.name,
+        description: g.description || g.name,
+        offers: g.offers.map((o) => ({
+          '@type': 'Offer',
+          price: o.price,
+          priceCurrency: 'KES',
+          availability: o.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+          seller: { '@type': 'Organization', name: o.storeName }
+        }))
+      });
+      const html = marketHtmlPage({
+        title: g.name + ' — compare prices | MyBusinessHub',
+        description: `Compare ${g.sellerCount} sellers for ${g.name}. From KES ${g.minPrice}.`,
+        canonical: base + '/product/' + encodeURIComponent(g.slug),
+        body,
+        jsonLd
+      });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
+    if (pathname.startsWith('/store/') ||
+      pathname === '/feeds/google-merchant.xml') {
+      const slug = decodeURIComponent(pathname.replace('/store/', ''));
+      const b = all.find((x) => isMarketSeller(x) && (publicStore(x).slug === slug || x.id === slug));
+      if (!b) { res.writeHead(404); return res.end('Store not found'); }
+      const st = publicStore(b);
+      const products = (b.products || []).filter((p) => p.active !== false && p.online !== false && (p.stock || 0) > 0);
+      const body = `<h1>${escapeHtml(st.name)}</h1>
+        <p class="muted">${escapeHtml(st.location)} · ${st.pickup ? 'Pickup available' : ''} · Delivery fee KES ${st.deliveryFee}</p>
+        <p>${escapeHtml(st.description)}</p>
+        <div class="grid">${products.map((p) => {
+          const key = p.marketKey || productMatchKey(p);
+          return `<a class="card" href="/product/${encodeURIComponent(key)}" style="text-decoration:none;color:inherit">
+            <div style="font-weight:600">${escapeHtml(p.name)}</div>
+            <div class="price">KES ${Number(p.price || 0).toLocaleString()}</div>
+            <div class="muted">${p.stock || 0} in stock</div>
+          </a>`;
+        }).join('')}</div>`;
+      const html = marketHtmlPage({
+        title: st.name + ' | MyBusinessHub Store',
+        description: st.description || ('Shop ' + st.name),
+        canonical: base + '/store/' + encodeURIComponent(st.slug),
+        body,
+        jsonLd: JSON.stringify({ '@context': 'https://schema.org', '@type': 'Store', name: st.name, address: st.location, telephone: st.phone })
+      });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
+  }
+
+
   return json(res, 404, { error: 'Not found' });
 }
 
@@ -1017,7 +1552,15 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://localhost');
     let pathname = url.pathname;
-    if (pathname.startsWith('/api/')) return await handleApi(req, res, pathname);
+    if (
+      pathname.startsWith('/api/') ||
+      pathname === '/sitemap.xml' ||
+      pathname === '/marketplace' ||
+      pathname === '/search' ||
+      pathname.startsWith('/product/') ||
+      pathname.startsWith('/store/') ||
+      pathname === '/feeds/google-merchant.xml'
+    ) return await handleApi(req, res, pathname);
 
     if (pathname === '/') pathname = '/index.html';
     let decoded;
