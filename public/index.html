@@ -574,6 +574,37 @@ html body .sidebar.sb{background:#16181d!important;color:#cbd5e1!important;borde
 .bhp-footer-links button,.bhp-footer-install{border:0;background:transparent;color:#93c5fd;font-size:13px;cursor:pointer;padding:4px 6px}
 .bhp-footer-install{border:1px solid rgba(147,197,253,.35)!important;border-radius:8px!important;padding:6px 10px!important}
 
+
+/* Homepage theme + back */
+.bhp-back,.bhp-footer-back{
+  border:1px solid #e2e8f0;background:#fff;color:#334155;border-radius:10px;
+  padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0
+}
+.bhp-back:hover,.bhp-footer-back:hover{background:var(--bhp-soft,#eff6ff);border-color:var(--bhp,#1d4ed8);color:var(--bhp,#1d4ed8)}
+.bhp-themes{display:flex;gap:6px;align-items:center;padding:4px 6px;border:1px solid #e2e8f0;border-radius:999px;background:#fff}
+.bhp-swatch{width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #cbd5e1;cursor:pointer;padding:0}
+.bhp-swatch.on{box-shadow:0 0 0 2px var(--bhp,#1d4ed8)}
+.bhp-nav-a.on,.bhp-nav-a:hover{background:var(--bhp-soft,#eff6ff)!important;color:var(--bhp,#1d4ed8)!important}
+.bhp-btn-login{border-color:var(--bhp,#1d4ed8)!important;color:var(--bhp,#1d4ed8)!important}
+.bhp-btn-login:hover{background:var(--bhp-soft,#eff6ff)!important}
+.bhp-btn-admin{background:#0f172a}
+.bhp-kicker{color:var(--bhp,#2563eb)!important}
+.bhp-blue{color:var(--bhp,#1d4ed8)!important}
+.bhp-cta-primary{background:var(--bhp,#1d4ed8)!important;box-shadow:0 10px 24px color-mix(in srgb,var(--bhp,#1d4ed8) 30%,transparent)!important}
+.bhp-link{color:var(--bhp,#1d4ed8)!important}
+.bhp-hero{background:radial-gradient(1200px 500px at 90% 20%,var(--bhp-soft,#dbeafe) 0%,#fff 55%)!important}
+.bhp-art-card{
+  background:radial-gradient(circle at 30% 20%,var(--bhp-hero2,#3b82f6),var(--bhp-hero1,#1e3a8a) 55%,#0f172a)!important
+}
+.bhp-banner{
+  background:linear-gradient(90deg,var(--bhp-hero1,#0b3a8f) 0%,var(--bhp,#1d4ed8) 45%,var(--bhp-hero2,#0ea5e9) 100%)!important
+}
+.bhp-feat:hover{border-color:color-mix(in srgb,var(--bhp,#1d4ed8) 40%,#e2e8f0);background:var(--bhp-soft,#eff6ff)}
+@media(max-width:720px){
+  .bhp-themes{order:5;width:100%;justify-content:center}
+  .bhp-back{padding:8px 10px}
+}
+
 </style>
 </head>
 <body>
@@ -2879,6 +2910,7 @@ function cartSubtotal(){const b=biz();let t=0;((b&&b.cart)||[]).forEach(c=>{cons
 function cartDiscountAmt(){const sub=cartSubtotal();return money(Math.min(sub,Math.max(0,Number(S.cartDiscount||0))))}
 function cartTotal(){return money(cartSubtotal()-cartDiscountAmt())}
 function go(v){
+  try{if(S.view&&S.view!==v)S.prevView=S.view}catch(e){}
   if(v==='marketplace'){S.view='marketplace';S.marketResults=S.marketResults||[];render();return;}
 S.view=v;S.viewInvoiceId=null;render()}
 
@@ -3158,18 +3190,39 @@ async function pullOnlineOrders(){
   finally{_ooBusy=false}
 }
 
+function homeTheme(){
+  try{
+    if(S.homeTheme)return S.homeTheme;
+    return localStorage.getItem('bh_home_theme')||'ocean';
+  }catch(e){return 'ocean'}
+}
+function homeThemes(){
+  return {
+    ocean:{name:'Ocean',primary:'#1d4ed8',accent:'#f59e0b',hero1:'#1e3a8a',hero2:'#0ea5e9',soft:'#eff6ff'},
+    sunset:{name:'Sunset',primary:'#ea580c',accent:'#db2777',hero1:'#9a3412',hero2:'#f59e0b',soft:'#fff7ed'},
+    violet:{name:'Violet',primary:'#7c3aed',accent:'#06b6d4',hero1:'#4c1d95',hero2:'#a78bfa',soft:'#f5f3ff'},
+    forest:{name:'Forest',primary:'#059669',accent:'#84cc16',hero1:'#064e3b',hero2:'#34d399',soft:'#ecfdf5'},
+    gold:{name:'Gold',primary:'#d97706',accent:'#0f766e',hero1:'#78350f',hero2:'#fbbf24',soft:'#fffbeb'},
+    rose:{name:'Rose',primary:'#e11d48',accent:'#2563eb',hero1:'#9f1239',hero2:'#fb7185',soft:'#fff1f2'}
+  };
+}
 function viewLanding(){
+  const thKey=homeTheme();
+  const themes=homeThemes();
+  const th=themes[thKey]||themes.ocean;
   const feats=[
-    ['🛒','#2563eb','Sell in-store','Manage your physical shop with ease.'],
+    ['🛒',th.primary,'Sell in-store','Manage your physical shop with ease.'],
     ['📦','#16a34a','Track your stock','Know what\'s in and out of stock.'],
     ['📈','#7c3aed','Grow your business','Get detailed reports and insights.'],
     ['📱','#ea580c','Accept payments','M-Pesa and other secure payment options.'],
     ['🖨','#0891b2','Print reports','Generate and print sales reports.'],
     ['🛡','#22c55e','Stay secure','Your data is safe and always protected.']
   ];
-  return `<div class="bhp min-h-screen bg-white text-slate-800">
+  const swatches=Object.keys(themes).map(k=>`<button type="button" class="bhp-swatch ${k===thKey?'on':''}" data-home-theme="${k}" title="${themes[k].name}" style="background:${themes[k].primary}"></button>`).join('');
+  return `<div class="bhp min-h-screen text-slate-800" style="--bhp:${th.primary};--bhp-accent:${th.accent};--bhp-hero1:${th.hero1};--bhp-hero2:${th.hero2};--bhp-soft:${th.soft}">
   <header class="bhp-header">
     <div class="bhp-header-inner">
+      <button type="button" id="homeBackBtn" class="bhp-back" title="Go back">← Back</button>
       <button type="button" data-go="landing" class="bhp-logo">
         <img src="/logo-mark.png" alt="" class="bhp-logo-img"/>
         <span>
@@ -3186,6 +3239,7 @@ function viewLanding(){
         <button type="button" data-go="login" class="bhp-nav-a">About</button>
       </nav>
       <div class="bhp-actions">
+        <div class="bhp-themes" title="Theme colours">${swatches}</div>
         <button type="button" data-go="marketplace" class="bhp-icon-btn" title="Cart">🛒</button>
         <button type="button" data-go="login" class="bhp-icon-btn" title="Account">👤</button>
         <button type="button" data-go="login" class="bhp-btn-login">Business Login</button>
@@ -3208,7 +3262,7 @@ function viewLanding(){
         <p class="bhp-social-label">Login to your account:</p>
         <div class="bhp-social">
           <button type="button" data-go="login" class="bhp-soc" title="Email login">✉️</button>
-          <button type="button" data-go="login" class="bhp-soc" title="Continue with Google style login">G</button>
+          <button type="button" data-go="login" class="bhp-soc" title="Login">G</button>
           <button type="button" data-go="login" class="bhp-soc" title="Login">f</button>
           <button type="button" data-go="login" class="bhp-soc" title="Login">W</button>
         </div>
@@ -3259,6 +3313,7 @@ function viewLanding(){
     <div class="bhp-footer-inner">
       <p><strong>MyBusinessHub</strong> — Manage · Grow · Succeed</p>
       <div class="bhp-footer-links">
+        <button type="button" id="homeBackBtn2" class="bhp-footer-back">← Back</button>
         <button type="button" data-go="login">Business Login</button>
         <button type="button" data-go="register">Create free account</button>
         <button type="button" data-go="marketplace">Marketplace</button>
@@ -7728,6 +7783,29 @@ render();
     saveBiz(b);toast('Product visibility updated');render();
   };
   
+  
+  function goHomeBack(){
+    try{
+      if(S.prevView && S.prevView!=='landing'){
+        const v=S.prevView;S.prevView=null;S.view=v;render();return;
+      }
+      if(window.history.length>1){window.history.back();return;}
+    }catch(e){}
+    S.view='landing';render();
+  }
+  const homeBackBtn=document.getElementById('homeBackBtn');
+  if(homeBackBtn)homeBackBtn.onclick=goHomeBack;
+  const homeBackBtn2=document.getElementById('homeBackBtn2');
+  if(homeBackBtn2)homeBackBtn2.onclick=goHomeBack;
+  document.querySelectorAll('[data-home-theme]').forEach(function(btn){
+    btn.onclick=function(){
+      const key=btn.getAttribute('data-home-theme')||'ocean';
+      S.homeTheme=key;
+      try{localStorage.setItem('bh_home_theme',key)}catch(e){}
+      render();
+    };
+  });
+
   const landingSearchForm=document.getElementById('landingSearchForm');
   if(landingSearchForm)landingSearchForm.onsubmit=function(e){
     e.preventDefault();
