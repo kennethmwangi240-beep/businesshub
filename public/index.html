@@ -341,6 +341,46 @@ html body .sidebar.sb{background:#16181d!important;color:#cbd5e1!important;borde
 }
 @media(max-width:520px){.main-wrap > header .install-btn{display:none!important}.main-wrap > header button,.main-wrap > header span{white-space:nowrap}.main-wrap > header h1{font-size:16px}}
 @media print{.sb-backdrop,.sb-burger{display:none!important}}
+
+/* === Admin fixed sidebar (match owner/worker shell) === */
+#adminLayout{display:flex!important;min-height:100vh!important;width:100%!important;margin:0!important;position:relative!important;left:0!important;background:#f1f5f9}
+#adminLayout.dark{background:#0f172a;color:#e2e8f0}
+#adminSidebar{width:240px!important;min-width:240px!important;max-width:240px!important;position:fixed!important;left:0!important;top:0!important;bottom:0!important;z-index:50!important;background:#0f172a!important;color:#e2e8f0!important;display:flex!important;flex-direction:column!important;overflow-y:auto!important;margin:0!important}
+#adminMain{margin-left:240px!important;width:calc(100% - 240px)!important;max-width:calc(100% - 240px)!important;min-width:0!important;display:flex!important;flex-direction:column!important;min-height:100vh!important;position:relative!important;left:0!important}
+.ad-side-brand{display:flex;align-items:center;gap:10px;padding:16px 14px;border-bottom:1px solid rgba(255,255,255,.08)}
+.ad-side-logo{width:36px;height:36px;border-radius:10px;object-fit:cover;background:#fff;padding:2px}
+.ad-side-title{font-weight:700;font-size:14px;margin:0;color:#fff}
+.ad-side-sub{font-size:11px;color:#94a3b8;margin:2px 0 0}
+.ad-side-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;padding:14px 16px 6px;margin:0}
+.ad-side-nav{flex:1;padding:4px 8px 12px;overflow-y:auto}
+.ad-nav-item{display:flex!important;align-items:center;justify-content:space-between;width:calc(100% - 4px)!important;text-align:left;padding:10px 12px!important;margin:2px 2px;border-radius:10px!important;font-size:13px!important;color:#cbd5e1!important;border:0!important;background:transparent!important;cursor:pointer}
+.ad-nav-item:hover{background:rgba(255,255,255,.08)!important;color:#fff!important}
+.ad-nav-item.active{background:rgba(13,148,136,.35)!important;color:#fff!important;font-weight:600!important}
+.ad-nav-badge{display:inline-block;min-width:18px;text-align:center;font-size:11px;font-weight:700;border-radius:999px;background:#ef4444;color:#fff;padding:1px 6px;margin-left:6px}
+.ad-side-foot{padding:12px;border-top:1px solid rgba(255,255,255,.08)}
+.ad-side-foot-txt{font-size:11px;color:#64748b;margin:0 0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ad-side-logout{width:100%;padding:10px;border:0;border-radius:10px;background:rgba(255,255,255,.1);color:#fff;cursor:pointer;font-size:13px}
+.ad-side-logout:hover{background:rgba(255,255,255,.18)}
+.ad-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;background:rgba(255,255,255,.95);border-bottom:1px solid #e2e8f0;position:sticky;top:0;z-index:20;flex-wrap:wrap}
+#adminLayout.dark .ad-topbar{background:#1e293b;border-color:#334155;color:#e2e8f0}
+.ad-topbar-left{display:flex;align-items:center;gap:10px;min-width:0}
+.ad-topbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ad-top-title{font-weight:700;font-size:15px;margin:0}
+.ad-top-sub{font-size:11px;color:#64748b;margin:2px 0 0}
+.ad-burger{display:none;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer}
+.ad-dark-btn,.ad-top-logout{font-size:12px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer}
+.ad-swatches{display:flex;gap:6px;align-items:center}
+.ad-content{padding:16px;width:100%;max-width:1100px;margin:0 auto;box-sizing:border-box}
+.ad-banner{border-radius:12px;padding:12px;font-size:13px;margin-bottom:12px}
+.ad-banner-sky{background:#e0f2fe;border:1px solid #bae6fd;color:#0c4a6e}
+#adminLayout.dark .ad-content .bg-white{background:#1e293b!important;color:#e2e8f0}
+@media(max-width:768px){
+  #adminSidebar{transform:translateX(-105%)!important;transition:transform .2s}
+  #adminSidebar.open{transform:translateX(0)!important;box-shadow:8px 0 24px rgba(0,0,0,.3)}
+  #adminMain{margin-left:0!important;width:100%!important;max-width:100%!important}
+  .ad-burger{display:inline-block!important}
+}
+
 </style>
 </head>
 <body>
@@ -2645,7 +2685,9 @@ function cartSubtotal(){const b=biz();let t=0;((b&&b.cart)||[]).forEach(c=>{cons
 /** Discount is a shilling amount taken off the cart subtotal (never more than the subtotal) */
 function cartDiscountAmt(){const sub=cartSubtotal();return money(Math.min(sub,Math.max(0,Number(S.cartDiscount||0))))}
 function cartTotal(){return money(cartSubtotal()-cartDiscountAmt())}
-function go(v){S.view=v;S.viewInvoiceId=null;render()}
+function go(v){
+  if(v==='marketplace'){S.view='marketplace';S.marketResults=S.marketResults||[];render();return;}
+S.view=v;S.viewInvoiceId=null;render()}
 
 function workerSession(){
   try{return JSON.parse(localStorage.getItem('bh_worker_session')||'null')}catch(e){return null}
@@ -2836,6 +2878,7 @@ function _renderInner(){
     else if(S.view==='adminLogin')setRoot(viewAdminLogin());
     else if(S.view==='adminRegister')setRoot(viewAdminRegister());
     else if(S.view==='onboard')setRoot(viewOnboard());
+    else if(S.view==='marketplace')setRoot(viewPublicMarketplace());
     else if(S.view==='online')setRoot(viewOnline());
     else if(S.view==='admin')setRoot(viewAdmin());
     else setRoot(viewApp());
@@ -2941,7 +2984,7 @@ function viewLanding(){
     <div class="flex items-center gap-2"><img src="/logo-mark.png" alt="MyBusinessHub" class="h-10 w-10 rounded-xl object-cover shadow-sm"/><span class="font-extrabold text-lg"><span style="color:#0b3a8f">MyBusiness</span><span style="color:#f59e0b">Hub</span></span></div>
     <div class="flex gap-1 sm:gap-2 text-sm items-center">
       <button type="button" data-go="online" class="lp-btn px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-100">Order online</button>
-      <button type="button" data-go="login" class="lp-btn px-3 py-1.5 rounded-lg hover:bg-slate-100">Client log in</button>
+      <button type="button" data-go="marketplace" class="lp-btn px-3 py-1.5 rounded-lg hover:bg-slate-100">Client log in</button>
       <button type="button" data-go="register" class="lp-btn lp-primary px-4 py-1.5 rounded-xl font-medium">Start free</button>
       ${installBtn('px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 bg-white','Install app')}
       <button type="button" data-go="adminLogin" class="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-700">Admin</button>
@@ -3278,7 +3321,7 @@ function viewWorkerApp(){
     ['dashboard','Mini dashboard'],
     ['shop','Shop / POS'],
     ['invoices','Invoices & receipts'],
-    ['onlineorders','Online orders'],
+    ['marketplace','Marketplace'],['onlineorders','Online orders'],
     ['delivery','Delivery'],
     ['stock','Stock'],
     ['products','Products'],
@@ -3401,7 +3444,7 @@ function ownerSidebar(b,accent,user,bizSwitch){
   // [view key, label, icon, badge, badge style]
   const groups=[
     {id:'main',label:'',items:[['dashboard','Dashboard','home'],['wallet','Wallet & trends','trend']]},
-    {id:'sales',label:'Sales',items:[['shop','Shop (POS)','cart',cartN,'soft'],['invoices','Invoices','file'],['quotations','Quotations','clip'],['onlineorders','Online orders','globe',newOnline,'']]},
+    {id:'sales',label:'Sales',items:[['shop','Shop (POS)','cart',cartN,'soft'],['invoices','Invoices','file'],['quotations','Quotations','clip'],['marketplace','Marketplace'],['marketplace','Marketplace','globe'],['onlineorders','Online orders','globe',newOnline,'']]},
     {id:'catalog',label:'Catalog',items:[['products','Products','tag'],['stock','Stock','box',lowN,'warn'],['purchases','Purchases','download']]},
     {id:'people',label:'Customers',items:[['customers','Customers','users'],['loyalty','Loyalty','heart']]},
     {id:'finance',label:'Finance',items:[['expenses','Finance','dollar'],['reports','Reports','chart'],['shifts','Shifts','clock']]},
@@ -3473,6 +3516,7 @@ function viewApp(){
     else if(S.appView==='invoices')main=secInvoices(b,accent);
     else if(S.appView==='expenses')main=secExpenses(b,accent);
     else if(S.appView==='reports')main=secReports(b,accent);
+    else if(S.appView==='marketplace')main=secMarketplaceOwner(b,accent);
     else if(S.appView==='onlineorders')main=secOnlineOrders(b,accent);
     else if(S.appView==='orders')main=secOnlineOrders(b,accent);
     else if(S.appView==='delivery')main=secDelivery(b,accent);
@@ -3485,7 +3529,7 @@ function viewApp(){
     else if(S.appView==='settings')main=secSettings(b,accent);
     else main=secDash(b,accent);
   }catch(e){main=`<div class="p-4 text-red-600">${esc(String(e))}</div>`;console.error(e)}
-  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (POS)',stock:'Stock',products:'Products',purchases:'Purchases',customers:'Customers',quotations:'Quotations',invoices:'Invoices',expenses:'Finance',reports:'Reports',onlineorders:'Online store',orders:'Online orders',delivery:'Delivery',branches:'Branches',team:'Workers',loyalty:'Loyalty',shifts:'Cashier shifts',ai:'AI assistant',help:'User guide',settings:'Settings'};
+  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (POS)',stock:'Stock',products:'Products',purchases:'Purchases',customers:'Customers',quotations:'Quotations',invoices:'Invoices',expenses:'Finance',reports:'Reports',marketplace:'Marketplace',onlineorders:'Online store',orders:'Online orders',delivery:'Delivery',branches:'Branches',team:'Workers',loyalty:'Loyalty',shifts:'Cashier shifts',ai:'AI assistant',help:'User guide',settings:'Settings'};
   return `<div class="layout">
   ${ownerSidebar(b,accent,user,bizSwitch)}
   <div class="main-wrap">
@@ -4440,6 +4484,167 @@ function secExpenses(b,a){
   <div class="bg-white rounded-2xl border"><table class="w-full text-sm"><tbody>${rows||'<tr><td class="p-8 text-center text-slate-400">None</td></tr>'}</tbody></table></div>`;
 }
 
+
+
+function localMarketSearch(q){
+  const tokens=String(q||'').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const map={};
+  (db().businesses||[]).forEach(function(b){
+    if(b.suspended)return;
+    const m=b.marketplace||{};
+    const st=m.status||(b.onlineStore===false?'disabled':'active');
+    if(st!=='active')return;
+    (b.products||[]).forEach(function(p){
+      if(p.active===false||p.online===false)return;
+      if((p.stock||0)<=0)return;
+      const hay=[p.name,p.brand,p.model,p.category,p.sku,p.sub].join(' ').toLowerCase();
+      if(tokens.length&&!tokens.every(t=>hay.includes(t)))return;
+      const key=String(p.name||'').toLowerCase().replace(/[^a-z0-9]+/g,'-');
+      if(!map[key])map[key]={key,name:p.name,minPrice:Number(p.price)||0,sellerCount:0,offers:[]};
+      map[key].sellerCount++;
+      map[key].minPrice=Math.min(map[key].minPrice,Number(p.price)||0);
+      map[key].offers.push({storeId:b.id,storeName:b.name,price:Number(p.price)||0,stock:p.stock||0,productId:p.id,location:b.address||'',deliveryFee:Number((b.marketplace||{}).deliveryFee||0),pickup:(b.marketplace||{}).pickup!==false});
+    });
+  });
+  return Object.values(map).sort((a,b)=>a.minPrice-b.minPrice);
+}
+function openMarketProduct(key){
+  const panel=document.getElementById('mktProductPanel');
+  const show=function(g){
+    if(!panel||!g)return;
+    panel.innerHTML=`<div class="bg-white border rounded-2xl p-5">
+      <h2 class="text-lg font-bold">${esc(g.name)}</h2>
+      <p class="text-sm text-slate-500 mb-3">${g.sellerCount|| (g.offers||[]).length} sellers · sorted by price</p>
+      <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-500"><th class="py-2">Seller</th><th>Price</th><th>Stock</th><th>Delivery</th><th></th></tr></thead><tbody>
+      ${(g.offers||[]).map(o=>`<tr class="border-t"><td class="py-2"><b>${esc(o.storeName)}</b><div class="text-xs text-slate-500">${esc(o.location||'')}</div></td>
+        <td class="font-semibold text-teal-700">${kes(o.price)}</td><td>${o.stock}</td>
+        <td class="text-xs">KES ${Number(o.deliveryFee||0)}${o.pickup?' · Pickup':''}</td>
+        <td><button type="button" class="px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold" data-mkt-buy="${esc(o.storeId)}|${esc(o.productId)}|${esc(o.storeName)}|${Number(o.price)}">Buy</button></td></tr>`).join('')}
+      </tbody></table></div></div>`;
+    panel.querySelectorAll('[data-mkt-buy]').forEach(function(btn){
+      btn.onclick=function(){
+        const parts=btn.getAttribute('data-mkt-buy').split('|');
+        mktCheckoutPrompt(parts[0],parts[1],parts[2],Number(parts[3]));
+      };
+    });
+  };
+  if(SERVER_MODE){
+    api('/api/marketplace/product/'+encodeURIComponent(key)).then(function(d){show(d.product)}).catch(function(){
+      const local=localMarketSearch('').find(x=>x.key===key)||(S.marketResults||[]).find(x=>x.key===key);
+      if(local&&!local.offers){local.offers=localMarketSearch(local.name).find(x=>x.key===key)?.offers||[]}
+      show(local);
+    });
+  }else{
+    const local=(S.marketResults||[]).find(x=>x.key===key)||localMarketSearch('').find(x=>x.key===key);
+    show(local);
+  }
+}
+function mktCheckoutPrompt(storeId,productId,storeName,price){
+  const name=prompt('Your name'); if(!name)return;
+  const phone=prompt('M-Pesa phone (07…)'); if(!phone)return;
+  const address=prompt('Delivery address (or type PICKUP)','PICKUP')||'PICKUP';
+  const fulfill=address.toUpperCase()==='PICKUP'?'pickup':'delivery';
+  const payload={storeId,items:[{productId,qty:1}],customerName:name,phone,address:fulfill==='pickup'?'':address,fulfill,payMethod:'mpesa'};
+  if(SERVER_MODE){
+    api('/api/marketplace/checkout',{method:'POST',body:payload}).then(function(d){
+      toast('Order '+d.order.number+' placed · pay M-Pesa to the seller · total '+kes(d.order.total));
+    }).catch(function(e){toast(e.message||'Checkout failed')});
+  }else{
+    toast('Connect to server to place marketplace orders. Item: '+storeName+' @ '+kes(price));
+  }
+}
+
+function ensureMarketplace(b){
+  if(!b.marketplace)b.marketplace={enabled:!!b.onlineStore,status:b.onlineStore===false?'disabled':'active',storeName:b.name||'',description:'',location:b.address||'',deliveryAreas:'',pickup:true,deliveryFee:0,paymentMethods:['mpesa','cash'],storeSlug:'',contactPhone:b.phone||'',logo:''};
+  return b.marketplace;
+}
+function secMarketplaceOwner(b,a){
+  const m=ensureMarketplace(b);
+  const prods=(b.products||[]);
+  const published=prods.filter(p=>p.active!==false&&p.online!==false);
+  const hidden=prods.filter(p=>p.online===false);
+  const mktOrders=(b.orders||[]).filter(o=>o.source==='marketplace');
+  const pending=mktOrders.filter(o=>['NEW','CONFIRMED','PROCESSING'].includes(String(o.orderStatus||o.status||'NEW').toUpperCase()));
+  const sales=mktOrders.filter(o=>o.paymentStatus==='paid'||o.status==='paid').reduce((s,o)=>s+Number(o.total||0),0);
+  const status=m.status||(m.enabled===false?'disabled':'active');
+  return `<div class="space-y-4">
+    <div class="rounded-2xl border bg-white p-5">
+      <h2 class="text-lg font-bold">Marketplace participation</h2>
+      <p class="text-sm text-slate-500 mt-1">Appear in the public MyBusinessHub marketplace so customers can compare your prices with other sellers. Stock and prices stay linked to this business — nothing is duplicated.</p>
+      <div class="grid md:grid-cols-3 gap-3 mt-4">
+        <div class="rounded-xl border p-3 bg-slate-50"><p class="text-xs text-slate-500">Published products</p><p class="text-xl font-bold">${published.length}</p></div>
+        <div class="rounded-xl border p-3 bg-slate-50"><p class="text-xs text-slate-500">Marketplace orders</p><p class="text-xl font-bold">${mktOrders.length}</p></div>
+        <div class="rounded-xl border p-3 bg-slate-50"><p class="text-xs text-slate-500">Online sales (paid)</p><p class="text-xl font-bold">${kes(sales)}</p></div>
+      </div>
+    </div>
+    <form id="mktSettingsForm" class="rounded-2xl border bg-white p-5 space-y-3">
+      <h3 class="font-semibold">Store settings</h3>
+      <label class="block text-sm">Online selling status
+        <select name="status" class="w-full border rounded-xl px-3 py-2 mt-1">
+          <option value="active" ${status==='active'?'selected':''}>Online selling enabled</option>
+          <option value="disabled" ${status==='disabled'?'selected':''}>Online selling disabled</option>
+          <option value="unavailable" ${status==='unavailable'?'selected':''}>Store temporarily unavailable</option>
+        </select>
+      </label>
+      <div class="grid md:grid-cols-2 gap-3">
+        <label class="block text-sm">Store name<input name="storeName" value="${esc(m.storeName||b.name||'')}" class="w-full border rounded-xl px-3 py-2 mt-1"/></label>
+        <label class="block text-sm">Store slug (URL)<input name="storeSlug" value="${esc(m.storeSlug||'')}" placeholder="auto from name" class="w-full border rounded-xl px-3 py-2 mt-1"/></label>
+        <label class="block text-sm md:col-span-2">Description<textarea name="description" rows="2" class="w-full border rounded-xl px-3 py-2 mt-1">${esc(m.description||'')}</textarea></label>
+        <label class="block text-sm">Location<input name="location" value="${esc(m.location||b.address||'')}" class="w-full border rounded-xl px-3 py-2 mt-1"/></label>
+        <label class="block text-sm">Contact phone<input name="contactPhone" value="${esc(m.contactPhone||b.phone||'')}" class="w-full border rounded-xl px-3 py-2 mt-1"/></label>
+        <label class="block text-sm">Delivery areas<input name="deliveryAreas" value="${esc(m.deliveryAreas||'')}" placeholder="Nairobi CBD, Westlands…" class="w-full border rounded-xl px-3 py-2 mt-1"/></label>
+        <label class="block text-sm">Delivery fee (KES)<input name="deliveryFee" type="number" min="0" step="1" value="${Number(m.deliveryFee||0)}" class="w-full border rounded-xl px-3 py-2 mt-1"/></label>
+      </div>
+      <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="pickup" ${m.pickup!==false?'checked':''}/> Pickup available</label>
+      <p class="text-xs text-slate-500">Public store: <a class="text-teal-700" href="/store/${encodeURIComponent(m.storeSlug||b.name||b.id)}" target="_blank" rel="noopener">/store/…</a> · Marketplace: <a class="text-teal-700" href="/marketplace" target="_blank" rel="noopener">/marketplace</a></p>
+      <button type="submit" class="px-5 py-2.5 rounded-xl text-white font-medium" style="background:${a||'#0d9488'}">Save marketplace settings</button>
+    </form>
+    <div class="rounded-2xl border bg-white p-5">
+      <h3 class="font-semibold mb-2">Products on marketplace</h3>
+      <p class="text-xs text-slate-500 mb-3">Uncheck to hide a product from the public marketplace (still available in POS).</p>
+      <div class="max-h-72 overflow-y-auto divide-y text-sm">
+        ${prods.slice(0,200).map(p=>`<label class="flex items-center gap-3 py-2"><input type="checkbox" data-mkt-prod="${p.id}" ${p.online===false?'':'checked'}/> <span class="flex-1">${esc(p.name)}</span> <span class="text-slate-500">${kes(p.price)} · stock ${p.stock||0}</span></label>`).join('')||'<p class="text-slate-400">No products yet</p>'}
+      </div>
+      <button type="button" id="mktSaveProducts" class="mt-3 px-4 py-2 rounded-xl border font-medium">Save product visibility</button>
+    </div>
+    <div class="rounded-2xl border bg-white p-5">
+      <div id="mktOwnerComm" class="rounded-2xl border bg-amber-50 border-amber-100 p-4 text-sm text-amber-950 mb-2">Platform commission: loading…</div>
+    <h3 class="font-semibold">Pending marketplace orders</h3>
+      <p class="text-xs text-slate-500 mb-2">${pending.length} open · manage full list under Online orders</p>
+      <ul class="text-sm space-y-1">${pending.slice(0,10).map(o=>`<li><b>${esc(o.number)}</b> · ${esc(o.customer||'')} · ${kes(o.total)} · ${esc(o.orderStatus||o.status||'NEW')}</li>`).join('')||'<li class="text-slate-400">None</li>'}</ul>
+      <button type="button" data-nav="onlineorders" class="mt-3 text-sm text-teal-700 font-medium">Open online orders →</button>
+    </div>
+  </div>`;
+}
+function viewPublicMarketplace(){
+  const q=S.marketQ||'';
+  const results=S.marketResults||[];
+  const loading=!!S.marketLoading;
+  return `<div class="min-h-screen bg-slate-50">
+    <header class="bg-slate-900 text-white px-4 py-3 flex flex-wrap items-center gap-3">
+      <button type="button" data-go="landing" class="font-bold">MyBusinessHub</button>
+      <form id="mktSearchForm" class="flex-1 flex gap-2 min-w-[200px]">
+        <input name="q" value="${esc(q)}" placeholder="Search products across all sellers…" class="flex-1 rounded-xl px-3 py-2 text-slate-900"/>
+        <button class="px-4 py-2 rounded-xl bg-teal-600 font-semibold">Search</button>
+      </form>
+      <button type="button" data-go="login" class="text-sm opacity-90">Business login</button>
+    </header>
+    <main class="max-w-5xl mx-auto p-4">
+      <h1 class="text-xl font-bold mb-1">Marketplace</h1>
+      <p class="text-sm text-slate-500 mb-4">Compare prices from participating businesses. Same live stock as each shop’s inventory.</p>
+      ${loading?'<p class="text-sm text-slate-500">Searching…</p>':''}
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        ${results.map(g=>`<button type="button" data-mkt-product="${esc(g.key)}" class="text-left bg-white border rounded-2xl p-4 hover:border-teal-500">
+          <p class="text-teal-700 font-bold">From ${kes(g.minPrice)}</p>
+          <p class="font-semibold mt-1">${esc(g.name)}</p>
+          <p class="text-xs text-slate-500 mt-1">${g.sellerCount} seller${g.sellerCount===1?'':'s'}</p>
+        </button>`).join('')||(!loading?`<p class="text-slate-400 col-span-full">No matches. Try another search or open <a class="text-teal-700" href="/marketplace" target="_blank">/marketplace</a>.</p>`:'')}
+      </div>
+      <div id="mktProductPanel" class="mt-6"></div>
+    </main>
+  </div>`;
+}
+
 function secOnlineOrders(b,a){
   const online=(b.orders||[]).filter(o=>o.source==='online').slice().reverse();
   const statuses=['NEW','CONFIRMED','PROCESSING','READY','DISPATCHED','DELIVERED','CANCELLED','PENDING','PAID'];
@@ -4675,7 +4880,7 @@ function secTeam(b,a){
   ensureBranches(b);
   const workers=b.workers||[];
   const branches=b.branches||[{id:'main',name:'Main branch'}];
-  const permLabels={dashboard:'Mini dashboard',shop:'Shop / POS',invoices:'Invoices & receipts',onlineorders:'Online orders',delivery:'Delivery',stock:'View stock'};
+  const permLabels={dashboard:'Mini dashboard',shop:'Shop / POS',invoices:'Invoices & receipts',marketplace:'Marketplace',onlineorders:'Online orders',delivery:'Delivery',stock:'View stock'};
   return `<div class="space-y-4">
     <div class="bg-white rounded-2xl border p-4">
       <h3 class="font-semibold">Worker management</h3>
@@ -5072,10 +5277,16 @@ function viewAdmin(){
   const swatches=Object.keys(AD_THEMES).map(k=>`<button type="button" data-ad-theme="${k}" title="${k}" aria-label="${k} theme" class="ad-sw ${adTheme()===k?'on':''}" style="background:${AD_THEMES[k]}"></button>`).join('');
 
   const tabs=[
-    ['overview','Dashboard'],['clients','Users'],['businesses','Businesses'],['plans','Subscription plans'],['payments','Payments'],['tickets','Support'],['analytics','Analytics'],['profile','Platform settings'],['updates','Announcements'],['alerts','Alerts'],['audit','Audit log'],['backup','Backups']
+    ['overview','Dashboard'],['clients','Users'],['businesses','Businesses'],['plans','Subscription plans'],['payments','Payments'],['tickets','Support'],['analytics','Analytics'],['profile','Platform settings'],['updates','Announcements'],['alerts','Alerts'],['audit','Audit log'],['marketplace','Marketplace'],['backup','Backups']
   ];
   const nPay=pendingPayments(d).length;const nRec=(d.adminAlerts||[]).filter(a=>a.type==='password_reset_request').length;
-  const tabNav=tabs.map(([k,l])=>`<button type="button" data-admin-tab="${k}" class="w-full text-left px-3 py-2.5 rounded-lg text-sm mb-0.5 ${tab===k?'bg-teal-600 text-white font-semibold':'text-slate-300 hover:bg-white/10'}">${l}${(((k==='alerts')&&(nPay+nRec))||((k==='overview')&&nPay))?` <span class="ml-1 inline-block min-w-[18px] text-center text-[11px] font-bold rounded-full bg-red-500 text-white px-1.5">${k==='alerts'?nPay+nRec:nPay}</span>`:''}</button>`).join('');
+  const badge=function(k){
+    if(k==='alerts'&&(nPay+nRec))return `<span class="ad-nav-badge">${nPay+nRec}</span>`;
+    if(k==='payments'&&nPay)return `<span class="ad-nav-badge">${nPay}</span>`;
+    if(k==='overview'&&nPay)return `<span class="ad-nav-badge">${nPay}</span>`;
+    return '';
+  };
+  const tabNav=tabs.map(([k,l])=>`<button type="button" data-admin-tab="${k}" class="ad-nav-item ${tab===k?'active':''}"><span>${l}</span>${badge(k)}</button>`).join('');
 
   let body='';
   if(tab==='overview'){
@@ -5361,7 +5572,45 @@ function viewAdmin(){
         <p class="text-xs text-slate-500">Full Daraja callback auto-activation is configured when Safaricom credentials and a public callback URL are set in platform settings.</p>
       </div>
     </div>`;
-  }else if(tab==='backup'){
+  } else if(tab==='marketplace'){
+    body=`<div class="space-y-4">
+      <div class="bg-white rounded-2xl border p-5">
+        <h2 class="font-bold text-lg">Marketplace admin</h2>
+        <p class="text-sm text-slate-500 mt-1">Participating sellers, listing quality and discovery. Product data is read live from each business inventory (no separate catalog copy).</p>
+        <button type="button" id="adminMktRefresh" class="mt-3 px-4 py-2 rounded-xl border text-sm font-medium">Refresh stats</button>
+        <div id="adminMktStats" class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm"><p class="text-slate-400 col-span-full">Click refresh (requires server).</p></div>
+      </div>
+      <div class="bg-white rounded-2xl border p-5">
+        <h3 class="font-semibold mb-2">Public URLs</h3>
+        <ul class="text-sm space-y-1 list-disc pl-5">
+          <li><a class="text-teal-700" href="/marketplace" target="_blank">/marketplace</a></li>
+          <li><a class="text-teal-700" href="/search?q=cable" target="_blank">/search?q=…</a></li>
+          <li><a class="text-teal-700" href="/sitemap.xml" target="_blank">/sitemap.xml</a> (Google)</li>
+        </ul>
+        </div>
+      <div class="bg-white rounded-2xl border p-5">
+        <h3 class="font-semibold mb-2">Google Merchant Center feed</h3>
+        <p class="text-sm text-slate-500"><a class="text-teal-700" href="/feeds/google-merchant.xml" target="_blank">/feeds/google-merchant.xml</a></p>
+      </div>
+      <form id="adminMktCommissionForm" class="bg-white rounded-2xl border p-5 space-y-3">
+        <h3 class="font-semibold">Commission rules</h3>
+        <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="commissionEnabled" id="mktCommEnabled"/> Commission enabled</label>
+        <div class="grid md:grid-cols-3 gap-3">
+          <label class="text-sm">Default %<input name="commissionPercent" type="number" step="0.1" min="0" class="w-full border rounded-xl px-3 py-2 mt-1" value="2.5"/></label>
+          <label class="text-sm">Min KES<input name="commissionMinKes" type="number" min="0" class="w-full border rounded-xl px-3 py-2 mt-1" value="0"/></label>
+          <label class="text-sm">Max KES<input name="commissionMaxKes" type="number" min="0" class="w-full border rounded-xl px-3 py-2 mt-1" value="0"/></label>
+        </div>
+        <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="commissionOnDeliveryFee" id="mktCommDelivery"/> % on delivery fee</label>
+        <label class="block text-sm">Plan rates JSON<input name="planRates" class="w-full border rounded-xl px-3 py-2 mt-1 font-mono text-xs"/></label>
+        <label class="block text-sm">Payout notes<textarea name="payoutNotes" rows="2" class="w-full border rounded-xl px-3 py-2 mt-1"></textarea></label>
+        <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="merchantFeedEnabled" id="mktFeedEnabled" checked/> Merchant feed on</label>
+        <button type="submit" class="px-5 py-2.5 rounded-xl text-white font-medium ad-btn">Save settings</button>
+        <p id="adminMktCommMsg" class="text-xs text-slate-500"></p>
+      </form>
+    </div>`;
+  }
+
+  if(tab==='backup'){
     body=`<div class="bg-white rounded-2xl border p-6 max-w-2xl space-y-4">
       <div>
         <h3 class="font-semibold mb-1">Platform admin backup</h3>
@@ -5393,35 +5642,44 @@ function viewAdmin(){
     </div>`;
   }
 
-  return `<div class="ad ${dark?'dark':''} min-h-screen bg-slate-100" style="--ad:${accentC}">
-  <header class="text-white px-4 h-14 flex items-center justify-between sticky top-0 z-20" style="background:linear-gradient(90deg,#0f172a,color-mix(in srgb,${accentC} 55%,#0f172a))">
-    <div class="font-bold text-sm md:text-base flex items-center gap-2"><img src="/logo-mark.png" alt="" class="h-8 w-8 rounded-md object-cover bg-white p-0.5"/>MyMyBusinessHub · Platform admin</div>
-    <div class="flex items-center gap-2 text-sm">
-      <span class="text-slate-300 hidden md:inline">${esc(p.company||'MyBusinessHub')}</span>
-      ${installBtn('px-3 py-1.5 rounded-lg','Install app',accentC)}
-      <button type="button" id="signOut" class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">Log out</button>
+  return `<div class="ad ${dark?'dark':''}" id="adminLayout" style="--ad:${accentC}">
+  <aside id="adminSidebar" class="${S.adminMenuOpen?'open':''}">
+    <div class="ad-side-brand">
+      <img src="/logo-mark.png" alt="" class="ad-side-logo"/>
+      <div>
+        <p class="ad-side-title">MyBusinessHub</p>
+        <p class="ad-side-sub">Platform admin</p>
+      </div>
     </div>
-  </header>
-  <div class="max-w-6xl mx-auto p-4 md:p-6">
-    <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-sm text-amber-950 mb-4">
-      <b>Private admin area.</b> Clients never see this menu. You manage accounts, trials, plans and notices.
+    <p class="ad-side-label">Menu</p>
+    <nav class="ad-side-nav">${tabNav}</nav>
+    <div class="ad-side-foot">
+      <p class="ad-side-foot-txt">${esc((p.company||'BusinessHub'))}</p>
+      <button type="button" id="signOut" class="ad-side-logout">Log out</button>
     </div>
-    ${SERVER_MODE?'':`<div class="bg-sky-50 border border-sky-100 rounded-xl p-3 text-sm text-sky-950 mb-4">
-      <b>Same browser / same device data.</b> This app stores data in the browser (localStorage). Clients who register on <i>another</i> phone or computer are not visible here until you use a shared server or they send a <b>business backup</b> file and you restore it. On <b>this</b> device you can fully manage every client who registered here: plans, trial, suspend, delete, notices.
-    </div>`}
-    <div class="flex flex-wrap items-center gap-3 mb-4 bg-white border rounded-xl px-3 py-2">
-      <span class="text-xs font-medium text-slate-500">Colour theme</span>
-      <div class="flex items-center gap-2">${swatches}</div>
-      <button type="button" id="adDark" class="ml-auto text-xs px-3 py-1.5 rounded-lg border ad-tab">${dark?'☀ Light mode':'🌙 Dark mode'}</button>
+  </aside>
+  <div id="adminMain">
+    <header class="ad-topbar">
+      <div class="ad-topbar-left">
+        <button type="button" id="adminMenuToggle" class="ad-burger" aria-label="Menu">☰</button>
+        <div>
+          <p class="ad-top-title">${esc((tabs.find(t=>t[0]===tab)||['','Dashboard'])[1])}</p>
+          <p class="ad-top-sub">Private · clients never see this area</p>
+        </div>
+      </div>
+      <div class="ad-topbar-right">
+        <div class="ad-swatches">${swatches}</div>
+        <button type="button" id="adDark" class="ad-dark-btn">${dark?'☀ Light':'🌙 Dark'}</button>
+        <button type="button" id="signOut2" class="ad-top-logout">Log out</button>
+      </div>
+    </header>
+    <div class="ad-content">
+      ${SERVER_MODE?'':`<div class="ad-banner ad-banner-sky"><b>Same browser data.</b> Clients on other devices appear here after server sync or backup restore.</div>`}
+      ${adminPayBanner(d,plans)}
+      ${body}
     </div>
-    <div class="flex flex-col md:flex-row gap-4 md:gap-6">
-      <aside class="md:w-56 shrink-0 bg-slate-900 text-white rounded-2xl p-3 md:min-h-[70vh]">
-        <p class="text-xs uppercase tracking-wide text-slate-400 px-2 mb-2">Super admin menu</p>
-        <nav class="flex md:flex-col flex-wrap gap-1">${tabNav}</nav>
-      </aside>
-      <div class="flex-1 min-w-0">${adminPayBanner(d,plans)}${body}</div>
-    </div>
-  </div></div>`;
+  </div>
+</div>`;
 }
 
 function showOrderPlaced(b,order,total,payMethod,fulfill,phone){
@@ -7060,6 +7318,116 @@ render();
       if(key)goApp(key);
     });
   });
+
+  
+  const mktSettingsForm=document.getElementById('mktSettingsForm');
+  if(mktSettingsForm)mktSettingsForm.onsubmit=function(e){
+    e.preventDefault();
+    const b=biz();if(!b)return;
+    const fd=new FormData(mktSettingsForm);
+    const m=ensureMarketplace(b);
+    m.status=String(fd.get('status')||'active');
+    m.enabled=m.status==='active';
+    b.onlineStore=m.status==='active';
+    m.storeName=String(fd.get('storeName')||'');
+    m.storeSlug=String(fd.get('storeSlug')||'');
+    m.description=String(fd.get('description')||'');
+    m.location=String(fd.get('location')||'');
+    m.contactPhone=String(fd.get('contactPhone')||'');
+    m.deliveryAreas=String(fd.get('deliveryAreas')||'');
+    m.deliveryFee=Number(fd.get('deliveryFee')||0);
+    m.pickup=!!fd.get('pickup');
+    b.marketplace=m;
+    saveBiz(b);toast('Marketplace settings saved');render();
+  };
+  const mktSaveProducts=document.getElementById('mktSaveProducts');
+  if(mktSaveProducts)mktSaveProducts.onclick=function(){
+    const b=biz();if(!b)return;
+    document.querySelectorAll('[data-mkt-prod]').forEach(function(cb){
+      const id=cb.getAttribute('data-mkt-prod');
+      const p=(b.products||[]).find(x=>x.id===id);
+      if(p)p.online=!!cb.checked;
+    });
+    saveBiz(b);toast('Product visibility updated');render();
+  };
+  const mktSearchForm=document.getElementById('mktSearchForm');
+  if(mktSearchForm)mktSearchForm.onsubmit=function(e){
+    e.preventDefault();
+    const q=String(new FormData(mktSearchForm).get('q')||'').trim();
+    S.marketQ=q;S.marketLoading=true;S.view='marketplace';render();
+    const done=function(results){S.marketResults=results||[];S.marketLoading=false;render();};
+    if(SERVER_MODE){
+      api('/api/marketplace/search?q='+encodeURIComponent(q)).then(function(d){done(d.results||[])}).catch(function(){done(localMarketSearch(q))});
+    }else done(localMarketSearch(q));
+  };
+  document.querySelectorAll('[data-mkt-product]').forEach(function(btn){
+    btn.onclick=function(){
+      const key=btn.getAttribute('data-mkt-product');
+      openMarketProduct(key);
+    };
+  });
+  
+  (function loadMktConfig(){
+    const form=document.getElementById('adminMktCommissionForm');
+    const ownerBox=document.getElementById('mktOwnerComm');
+    if(!form&&!ownerBox)return;
+    const apply=function(cfg){
+      if(ownerBox){
+        if(cfg.commissionEnabled===false)ownerBox.innerHTML='Platform commission: <b>off</b> for marketplace orders.';
+        else ownerBox.innerHTML='Platform commission on marketplace orders: <b>'+Number(cfg.commissionPercent||0)+'%</b> of item subtotal'
+          +(cfg.commissionMinKes?(' · min KES '+cfg.commissionMinKes):'')
+          +(cfg.commissionMaxKes?(' · max KES '+cfg.commissionMaxKes):'')
+          +'<p class="text-xs mt-1 opacity-80">'+(cfg.payoutNotes||'')+'</p>';
+      }
+      if(!form)return;
+      const en=document.getElementById('mktCommEnabled'); if(en)en.checked=!!cfg.commissionEnabled;
+      const del=document.getElementById('mktCommDelivery'); if(del)del.checked=!!cfg.commissionOnDeliveryFee;
+      const feed=document.getElementById('mktFeedEnabled'); if(feed)feed.checked=cfg.merchantFeedEnabled!==false;
+      if(form.commissionPercent)form.commissionPercent.value=cfg.commissionPercent!=null?cfg.commissionPercent:2.5;
+      if(form.commissionMinKes)form.commissionMinKes.value=cfg.commissionMinKes||0;
+      if(form.commissionMaxKes)form.commissionMaxKes.value=cfg.commissionMaxKes||0;
+      if(form.planRates)form.planRates.value=cfg.planRates?JSON.stringify(cfg.planRates):'';
+      if(form.payoutNotes)form.payoutNotes.value=cfg.payoutNotes||'';
+    };
+    if(SERVER_MODE){
+      api('/api/marketplace/config').then(function(d){apply(d.config||{})}).catch(function(){if(ownerBox)ownerBox.textContent='Commission rules available when connected to server.';});
+    }else if(ownerBox){ownerBox.textContent='Commission rules sync from server when online.';}
+  })();
+  const adminMktCommissionForm=document.getElementById('adminMktCommissionForm');
+  if(adminMktCommissionForm)adminMktCommissionForm.onsubmit=function(e){
+    e.preventDefault();
+    const fd=new FormData(adminMktCommissionForm);
+    let planRates={};
+    try{planRates=JSON.parse(String(fd.get('planRates')||'{}')||'{}')}catch(err){toast('Plan rates must be valid JSON');return;}
+    const body={
+      commissionEnabled:!!document.getElementById('mktCommEnabled')?.checked,
+      commissionPercent:Number(fd.get('commissionPercent')||0),
+      commissionMinKes:Number(fd.get('commissionMinKes')||0),
+      commissionMaxKes:Number(fd.get('commissionMaxKes')||0),
+      commissionOnDeliveryFee:!!document.getElementById('mktCommDelivery')?.checked,
+      planRates:planRates,
+      payoutNotes:String(fd.get('payoutNotes')||''),
+      merchantFeedEnabled:!!document.getElementById('mktFeedEnabled')?.checked
+    };
+    if(!SERVER_MODE){toast('Server required to save commission');return;}
+    api('/api/marketplace/config',{method:'PUT',body:body}).then(function(){
+      const msg=document.getElementById('adminMktCommMsg');
+      if(msg)msg.textContent='Saved '+new Date().toLocaleTimeString();
+      toast('Commission & feed settings saved');
+    }).catch(function(err){toast(err.message||'Save failed')});
+  };
+
+  const adminMktRefresh=document.getElementById('adminMktRefresh');
+  if(adminMktRefresh)adminMktRefresh.onclick=function(){
+    const el=document.getElementById('adminMktStats');
+    if(!SERVER_MODE){if(el)el.innerHTML='<p class="text-slate-500">Server mode required for cross-tenant stats. Local sellers: open each business marketplace settings.</p>';return}
+    api('/api/marketplace/admin/stats').then(function(d){
+      if(el)el.innerHTML=`<div class="rounded-xl border p-3"><p class="text-xs text-slate-500">Sellers</p><p class="text-xl font-bold">${d.sellers}</p></div>
+        <div class="rounded-xl border p-3"><p class="text-xs text-slate-500">Product groups</p><p class="text-xl font-bold">${d.products}</p></div>
+        <div class="rounded-xl border p-3"><p class="text-xs text-slate-500">Offers</p><p class="text-xl font-bold">${d.offers}</p></div>
+        <div class="rounded-xl border p-3"><p class="text-xs text-slate-500">Stores listed</p><p class="text-xl font-bold">${(d.stores||[]).length}</p></div>`;
+    }).catch(function(e){toast(e.message||'Failed')});
+  };
 
   document.querySelectorAll('[data-worker-nav]').forEach(btn=>{
     btn.onclick=function(ev){
