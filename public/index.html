@@ -1313,11 +1313,20 @@ async function api(path, opts){
   opts = opts || {};
   const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
   if(API_TOKEN) headers.Authorization = 'Bearer '+API_TOKEN;
-  const res = await fetch(API_BASE+path, {
-    method: opts.method||'GET',
-    headers,
-    body: opts.body ? JSON.stringify(opts.body) : undefined
-  });
+  let ctrl=null,tm=null;
+  try{ if(typeof AbortController!=='undefined'){ctrl=new AbortController();tm=setTimeout(function(){ctrl.abort()},opts.timeout||20000)} }catch(e){}
+  let res;
+  try{
+    res = await fetch(API_BASE+path, {
+      method: opts.method||'GET',
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: ctrl?ctrl.signal:undefined
+    });
+  }catch(e){
+    if(e&&e.name==='AbortError')throw new Error('Network timeout - check your connection');
+    throw e;
+  }finally{ if(tm)clearTimeout(tm) }
   const data = await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(data.error||('HTTP '+res.status));
   return data;
@@ -1327,14 +1336,50 @@ async function detectServer(){
   if(!API_BASE || location.protocol==='file:'){ SERVER_MODE=false; return false; }
   if(typeof navigator!=='undefined' && navigator.onLine===false){ SERVER_MODE=false; return false; }
   try{
-    const ctrl=typeof AbortSignal!=='undefined'&&AbortSignal.timeout?AbortSignal.timeout(4000):undefined;
+    const ctrl=typeof AbortSignal!=='undefined'&&AbortSignal.timeout?AbortSignal.timeout(8000):undefined;
     const r = await fetch(API_BASE+'/api/health', {cache:'no-store', signal:ctrl});
     SERVER_MODE = r.ok;
-    // Never wipe local passwords offline — only when server truly reachable
-    if(SERVER_MODE){try{const d0=db();let ch=false;d0.users.forEach(u=>{if(u.password){u.password='';ch=true}});if(ch)save(d0)}catch(e){}}
+    if(SERVER_MODE){ try{ await migrateLocalAccounts() }catch(e){ console.warn('migrateLocalAccounts',e) } }
   }catch(e){ SERVER_MODE=false; }
   return SERVER_MODE;
 }
+
+/* Accounts created on this device while offline / without a server exist only here, so they cannot log in anywhere else.
+   Once the server is reachable, register them there (same email + password), re-point their businesses at the server id and upload the data. */
+let _migrating=false;
+async function migrateLocalAccounts(){
+  if(_migrating||!SERVER_MODE)return;
+  _migrating=true;
+  const keepToken=API_TOKEN;
+  try{
+    const d0=db();
+    const cand=d0.users.filter(u=>u.password&&u.role!=='admin'&&u.email!==(d0.adminEmail||'admin@businesshub.ke'));
+    for(const u of cand){
+      const pw=u.password,email=String(u.email||'').toLowerCase().trim(),oldId=u.id;
+      let data=null;
+      try{ API_TOKEN=''; data=await api('/api/register',{method:'POST',body:{email:email,password:pw,name:u.name||''}}); }
+      catch(e){ try{ data=await api('/api/login',{method:'POST',body:{email:email,password:pw,clientOnly:true}}) }catch(e2){ data=null } }
+      if(!data||!data.user||!data.token)continue; // could not register (e.g. password too short) - keep local copy
+      const dd=db();const nu=dd.users.find(x=>x.id===oldId);if(!nu)continue;
+      const newId=data.user.id;
+      dd.businesses.forEach(b=>{if(b.ownerId===oldId||(b.ownerEmail&&String(b.ownerEmail).toLowerCase()===email))b.ownerId=newId});
+      nu.id=newId;nu.password='';
+      if(dd.currentBizId&&!dd.businesses.find(b=>b.id===dd.currentBizId))dd.currentBizId=null;
+      const isSession=dd.session===oldId;
+      if(isSession){dd.session=newId;try{localStorage.setItem('bh_api_token',data.token)}catch(e){}}
+      save(dd);
+      try{rememberOfflineLogin(email,pw)}catch(e){}
+      API_TOKEN=data.token; // upload this client's data with their own token
+      for(const b of dd.businesses.filter(x=>x.ownerId===newId)){ try{ await syncPushBiz(b) }catch(e){} }
+      if(isSession)keepTokenNew=data.token;
+    }
+  }finally{
+    API_TOKEN=keepTokenNew||keepToken;
+    keepTokenNew='';
+    _migrating=false;
+  }
+}
+let keepTokenNew='';
 
 async function refreshNotices(){
   if(!SERVER_MODE || !API_TOKEN || isAdmin()) return;
@@ -1408,6 +1453,8 @@ async function syncPull(){
     }else{
       const full = await api('/api/businesses');
       const remote = full.businesses || [];
+      // work done offline under a temporary local owner id belongs to this user
+      d.businesses.forEach(b=>{ if(String(b.ownerId||'').indexOf('local-')===0 && (!b.ownerEmail || String(b.ownerEmail).toLowerCase()===String(me.user.email||'').toLowerCase())) b.ownerId=me.user.id; });
       const other = d.businesses.filter(b=>b.ownerId!==me.user.id);
       const localMine = d.businesses.filter(b=>b.ownerId===me.user.id);
       const localMap = {};
@@ -1435,11 +1482,13 @@ async function syncPull(){
       d.platformUpdate = n.platformUpdate || null;
     }
     save(d);
+    return true;
   }catch(e){
     console.warn('syncPull', e);
     if(String(e.message||e).includes('Unauthorized')){
       API_TOKEN=''; localStorage.removeItem('bh_api_token');
     }
+    return false;
   }
 }
 
@@ -2973,11 +3022,11 @@ function viewForgot(){
         </div>
         <div>
           <label class="text-sm font-medium">New password</label>
-          ${pwField('password','Min. 6 characters',true)}
+          ${pwField('password','Min. 8 characters',false)}
         </div>
         <div>
           <label class="text-sm font-medium">Confirm password</label>
-          ${pwField('password2','',true)}
+          ${pwField('password2','',false)}
         </div>
       </div>
       <p id="forgotErr" class="hidden text-sm text-red-600"></p>
@@ -3629,6 +3678,7 @@ function secShop(b,a){
           <input type="checkbox" id="scanContinuous" ${S.scanContinuous?'checked':''}/> Continuous scan (keep adding)
         </label>
       </div>
+      <div class="mt-2 text-xs" id="printerPill"></div>
       <div class="mt-2 text-xs text-slate-500">Receipt size:
         <select id="receiptWidth" class="border rounded-lg px-2 py-1 ml-1">
           <option value="58" ${S.receiptWidth==='58'?'selected':''}>58 mm</option>
@@ -4687,6 +4737,22 @@ function secSettings(b,a){
     <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="toggleOnline" ${b.onlineStore!==false?'checked':''}/> Accept online orders for this business</label>
   </div>
   <div class="bg-white rounded-2xl border p-6">
+    <h3 class="font-semibold mb-1">Thermal receipt printer</h3>
+    <p class="text-xs text-slate-500 mb-3">Connect once. After that the printer is detected automatically and every sale prints its receipt. Needs Chrome or Edge. For a Bluetooth printer, pair it in your phone/computer Bluetooth settings first.</p>
+    <p id="printerStatus" class="text-sm mb-3"></p>
+    <div class="flex flex-wrap gap-2 mb-3">
+      <button type="button" id="tpConnectUsb" class="px-3 py-2 rounded-xl border text-sm font-medium">Connect USB printer</button>
+      <button type="button" id="tpConnectSerial" class="px-3 py-2 rounded-xl border text-sm font-medium">Connect Bluetooth / serial printer</button>
+      <button type="button" id="tpTest" class="px-3 py-2 rounded-xl text-white text-sm font-medium" style="background:${a}">Print test receipt</button>
+      <button type="button" id="tpForget" class="px-3 py-2 rounded-xl border text-sm text-red-700">Forget printer</button>
+    </div>
+    <label class="flex items-center gap-2 text-sm mb-2"><input type="checkbox" id="tpAuto" ${tpCfg().auto===false?'':'checked'}/> Print automatically after every sale</label>
+    <div class="flex flex-wrap gap-4 text-sm">
+      <label>Paper <select id="tpWidth" class="border rounded-lg px-2 py-1 ml-1"><option value="58" ${S.receiptWidth==='58'?'selected':''}>58 mm</option><option value="80" ${S.receiptWidth!=='58'?'selected':''}>80 mm</option></select></label>
+      <label>Bluetooth speed <select id="tpBaud" class="border rounded-lg px-2 py-1 ml-1">${[9600,19200,38400,57600,115200].map(x=>`<option ${Number(tpCfg().baud||9600)===x?'selected':''}>${x}</option>`).join('')}</select></label>
+    </div>
+  </div>
+  <div class="bg-white rounded-2xl border p-6">
     <h3 class="font-semibold mb-1">Payment gateway</h3>
     <p class="text-xs text-slate-500 mb-3">Collect payments for online orders. Live M-Pesa STK / Pesapal / Flutterwave need a server; this app stores keys and runs a guided checkout (demo STK when keys are missing).</p>
     <form id="payGwForm" class="space-y-3 text-sm">
@@ -4842,6 +4908,31 @@ function secSettings(b,a){
   </div>`;
 }
 
+function pendingPayments(d){
+  return (d.businesses||[]).filter(b=>b&&b.pendingPlan&&b.pendingPlan.plan);
+}
+function adminPayBanner(d,plans){
+  const list=pendingPayments(d);
+  const notifOK=typeof Notification!=='undefined'&&Notification.permission==='granted';
+  const notifBtn=(typeof Notification!=='undefined'&&Notification.permission==='default')?`<button type="button" id="enableNotif" class="text-xs border border-amber-400 px-2 py-1 rounded-lg bg-white">🔔 Turn on pop-up alerts</button>`:'';
+  if(!list.length)return notifBtn?`<div class="mb-4 flex justify-end">${notifBtn}</div>`:'';
+  return `<div class="mb-5 rounded-2xl border-2 border-amber-400 bg-amber-50 p-4" style="color:#78350f">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+      <h3 class="font-bold">💰 ${list.length} plan payment${list.length>1?'s':''} waiting for your confirmation</h3>${notifBtn}
+    </div>
+    <p class="text-xs mb-3">Check the M-Pesa message / till for each receipt below, then confirm to upgrade the client's plan.</p>
+    <div class="space-y-2">${list.map(b=>{
+      const pp=b.pendingPlan,pl=(plans&&plans[pp.plan])||{name:pp.plan,price:0};
+      const owner=(d.users||[]).find(u=>u.id===b.ownerId);
+      return `<div class="bg-white rounded-xl border border-amber-200 p-3 text-sm" style="color:#0f172a">
+        <div class="flex flex-wrap justify-between gap-2"><b>${esc(b.name||'Business')}</b><span class="text-xs text-slate-500">${esc((pp.at||'').slice(0,16).replace('T',' '))}</span></div>
+        <p class="mt-1">Wants <b>${esc(pl.name)}</b> (${kes(pl.price)}) · M-Pesa receipt: <b>${esc(pp.receipt||'none given')}</b> · phone: ${esc(pp.phone||'—')}</p>
+        <p class="text-xs text-slate-500">${esc(owner&&owner.email||'')} · current plan: ${esc((plans&&plans[b.plan||'FREE']||{}).name||b.plan||'FREE')}</p>
+        <div class="flex flex-wrap gap-2 mt-2">
+          <button type="button" data-pay-confirm="${esc(b.id)}" class="text-xs text-white px-3 py-1.5 rounded-lg bg-emerald-600 font-semibold">✔ Payment received - activate ${esc(pl.name)}</button>
+          <button type="button" data-pay-reject="${esc(b.id)}" class="text-xs text-red-700 border border-red-200 px-3 py-1.5 rounded-lg">Reject</button>
+        </div></div>`}).join('')}</div></div>`;
+}
 function viewAdmin(){
   if(SERVER_MODE&&API_TOKEN&&!S._adminPullOnce){
     S._adminPullOnce=true;
@@ -4873,7 +4964,8 @@ function viewAdmin(){
   const tabs=[
     ['overview','Dashboard'],['clients','Users'],['businesses','Businesses'],['plans','Subscription plans'],['payments','Payments'],['tickets','Support'],['analytics','Analytics'],['profile','Platform settings'],['updates','Announcements'],['alerts','Alerts'],['audit','Audit log'],['backup','Backups']
   ];
-  const tabNav=tabs.map(([k,l])=>`<button type="button" data-admin-tab="${k}" class="w-full text-left px-3 py-2.5 rounded-lg text-sm mb-0.5 ${tab===k?'bg-teal-600 text-white font-semibold':'text-slate-300 hover:bg-white/10'}">${l}</button>`).join('');
+  const nPay=pendingPayments(d).length;
+  const tabNav=tabs.map(([k,l])=>`<button type="button" data-admin-tab="${k}" class="w-full text-left px-3 py-2.5 rounded-lg text-sm mb-0.5 ${tab===k?'bg-teal-600 text-white font-semibold':'text-slate-300 hover:bg-white/10'}">${l}${(nPay&&(k==='alerts'||k==='overview'))?` <span class="ml-1 inline-block min-w-[18px] text-center text-[11px] font-bold rounded-full bg-red-500 text-white px-1.5">${nPay}</span>`:''}</button>`).join('');
 
   let body='';
   if(tab==='overview'){
@@ -5216,7 +5308,7 @@ function viewAdmin(){
         <p class="text-xs uppercase tracking-wide text-slate-400 px-2 mb-2">Super admin menu</p>
         <nav class="flex md:flex-col flex-wrap gap-1">${tabNav}</nav>
       </aside>
-      <div class="flex-1 min-w-0">${body}</div>
+      <div class="flex-1 min-w-0">${adminPayBanner(d,plans)}${body}</div>
     </div>
   </div></div>`;
 }
@@ -5494,6 +5586,39 @@ function bind(){
     };
     cartDiscount.onchange=()=>{S.cartDiscount=cartDiscountAmt();safeRender()};
   }
+  tpUI();
+  const tpU=document.getElementById('tpConnectUsb');
+  if(tpU)tpU.onclick=async()=>{
+    if(!navigator.usb){alert('USB printing needs Chrome or Edge.');return}
+    try{
+      const dev=await navigator.usb.requestDevice({filters:[]});
+      tpUseUsb(dev);tpSave(Object.assign(tpCfg(),{kind:'usb',vid:dev.vendorId,pid:dev.productId,name:TP.name}));
+      tpUI();toast('🖨 Printer connected: '+TP.name);
+    }catch(e){if(!/No device selected/i.test(String(e&&e.message)))alert('Could not connect: '+(e&&e.message||e))}
+  };
+  const tpS=document.getElementById('tpConnectSerial');
+  if(tpS)tpS.onclick=async()=>{
+    if(!navigator.serial){alert('Bluetooth/serial printing needs Chrome or Edge.');return}
+    try{
+      const port=await navigator.serial.requestPort();
+      tpUseSerial(port);tpSave(Object.assign(tpCfg(),{kind:'serial'}));
+      tpUI();toast('🖨 Printer connected');
+    }catch(e){if(!/No port selected/i.test(String(e&&e.message)))alert('Could not connect: '+(e&&e.message||e))}
+  };
+  const tpT=document.getElementById('tpTest');
+  if(tpT)tpT.onclick=()=>{
+    const b=biz();if(!b)return;
+    tpPrintOrder({number:'TEST-0001',date:today(),items:[{name:'Test item',qty:2,unit:'pc',price:50},{name:'Another item with a long name to check wrapping',qty:1,unit:'pc',price:120}],total:220,payMethod:'Cash',cashTendered:300,cashChange:80,servedBy:{name:'Test'}})
+      .then(()=>toast('🖨 Test receipt sent')).catch(e=>alert('Printer: '+(e&&e.message||e)));
+  };
+  const tpF=document.getElementById('tpForget');
+  if(tpF)tpF.onclick=()=>{TP.dev=null;TP.port=null;TP.portOpen=false;tpSave(Object.assign(tpCfg(),{kind:'',vid:0,pid:0}));tpUI();toast('Printer forgotten on this device')};
+  const tpA=document.getElementById('tpAuto');
+  if(tpA)tpA.onchange=()=>{tpSave(Object.assign(tpCfg(),{auto:tpA.checked}));tpUI()};
+  const tpW=document.getElementById('tpWidth');
+  if(tpW)tpW.onchange=()=>{S.receiptWidth=tpW.value};
+  const tpB=document.getElementById('tpBaud');
+  if(tpB)tpB.onchange=()=>{tpSave(Object.assign(tpCfg(),{baud:Number(tpB.value)}));TP.portOpen=false};
   const receiptWidth=document.getElementById('receiptWidth');
   if(receiptWidth)receiptWidth.onchange=()=>{S.receiptWidth=receiptWidth.value;render()};
   const barcodeScan=document.getElementById('barcodeScan');
@@ -5765,6 +5890,8 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
     const code=(fd.get('code')||'').trim();
     const password=fd.get('password')||'';
     const password2=fd.get('password2')||'';
+    if(codeStep && !codeStep.classList.contains('hidden') && !code){
+      err.textContent='Enter the 6-digit recovery code first (from your email, or from your platform admin).';err.classList.remove('hidden');return}
     if(codeStep && !codeStep.classList.contains('hidden') && code){
       if(password!==password2){err.textContent='Passwords do not match';err.classList.remove('hidden');return}
       if(String(password).length<8){err.textContent='Password must be at least 8 characters';err.classList.remove('hidden');return}
@@ -5794,7 +5921,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
           ok.textContent=data.message||'Enter code and new password';ok.classList.remove('hidden');
         }else{
           codeStep.classList.remove('hidden');
-          document.getElementById('codeDisplay').textContent='Ask your platform admin for the code';
+          document.getElementById('codeDisplay').textContent='Check your email, or ask your platform admin for the code';
           btn.textContent='Update password';
           ok.textContent=data.message||'Request sent. Get the recovery code from your admin.';ok.classList.remove('hidden');
         }
@@ -6012,6 +6139,7 @@ render();
             const o=checkoutSale();if(!o)return;
             const bb=biz();const ord=bb.orders.find(x=>x.id===o.id);
             if(ord){ord.receipt=code;ord.status='PAID';ord.payMethod='M-Pesa';ord.method='mpesa';saveBiz(bb)}
+            autoPrintReceipt(ord||o);
             openModal(`<div class="text-center py-4"><div class="text-4xl mb-2">✓</div><h3 class="text-xl font-bold">M-Pesa sale complete</h3>
               <p class="text-sm text-slate-500 mt-2">${esc(o.number)}</p><p class="text-xs">Code: ${esc(code)}</p>
               <p class="font-semibold mt-1">${kes(o.total)}</p>
@@ -6025,13 +6153,16 @@ render();
         return;
       }
       const o=checkoutSale();if(!o)return;
+      autoPrintReceipt(o);
       openModal(`<div class="text-center py-4"><div class="text-4xl mb-2">✓</div><h3 class="text-xl font-bold">Sale complete</h3>
         <p class="text-sm text-slate-500 mt-2">${esc(o.number)} · ${esc(o.payMethod)}</p>
         <p class="text-xs text-slate-500">${esc(o.receipt)}</p>
         <p class="font-semibold mt-1">${kes(o.total)}</p>
         ${o.servedBy?`<p class="text-xs mt-2 font-medium">SERVED BY: ${esc(o.servedBy.name)}</p>`:''}
         <button type="button" id="viewInv" class="mt-4 w-full py-2.5 rounded-xl border font-medium">View invoice</button>
+        <button type="button" id="rePrint" class="mt-2 w-full py-2.5 rounded-xl border font-medium">🖨 Print receipt again</button>
         <button type="button" id="newSale" class="mt-2 w-full py-2.5 rounded-xl text-white font-semibold" style="background:${S.accent()}">New sale</button></div>`);
+      document.getElementById('rePrint').onclick=()=>{tpPrintOrder(o).then(()=>toast('🖨 Receipt printed')).catch(e=>toast(/No thermal/.test(String(e&&e.message))?'No thermal printer connected - set it up in Settings':'Printer: '+(e&&e.message||e)))};
       document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
       document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
       toast('Sale saved · stock updated');
@@ -6424,6 +6555,34 @@ render();
   };
 
   // Admin plan setters
+  document.querySelectorAll('[data-pay-confirm]').forEach(btn=>btn.onclick=()=>{
+    const id=btn.getAttribute('data-pay-confirm');const d=db();const b=d.businesses.find(x=>x.id===id);if(!b||!b.pendingPlan)return;
+    const plan=b.pendingPlan.plan;
+    if(!confirm('Confirm you received the payment and activate '+plan+' for '+(b.name||'this business')+'?'))return;
+    btn.disabled=true;
+    const done=function(){
+      d.adminAlerts=(d.adminAlerts||[]).filter(a=>!(a.type==='plan_payment'&&a.businessId===id));
+      save(d);toast('Plan activated for '+(b.name||''));render();
+    };
+    if(SERVER_MODE){
+      api('/api/businesses/'+id,{method:'PUT',body:{plan:plan}}).then(function(r){
+        const nb=r&&r.business;if(nb){const i=d.businesses.findIndex(x=>x.id===id);if(i>=0)d.businesses[i]=nb}
+        (d.adminAlerts||[]).filter(a=>a.type==='plan_payment'&&a.businessId===id).forEach(a=>{api('/api/admin/alerts',{method:'DELETE',body:{id:a.id}}).catch(function(){})});
+        done();
+      }).catch(function(e){btn.disabled=false;alert(e.message||e)});
+      return;
+    }
+    b.plan=plan;b.planPaidAt=today();b.planReceipt=b.pendingPlan.receipt||('ADMIN-'+Date.now());b.pendingPlan=null;done();
+  });
+  document.querySelectorAll('[data-pay-reject]').forEach(btn=>btn.onclick=()=>{
+    const id=btn.getAttribute('data-pay-reject');const d=db();const b=d.businesses.find(x=>x.id===id);if(!b)return;
+    if(!confirm('Reject this payment claim for '+(b.name||'this business')+'? The plan will not change.'))return;
+    const done=function(){b.pendingPlan=null;d.adminAlerts=(d.adminAlerts||[]).filter(a=>!(a.type==='plan_payment'&&a.businessId===id));save(d);toast('Payment claim rejected');render()};
+    if(SERVER_MODE){api('/api/businesses/'+id,{method:'PUT',body:{rejectPendingPlan:true}}).then(done).catch(function(e){alert(e.message||e)});return}
+    done();
+  });
+  const enNotif=document.getElementById('enableNotif');
+  if(enNotif)enNotif.onclick=()=>{try{Notification.requestPermission().then(function(){render()})}catch(e){}};
   document.querySelectorAll('[data-set-plan]').forEach(sel=>{
     sel.onchange=()=>{
       const id=sel.getAttribute('data-set-plan');
@@ -7196,6 +7355,142 @@ render();
 
 }
 
+
+/* ===== Thermal receipt printer (ESC/POS) over WebUSB or Web Serial (USB cable or paired Bluetooth) =====
+   The browser asks permission ONCE (Connect button). After that the printer is found automatically whenever it is plugged in / switched on,
+   and every completed sale is printed without any dialog. Works in Chrome / Edge (desktop and Android). */
+const TP={dev:null,port:null,kind:'',name:'',ep:0,iface:0,cfgv:1,portOpen:false,busy:false};
+function tpCfg(){try{return JSON.parse(localStorage.getItem('bh_printer')||'{}')||{}}catch(e){return{}}}
+function tpSave(c){try{localStorage.setItem('bh_printer',JSON.stringify(c))}catch(e){}}
+function tpSupported(){return !!(navigator.usb||navigator.serial)}
+function tpConnected(){return !!(TP.dev||TP.port)}
+function tpUI(){
+  const on=tpConnected(),c=tpCfg();
+  const st=document.getElementById('printerStatus');
+  if(st){
+    st.innerHTML=on?`<span class="text-emerald-700 font-semibold">● Connected</span> - ${esc(TP.name||'Thermal printer')} (${TP.kind==='usb'?'USB':'Bluetooth / serial'})${c.auto===false?' · auto-print OFF':' · auto-print ON'}`
+      :(tpSupported()?'<span class="text-slate-500">○ No printer connected. Plug it in (or switch it on) - it is detected automatically once set up.</span>':'<span class="text-amber-700">This browser cannot talk to printers directly. Use Chrome or Edge.</span>');
+  }
+  const pill=document.getElementById('printerPill');
+  if(pill)pill.innerHTML=on?`<span class="text-emerald-700">🖨 ${esc(TP.name||'Printer')} connected${c.auto===false?'':' · prints after each sale'}</span>`:'<span class="text-slate-400">🖨 No thermal printer</span>';
+}
+function tpHasOut(dev){
+  for(const c of (dev.configurations||[]))for(const i of c.interfaces)for(const a of i.alternates){
+    const ep=(a.endpoints||[]).find(e=>e.direction==='out'&&e.type==='bulk');
+    if(ep)return {c,i,a,ep};
+  }
+  return null;
+}
+function tpUseUsb(dev){
+  const f=tpHasOut(dev);
+  if(!f)throw new Error('This USB device has no printer port');
+  TP.dev=dev;TP.port=null;TP.kind='usb';TP.ep=f.ep.endpointNumber;TP.iface=f.i.interfaceNumber;TP.cfgv=f.c.configurationValue;TP.name=dev.productName||'USB printer';
+}
+function tpUseSerial(port){
+  TP.port=port;TP.dev=null;TP.kind='serial';TP.portOpen=false;TP.name='Bluetooth / serial printer';
+}
+/* find a printer that was already allowed on this device (no prompt needed) */
+async function tpAuto(announce){
+  if(tpConnected())return true;
+  const c=tpCfg();let found=false;
+  try{
+    if(navigator.usb){
+      const l=(await navigator.usb.getDevices()).filter(d=>tpHasOut(d));
+      const dev=l.find(d=>c.kind==='usb'&&d.vendorId===c.vid&&d.productId===c.pid)||l[0];
+      if(dev){tpUseUsb(dev);found=true}
+    }
+  }catch(e){console.warn('tp usb',e)}
+  try{
+    if(!found&&navigator.serial&&c.kind==='serial'){
+      const ports=await navigator.serial.getPorts();
+      if(ports.length){tpUseSerial(ports[0]);found=true}
+    }
+  }catch(e){console.warn('tp serial',e)}
+  tpUI();
+  if(found&&announce){try{toast('🖨 Printer connected: '+TP.name)}catch(e){}}
+  return found;
+}
+async function tpSend(bytes){
+  if(TP.busy)await new Promise(r=>setTimeout(r,400));
+  TP.busy=true;
+  try{
+    if(TP.dev){
+      const d=TP.dev;
+      if(!d.opened)await d.open();
+      if(d.configuration==null||d.configuration.configurationValue!==TP.cfgv)await d.selectConfiguration(TP.cfgv);
+      try{await d.claimInterface(TP.iface)}catch(e){if(!/already|claimed/i.test(String(e&&e.message)))throw e}
+      for(let i=0;i<bytes.length;i+=4096)await d.transferOut(TP.ep,bytes.slice(i,i+4096));
+    }else if(TP.port){
+      const p=TP.port;
+      if(!TP.portOpen){try{await p.open({baudRate:Number(tpCfg().baud)||9600})}catch(e){if(!/already open/i.test(String(e&&e.message)))throw e}TP.portOpen=true}
+      const w=p.writable.getWriter();
+      try{for(let i=0;i<bytes.length;i+=512)await w.write(bytes.slice(i,i+512))}finally{w.releaseLock()}
+    }else throw new Error('No printer connected');
+  }catch(e){
+    TP.portOpen=false;throw e;
+  }finally{TP.busy=false}
+}
+function tpBuild(o,b,cols){
+  const out=[];
+  const txt=x=>{x=String(x==null?'':x).replace(/×/g,'x').replace(/[^\x20-\x7E]/g,'?');for(let i=0;i<x.length;i++)out.push(x.charCodeAt(i))};
+  const ln=x=>{txt(x);out.push(10)};
+  const raw=(...a)=>out.push(...a);
+  const sep=()=>ln('-'.repeat(cols));
+  const row=(l,r)=>{l=String(l);r=String(r);if(l.length+r.length+1>cols)l=l.slice(0,Math.max(1,cols-r.length-1));ln(l+' '.repeat(Math.max(1,cols-l.length-r.length))+r)};
+  const wrap=(x,w)=>{x=String(x);const a=[];while(x.length>w){a.push(x.slice(0,w));x=x.slice(w)}a.push(x);return a};
+  raw(27,64);                       // initialise
+  raw(27,97,1);raw(27,69,1);raw(29,33,0x11);ln(String(b.name||'').slice(0,Math.floor(cols/2)));raw(29,33,0);raw(27,69,0);
+  if(b.address)wrap(b.address,cols).forEach(ln);
+  if(b.phone)ln('Tel: '+b.phone);
+  ln('');raw(27,69,1);ln('RECEIPT');raw(27,69,0);
+  ln((o.number||'')+'  '+(o.date||''));
+  raw(27,97,0);sep();
+  (o.items||[]).forEach(it=>{
+    wrap(it.name||'',cols).forEach(ln);
+    row('  '+fmtQty(it.unit||'pc',it.qty)+' x '+money(it.price),String(money((Number(it.price)||0)*(Number(it.qty)||0))));
+  });
+  sep();
+  if(o.discountAmt)row('Discount','-'+money(o.discountAmt));
+  raw(27,69,1);raw(29,33,0x01);row('TOTAL',String(money(o.total)));raw(29,33,0);raw(27,69,0);
+  ln('Paid: '+(o.payMethod||o.method||'-'));
+  if(o.receipt)ln('Ref: '+o.receipt);
+  if(o.cashTendered)row('Cash',String(money(o.cashTendered)));
+  if(o.cashTendered)row('Change',String(money(o.cashChange||0)));
+  if(o.servedBy)ln('Served by: '+o.servedBy.name);
+  raw(27,97,1);ln('');ln('Thank you!');ln(b.name||'');
+  raw(10,10,10,10);raw(29,86,66,0);  // feed + partial cut
+  return new Uint8Array(out);
+}
+async function tpPrintOrder(o){
+  const b=biz();if(!b)throw new Error('No business');
+  if(!tpConnected())await tpAuto(false);
+  if(!tpConnected())throw new Error('No thermal printer connected');
+  const cols=(S.receiptWidth==='58')?32:42;
+  await tpSend(tpBuild(o,b,cols));
+}
+/* called after every completed sale */
+function autoPrintReceipt(o){
+  try{
+    if(!o||tpCfg().auto===false)return;
+    if(!tpConnected()&&!tpSupported())return;
+    tpPrintOrder(o).then(function(){toast('🖨 Receipt printed')}).catch(function(e){
+      if(/No thermal printer/.test(String(e&&e.message)))return; // none set up: stay silent
+      toast('Printer: '+String((e&&e.message)||e).slice(0,80));
+    });
+  }catch(e){console.warn('autoPrint',e)}
+}
+try{
+  if(navigator.usb){
+    navigator.usb.addEventListener('connect',function(){tpAuto(true).then(function(){tpUI()})});
+    navigator.usb.addEventListener('disconnect',function(ev){if(TP.dev&&ev.device===TP.dev){TP.dev=null;tpUI();try{toast('Printer unplugged')}catch(e){}}});
+  }
+  if(navigator.serial){
+    navigator.serial.addEventListener('connect',function(){tpAuto(true).then(function(){tpUI()})});
+    navigator.serial.addEventListener('disconnect',function(ev){if(TP.port&&(ev.target===TP.port||ev.port===TP.port)){TP.port=null;TP.portOpen=false;tpUI();try{toast('Printer disconnected')}catch(e){}}});
+  }
+}catch(e){}
+setTimeout(function(){tpAuto(true).then(tpUI)},800);
+
 setAccent('#0d9488');
 const boot=db();
 if(boot.session){
@@ -7205,10 +7500,50 @@ if(boot.session){
   else S.view='onboard';
 }else S.view='landing';
 try{const g=new URLSearchParams(location.search).get('go');if(g&&S.view==='app'&&['dashboard','shop','stock','invoices','reports','expenses','onlineorders'].includes(g))S.appView=g}catch(e){}
+render(); // show the app straight away; never wait on the network (a slow connection used to leave a blank screen)
 detectServer().then(function(on){
-  if(on&&API_TOKEN) return syncPull().then(function(){toast('Synced from server')});
-}).catch(function(){}).finally(function(){render();});
+  if(on&&API_TOKEN){
+    return syncPull().then(function(ok){
+      if(ok===false)toast('Could not sync yet - will retry');
+      else toast('Synced to server')
+    });
+  }
+}).catch(function(e){console.warn('boot sync',e)}).finally(function(){try{render()}catch(e){console.error(e)}});
 setInterval(function(){if(document.visibilityState==='visible')pullOnlineOrders()},20000);
+/* Admin: check for new plan payments every 20 s and shout about them (banner + sound + pop-up + tab title) */
+let _seenPay=null,_payBusy=false;
+function adminPayCheck(){
+  if(_payBusy||!SERVER_MODE||!API_TOKEN||document.visibilityState!=='visible')return;
+  let adm=false;try{adm=!!isAdmin()}catch(e){}
+  if(!adm)return;
+  _payBusy=true;
+  syncPull().then(function(){
+    const d=db();const list=pendingPayments(d);
+    const keys=new Set(list.map(b=>b.id+'|'+(b.pendingPlan.at||'')));
+    const fresh=list.filter(b=>_seenPay&&!_seenPay.has(b.id+'|'+(b.pendingPlan.at||'')));
+    const first=_seenPay===null;_seenPay=keys;
+    try{document.title=(list.length?'('+list.length+') ':'')+'MyBusinessHub'}catch(e){}
+    if(fresh.length||(first&&list.length)){
+      const b=(fresh[0]||list[0]);
+      try{toast('💰 Plan payment from '+(b.name||'a client')+' - confirm it')}catch(e){}
+      try{const ac=new (window.AudioContext||window.webkitAudioContext)();[880,1175].forEach(function(f,i){const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;o.connect(g);g.connect(ac.destination);g.gain.setValueAtTime(.2,ac.currentTime+i*.18);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+i*.18+.3);o.start(ac.currentTime+i*.18);o.stop(ac.currentTime+i*.18+.32)})}catch(e){}
+      try{if(typeof Notification!=='undefined'&&Notification.permission==='granted')new Notification('Plan payment received',{body:(b.name||'A client')+' paid for '+((b.pendingPlan||{}).plan||'a plan')+'. Open the admin to confirm.'})}catch(e){}
+    }
+    const ae=document.activeElement;const typing=ae&&/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName);
+    const modalOpen=document.getElementById('modal')&&!document.getElementById('modal').classList.contains('hidden');
+    if(!typing&&!modalOpen&&S.view==='admin')render();
+  }).catch(function(){}).finally(function(){_payBusy=false});
+}
+setInterval(adminPayCheck,20000);setTimeout(adminPayCheck,3000);
+/* If the server could not be reached at start-up (slow or flaky connection), keep trying so offline work still syncs without the user doing anything */
+setInterval(function(){
+  if(SERVER_MODE||navigator.onLine===false||document.visibilityState!=='visible')return;
+  detectServer().then(function(on){
+    if(!on)return;
+    if(API_TOKEN)return syncPull().then(function(ok){if(ok!==false){toast('Synced to server');safeRender()}});
+    safeRender();
+  }).catch(function(){});
+},15000);
 
 </script>
 <div id="netBar">Offline · saved on device</div>
@@ -7241,7 +7576,17 @@ setInterval(function(){if(document.visibilityState==='visible')pullOnlineOrders(
         setInterval(function(){reg.update().catch(function(){})},3600000);
       }).catch(function(e){console.warn('SW register',e)});
     });
-    navigator.serviceWorker.addEventListener('controllerchange',function(){/* new SW took control */});
+    var reloaded=false;
+    navigator.serviceWorker.addEventListener('controllerchange',function(){
+      /* installed app: pick up the new version by itself when nobody is mid-sale */
+      if(!had||reloaded)return;
+      try{
+        var m=document.getElementById('modal');var ae=document.activeElement;
+        var busy=(m&&!m.classList.contains('hidden'))||(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))||((typeof biz==='function'&&biz()&&(biz().cart||[]).length)||false);
+        if(busy){showUpd();return}
+      }catch(e){}
+      reloaded=true;location.reload();
+    });
   }
 })();
 </script>
