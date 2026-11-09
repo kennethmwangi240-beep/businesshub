@@ -71,3 +71,22 @@
 ### Search boxes and deleted products
 - Search boxes (Shop, Stock, Products) no longer lose focus or stop after a few letters: Products search had no handler at all, Stock search's handler was overwritten, and the page redraw dropped the cursor. The cursor is now kept across redraws.
 - Deleted products now stay deleted: deletions are remembered (tombstones) on the device and on the server, so "Merge catalog products", a stale browser tab or another device cannot bring them back.
+
+### Login on a new device, password recovery, sync after offline
+- Accounts created on a device with no server connection (offline) existed only on that device, so other devices said "Invalid email or password". When the server is reachable the app now registers those accounts on the server (same email and password), moves their business under the server account and uploads the data.
+- Server: creating a business keeps the id the device already uses, so later syncs update it instead of creating copies / hitting the plan business limit.
+- "Get recovery code" did nothing: the hidden new-password fields were marked required and the browser silently blocked the form. Fixed. Clicking Update password with no code now says to enter the code.
+- Optional email for recovery codes: set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM (see .env.example; uses nodemailer, run `npm install`). Without it the admin still gives the code from the Alerts tab.
+- Black screen after going back online: the app waited for the network before drawing anything. It now draws immediately, requests time out after 20 s, the server check waits 8 s and retries every 15 s, and a "Synced to server" message shows when the sync completes.
+
+### Plan payment alerts for the admin
+- When a client submits a plan payment, the admin now sees a highlighted banner on every admin page with the business, plan, M-Pesa receipt and phone, plus red badges on Dashboard and Alerts. The admin page checks for new payments every 20 s while open (no refresh needed) and plays a sound, shows a toast, updates the tab title "(1) ..." and can show a desktop pop-up ("Turn on pop-up alerts" button).
+- One-click "Payment received - activate <plan>" (sets plan, keeps the receipt, clears the request) or "Reject". Optional email to the admin when SMTP is configured (ADMIN_NOTIFY_EMAIL, or the admin account email).
+
+### Thermal receipt printer
+- Settings > Thermal receipt printer: connect once (USB, or Bluetooth/serial paired printer). After that the printer is detected automatically when plugged in / switched on (status shown in Settings and under the POS cart), and every completed sale (cash, M-Pesa, credit, workers too) prints an ESC/POS receipt with no dialog and auto-cut. 58 mm / 80 mm, test print, "Print receipt again" button, auto-print on/off. Chrome or Edge required (WebUSB / Web Serial); the browser asks permission once per device.
+
+### Installed app (PWA)
+- Service worker cache bumped to v8 so installed copies download all of the above. An installed app now reloads itself onto the new version when nobody is mid-sale (open sale, form or window); otherwise it shows the "new version ready" bar.
+- Manifest no longer locks the installed app to portrait, so POS works on desktop and landscape tablets.
+- Printer (WebUSB / Web Serial) and admin pop-up alerts work in the installed app as well as in the browser tab.

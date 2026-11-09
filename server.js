@@ -11,6 +11,24 @@ const crypto = require('crypto');
 const { promisify } = require('util');
 const { Pool } = require('pg');
 
+/* Optional email (recovery codes). Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM (and SMTP_SECURE=true for port 465). Without it, the admin gives the code. */
+const MAIL_ON = !!process.env.SMTP_HOST;
+let _mailer = null;
+async function sendMail(to, subject, text) {
+  if (!MAIL_ON) return false;
+  try {
+    if (!_mailer) {
+      const nm = require('nodemailer');
+      _mailer = nm.createTransport({
+        host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587), secure: process.env.SMTP_SECURE === 'true',
+        auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || '' } : undefined
+      });
+    }
+    await _mailer.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text });
+    return true;
+  } catch (e) { console.warn('mail failed:', e.message); return false; }
+}
+
 const scrypt = promisify(crypto.scrypt);
 const PORT = Number(process.env.PORT) || 3847;
 const ROOT = __dirname;
@@ -391,6 +409,11 @@ async function handleApi(req, res, pathname) {
     const limit = (plans[planKey] || DEFAULT_PLANS.FREE).bizLimit || 1;
     if (mine.length >= limit) return json(res, 403, { error: 'Plan business limit reached' });
     const b = emptyBiz(u.id, body);
+    // keep the id the device already uses, so later syncs (PUT by id) find this business instead of making copies
+    if (typeof body.id === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(body.id)) {
+      const taken = (await pool.query('SELECT 1 FROM businesses WHERE id=$1', [body.id])).rowCount;
+      if (!taken) b.id = body.id;
+    }
     await pool.query('INSERT INTO businesses(id,owner_id,data) VALUES($1,$2,$3::jsonb)', [b.id, u.id, JSON.stringify(b)]);
     return json(res, 201, { business: b });
   }
@@ -454,6 +477,7 @@ async function handleApi(req, res, pathname) {
         } else {
           nb = { ...b };
           ['plan', 'suspended', 'trialEndsAt', 'trialExtended', 'name', 'salesPin', 'pinLocked', 'pinFails', 'pinLockedAt'].forEach((k) => { if (body[k] !== undefined) nb[k] = body[k]; });
+          if (body.rejectPendingPlan) nb.pendingPlan = null;
           if (body.plan && body.plan !== 'FREE') {
             nb.planPaidAt = today();
             nb.planReceipt = (b.pendingPlan && b.pendingPlan.receipt) || b.planReceipt || 'ADMIN-' + Date.now();
@@ -487,6 +511,12 @@ async function handleApi(req, res, pathname) {
       alerts.push({ id: uid(), type: 'plan_payment', businessId: b.id, businessName: b.name || '', ownerId: b.ownerId, at: b.pendingPlan.at,
         message: `Plan payment claimed: ${b.name || b.id} → ${plan}, receipt ${b.pendingPlan.receipt || 'n/a'}. Verify, then set the plan in Admin.` });
       await setCfg('adminAlerts', alerts.slice(-100), c);
+      if (MAIL_ON) {
+        pool.query("SELECT email FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").then((r) => {
+          const to = process.env.ADMIN_NOTIFY_EMAIL || (r.rows[0] && r.rows[0].email);
+          if (to) sendMail(to, 'Plan payment to confirm: ' + (b.name || b.id), `${b.name || b.id} says they paid for the ${plan} plan.\nM-Pesa receipt: ${b.pendingPlan.receipt || 'n/a'}\nPhone: ${b.pendingPlan.phone || 'n/a'}\n\nCheck your till, then confirm in Admin > Dashboard.`).catch(() => {});
+        }).catch(() => {});
+      }
       return { save: b, status: 200, body: { ok: true, pendingPlan: b.pendingPlan } };
     });
     return json(res, out.status, out.body);
@@ -555,7 +585,9 @@ async function handleApi(req, res, pathname) {
     const body = await readBody(req);
     const email = String(body.email || '').toLowerCase().trim();
     if (!email) return json(res, 400, { error: 'Email required' });
-    const generic = { ok: true, message: 'Request received. Your platform admin will give you a recovery code (valid 30 min).' };
+    const generic = MAIL_ON
+      ? { ok: true, emailed: true, message: 'If that email has an account, a 6-digit recovery code has been sent to it (valid 30 min). Check your spam folder too.' }
+      : { ok: true, message: 'Request received. Your platform admin will give you a recovery code (valid 30 min).' };
     const u = (await pool.query('SELECT id, email, name, role FROM users WHERE email=$1 AND role<>\'admin\'', [email])).rows[0];
     if (!u) return json(res, 200, generic);
     const code = String(crypto.randomInt(100000, 1000000));
@@ -566,6 +598,7 @@ async function handleApi(req, res, pathname) {
     const alerts = await getCfg('adminAlerts', []);
     alerts.push({ id: uid(), type: 'password_reset_request', email, userId: u.id, name: u.name || '', at: new Date().toISOString(), message: 'Password recovery for ' + email + ' — code: ' + code + ' (valid 30 min; give it only to the verified owner)' });
     await setCfg('adminAlerts', alerts.slice(-100));
+    if (MAIL_ON) sendMail(email, 'Your BusinessHub recovery code', 'Your BusinessHub password recovery code is ' + code + '.\nIt is valid for 30 minutes. If you did not ask for this, ignore this email.').catch(() => {});
     return json(res, 200, generic);
   }
 

@@ -7,6 +7,11 @@
     "start": "node server.js",
     "import-json": "node migrate-json.js"
   },
-  "engines": { "node": ">=18" },
-  "dependencies": { "pg": "^8.13.0" }
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "nodemailer": "^10.4.0",
+    "pg": "^8.13.0"
+  }
 }
