@@ -3014,7 +3014,7 @@ function viewForgot(){
         <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-sm text-amber-950">
           <p class="font-medium">Your recovery code</p>
           <p id="codeDisplay" class="text-2xl font-bold tracking-widest mt-1"></p>
-          <p class="text-xs mt-1">Valid 30 minutes. Copy it now.</p>
+          <p class="text-xs mt-1">Valid 30 minutes. It is filled in for you when it arrives.</p>
         </div>
         <div>
           <label class="text-sm font-medium">Enter recovery code</label>
@@ -4964,8 +4964,8 @@ function viewAdmin(){
   const tabs=[
     ['overview','Dashboard'],['clients','Users'],['businesses','Businesses'],['plans','Subscription plans'],['payments','Payments'],['tickets','Support'],['analytics','Analytics'],['profile','Platform settings'],['updates','Announcements'],['alerts','Alerts'],['audit','Audit log'],['backup','Backups']
   ];
-  const nPay=pendingPayments(d).length;
-  const tabNav=tabs.map(([k,l])=>`<button type="button" data-admin-tab="${k}" class="w-full text-left px-3 py-2.5 rounded-lg text-sm mb-0.5 ${tab===k?'bg-teal-600 text-white font-semibold':'text-slate-300 hover:bg-white/10'}">${l}${(nPay&&(k==='alerts'||k==='overview'))?` <span class="ml-1 inline-block min-w-[18px] text-center text-[11px] font-bold rounded-full bg-red-500 text-white px-1.5">${nPay}</span>`:''}</button>`).join('');
+  const nPay=pendingPayments(d).length;const nRec=(d.adminAlerts||[]).filter(a=>a.type==='password_reset_request').length;
+  const tabNav=tabs.map(([k,l])=>`<button type="button" data-admin-tab="${k}" class="w-full text-left px-3 py-2.5 rounded-lg text-sm mb-0.5 ${tab===k?'bg-teal-600 text-white font-semibold':'text-slate-300 hover:bg-white/10'}">${l}${(((k==='alerts')&&(nPay+nRec))||((k==='overview')&&nPay))?` <span class="ml-1 inline-block min-w-[18px] text-center text-[11px] font-bold rounded-full bg-red-500 text-white px-1.5">${k==='alerts'?nPay+nRec:nPay}</span>`:''}</button>`).join('');
 
   let body='';
   if(tab==='overview'){
@@ -5173,6 +5173,7 @@ function viewAdmin(){
             <button type="button" data-unlock-pin="${esc(a.businessId)}" class="text-xs text-white px-3 py-1.5 rounded-lg bg-teal-600">Unlock PIN</button>
             <button type="button" data-reset-pin="${esc(a.businessId)}" class="text-xs text-white px-3 py-1.5 rounded-lg bg-amber-600">Reset PIN</button>
           </div>`:(a.type==='pin_locked'?`<p class="text-xs text-amber-700 mt-1">No business id — use form below.</p>`:'')}
+          ${a.type==='password_reset_request'?`<div class="mt-2"><button type="button" data-approve-recovery="${esc(a.email)}" class="text-xs text-white px-3 py-1.5 rounded-lg bg-emerald-600 font-semibold">✔ Approve - send code to client's page</button></div>`:''}
           ${a.email?`<p class="text-xs text-slate-500 mt-1">${esc(a.email)}</p>`:''}
         </div>`).join('')||'<p class="text-slate-400 text-sm py-8 text-center">No alerts</p>'}
       </div>
@@ -5914,16 +5915,24 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
       btn.disabled=true;btn.textContent='Sending…';
       api('/api/auth/forgot',{method:'POST',body:{email:email}}).then(function(data){
         btn.disabled=false;
-        if(data.recoveryCode){
-          codeStep.classList.remove('hidden');
-          document.getElementById('codeDisplay').textContent=data.recoveryCode;
-          btn.textContent='Update password';
-          ok.textContent=data.message||'Enter code and new password';ok.classList.remove('hidden');
-        }else{
-          codeStep.classList.remove('hidden');
-          document.getElementById('codeDisplay').textContent='Check your email, or ask your platform admin for the code';
-          btn.textContent='Update password';
-          ok.textContent=data.message||'Request sent. Get the recovery code from your admin.';ok.classList.remove('hidden');
+        codeStep.classList.remove('hidden');
+        btn.textContent='Update password';
+        document.getElementById('codeDisplay').textContent=data.emailed?'Check your email':'Waiting for admin approval…';
+        ok.textContent=data.message||'Request sent.';ok.classList.remove('hidden');
+        // keep asking; the code is delivered here automatically as soon as it is approved
+        const rid=data.requestId;const started=Date.now();
+        if(S._fpoll)clearInterval(S._fpoll);
+        if(rid&&!data.emailed){
+          S._fpoll=setInterval(function(){
+            if(!document.getElementById('forgotForm')||Date.now()-started>31*60000){clearInterval(S._fpoll);return}
+            api('/api/auth/forgot/status',{method:'POST',body:{email:email,requestId:rid}}).then(function(r){
+              if(!r||!r.ready)return;
+              clearInterval(S._fpoll);
+              const dd=document.getElementById('codeDisplay');if(dd)dd.textContent=r.code;
+              const ci=document.querySelector('#forgotForm [name=code]');if(ci)ci.value=r.code;
+              const okEl=document.getElementById('forgotOk');if(okEl){okEl.textContent='Your recovery code has arrived and is filled in below. Choose a new password (min. 8 characters) and press Update password.';okEl.classList.remove('hidden')}
+            }).catch(function(){});
+          },3000);
         }
       }).catch(function(ex){err.textContent=ex.message||'Failed';err.classList.remove('hidden');btn.disabled=false;btn.textContent='Get recovery code'});
       return;
@@ -6555,6 +6564,13 @@ render();
   };
 
   // Admin plan setters
+  document.querySelectorAll('[data-approve-recovery]').forEach(btn=>btn.onclick=()=>{
+    const em=btn.getAttribute('data-approve-recovery');btn.disabled=true;
+    api('/api/admin/recovery/approve',{method:'POST',body:{email:em}}).then(function(){
+      const d=db();d.adminAlerts=(d.adminAlerts||[]).filter(a=>!(a.type==='password_reset_request'&&a.email===em));save(d);
+      toast('Approved - the code is now on '+em+"'s recovery page");render();
+    }).catch(function(e){btn.disabled=false;alert(e.message||e)});
+  });
   document.querySelectorAll('[data-pay-confirm]').forEach(btn=>btn.onclick=()=>{
     const id=btn.getAttribute('data-pay-confirm');const d=db();const b=d.businesses.find(x=>x.id===id);if(!b||!b.pendingPlan)return;
     const plan=b.pendingPlan.plan;
@@ -7511,7 +7527,7 @@ detectServer().then(function(on){
 }).catch(function(e){console.warn('boot sync',e)}).finally(function(){try{render()}catch(e){console.error(e)}});
 setInterval(function(){if(document.visibilityState==='visible')pullOnlineOrders()},20000);
 /* Admin: check for new plan payments every 20 s and shout about them (banner + sound + pop-up + tab title) */
-let _seenPay=null,_payBusy=false;
+let _seenPay=null,_seenRec=null,_payBusy=false;
 function adminPayCheck(){
   if(_payBusy||!SERVER_MODE||!API_TOKEN||document.visibilityState!=='visible')return;
   let adm=false;try{adm=!!isAdmin()}catch(e){}
@@ -7522,7 +7538,12 @@ function adminPayCheck(){
     const keys=new Set(list.map(b=>b.id+'|'+(b.pendingPlan.at||'')));
     const fresh=list.filter(b=>_seenPay&&!_seenPay.has(b.id+'|'+(b.pendingPlan.at||'')));
     const first=_seenPay===null;_seenPay=keys;
-    try{document.title=(list.length?'('+list.length+') ':'')+'MyBusinessHub'}catch(e){}
+    const recs=(d.adminAlerts||[]).filter(a=>a.type==='password_reset_request');
+    const recKeys=new Set(recs.map(a=>a.email+'|'+a.at));
+    const freshRec=recs.filter(a=>_seenRec&&!_seenRec.has(a.email+'|'+a.at));
+    _seenRec=recKeys;
+    if(freshRec.length){try{toast('🔑 Password recovery request from '+freshRec[0].email+' - approve it in Alerts')}catch(e){}}
+    try{document.title=((list.length+recs.length)?'('+(list.length+recs.length)+') ':'')+'MyBusinessHub'}catch(e){}
     if(fresh.length||(first&&list.length)){
       const b=(fresh[0]||list[0]);
       try{toast('💰 Plan payment from '+(b.name||'a client')+' - confirm it')}catch(e){}
