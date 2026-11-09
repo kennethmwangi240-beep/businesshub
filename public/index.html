@@ -288,6 +288,59 @@ html,body,#root{width:100%!important;max-width:100vw!important;overflow-x:hidden
   #workerMain{margin-left:0!important;width:100%!important;max-width:100%!important}
 }
 
+
+/* ===== Grouped dark sidebar (owner app) ===== */
+:root{--sidebar-w:252px}
+html body .sidebar.sb{background:#16181d!important;color:#cbd5e1!important;border-right:1px solid #262a32!important;width:var(--sidebar-w)!important;min-width:var(--sidebar-w)!important;max-width:var(--sidebar-w)!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;height:auto;box-shadow:none}
+.sidebar.sb .sb-brand{display:flex;align-items:center;gap:10px;padding:14px 16px 10px;flex-shrink:0}
+.sidebar.sb .sb-brand-name{color:#fff;font-weight:700;font-size:14px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar.sb .sb-brand-sub{color:#8b93a1;font-size:11px;margin-top:2px}
+.sidebar.sb .sb-biz{padding:0 12px 8px;flex-shrink:0}
+.sidebar.sb .sb-biz select{width:100%;background:#20232b!important;color:#e5e7eb!important;border:1px solid #2d323c!important;border-radius:8px;padding:6px 8px;font-size:12px}
+.sidebar.sb .sb-biz button{width:100%;margin-top:6px;background:transparent;border:1px dashed #3a404c;color:#9aa3b2;border-radius:8px;padding:5px;font-size:12px;cursor:pointer}
+.sidebar.sb .sb-biz button:hover{color:#fff;border-color:#5b6472}
+.sidebar.sb .sb-search{padding:0 12px 6px;flex-shrink:0}
+.sidebar.sb .sb-search input{width:100%;background:#20232b!important;color:#e5e7eb!important;border:1px solid #2d323c!important;border-radius:8px;padding:7px 10px;font-size:12.5px;outline:none}
+.sidebar.sb .sb-search input::placeholder{color:#7b8494}
+.sidebar.sb .sb-search input:focus{border-color:var(--accent)!important}
+.sidebar.sb .sb-scroll{flex:1;min-height:0;overflow-y:auto;padding:2px 10px 10px;scrollbar-width:thin;scrollbar-color:#3a404c transparent}
+.sidebar.sb .sb-label{display:flex;align-items:center;justify-content:space-between;width:100%;background:transparent;border:0;cursor:pointer;color:#6f7787;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:14px 10px 6px;text-align:left}
+.sidebar.sb .sb-label:hover{color:#aab2c0}
+.sidebar.sb .sb-label svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2.4;transition:transform .15s}
+.sidebar.sb .sb-group.collapsed .sb-label svg{transform:rotate(-90deg)}
+.sidebar.sb .sb-group.collapsed .sb-items{display:none}
+.sidebar.sb .sb-items{display:flex;flex-direction:column;gap:2px}
+.sidebar.sb .sb-item{display:flex!important;align-items:center;gap:11px;width:100%!important;text-align:left!important;padding:8px 10px!important;border:0!important;border-radius:8px!important;background:transparent!important;color:#c3cad6!important;font-size:13.5px!important;font-weight:500;cursor:pointer;position:relative;line-height:1.25}
+.sidebar.sb .sb-item:hover{background:rgba(255,255,255,.06)!important;color:#fff!important}
+.sidebar.sb .sb-item.active{background:color-mix(in srgb,var(--accent) 22%,transparent)!important;color:color-mix(in srgb,var(--accent) 45%,#fff)!important;font-weight:600}
+.sidebar.sb .sb-item.active::before{content:"";position:absolute;left:-10px;top:7px;bottom:7px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.sidebar.sb .sb-ico{width:18px;height:18px;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.sidebar.sb .sb-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar.sb .sb-badge{margin-left:auto;min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:#ef4444;color:#fff;font-size:10.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
+.sidebar.sb .sb-badge.warn{background:#f59e0b;color:#1f1300}
+.sidebar.sb .sb-badge.soft{background:rgba(255,255,255,.14);color:#e5e7eb}
+.sidebar.sb .sb-foot{flex-shrink:0;border-top:1px solid #262a32;padding:10px 12px 12px}
+.sidebar.sb .sb-user{display:flex;align-items:center;gap:10px;padding:6px 4px}
+.sidebar.sb .sb-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sidebar.sb .sb-user-name{color:#f3f4f6;font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar.sb .sb-user-mail{color:#7b8494;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar.sb .sb-logout{margin-left:auto;background:transparent;border:0;color:#9aa3b2;cursor:pointer;padding:6px;border-radius:8px;display:flex}
+.sidebar.sb .sb-logout:hover{background:rgba(239,68,68,.15);color:#fca5a5}
+.sidebar.sb .sb-logout svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.sidebar.sb .install-btn{width:100%;margin-top:8px;padding:7px 10px;border-radius:8px;font-size:12px}
+.sidebar.sb .sb-item.sb-hide,.sidebar.sb .sb-group.sb-hide{display:none!important}
+.sb-backdrop{display:none}
+.sb-burger{display:none;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;cursor:pointer;flex-shrink:0}
+.sb-burger svg{width:20px;height:20px;stroke:#334155;fill:none;stroke-width:2;stroke-linecap:round}
+@media(max-width:768px){
+  html body .sidebar.sb{width:min(86vw,300px)!important;min-width:0!important;max-width:none!important;position:fixed!important;top:0!important;bottom:0!important;left:0!important;height:100%!important;flex-direction:column!important;flex-wrap:nowrap!important;transform:translateX(-105%)!important;transition:transform .22s ease;z-index:60!important}
+  html body .sidebar.sb.mobile-open{transform:translateX(0)!important;box-shadow:10px 0 30px rgba(0,0,0,.35)}
+  .sidebar.sb .sb-scroll{display:block!important;flex-wrap:nowrap!important}
+  .sidebar.sb.mobile-open + .sb-backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:55}
+  .sb-burger{display:inline-flex}
+}
+@media(max-width:520px){.main-wrap > header .install-btn{display:none!important}.main-wrap > header button,.main-wrap > header span{white-space:nowrap}.main-wrap > header h1{font-size:16px}}
+@media print{.sb-backdrop,.sb-burger{display:none!important}}
 </style>
 </head>
 <body>
@@ -3313,6 +3366,85 @@ function viewWorkerApp(){
 
 
 
+
+const SB_ICONS={
+  home:'<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+  trend:'<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+  cart:'<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>',
+  file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+  clip:'<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
+  globe:'<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+  users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  heart:'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
+  tag:'<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>',
+  box:'<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  dollar:'<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  chart:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+  clock:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  truck:'<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
+  pin:'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
+  userplus:'<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>',
+  bolt:'<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  book:'<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
+  chev:'<polyline points="6 9 12 15 18 9"/>',
+  menu:'<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>'
+};
+const sbIcon=(n,cls)=>`<svg class="${cls||'sb-ico'}" viewBox="0 0 24 24" aria-hidden="true">${SB_ICONS[n]||''}</svg>`;
+function ownerSidebar(b,accent,user,bizSwitch){
+  const active=S.viewInvoiceId?'invoices':(S.appView==='orders'?'onlineorders':S.appView);
+  const newOnline=(b.orders||[]).filter(o=>o.source==='online'&&String(o.orderStatus||o.status||'NEW').toUpperCase()==='NEW').length;
+  const lowN=(b.products||[]).filter(p=>p.active!==false&&(p.stock||0)<=(p.reorder||5)).length;
+  const cartN=Math.round(cartCount());
+  // [view key, label, icon, badge, badge style]
+  const groups=[
+    {id:'main',label:'',items:[['dashboard','Dashboard','home'],['wallet','Wallet & trends','trend']]},
+    {id:'sales',label:'Sales',items:[['shop','Shop (POS)','cart',cartN,'soft'],['invoices','Invoices','file'],['quotations','Quotations','clip'],['onlineorders','Online orders','globe',newOnline,'']]},
+    {id:'catalog',label:'Catalog',items:[['products','Products','tag'],['stock','Stock','box',lowN,'warn'],['purchases','Purchases','download']]},
+    {id:'people',label:'Customers',items:[['customers','Customers','users'],['loyalty','Loyalty','heart']]},
+    {id:'finance',label:'Finance',items:[['expenses','Finance','dollar'],['reports','Reports','chart'],['shifts','Shifts','clock']]},
+    {id:'delivery',label:'Delivery',items:[['delivery','Delivery','truck'],['branches','Branches','pin']]},
+    {id:'manage',label:'Manage',items:[['team','Workers','userplus'],['ai','AI assistant','bolt'],['help','User guide','book'],['settings','Settings','gear']]}
+  ];
+  let collapsed=[];try{collapsed=JSON.parse(localStorage.getItem('bh_sb_collapsed')||'[]')||[]}catch(e){}
+  const groupsHtml=groups.map(g=>{
+    const hasActive=g.items.some(it=>it[0]===active);
+    const items=g.items.map(it=>{
+      const n=Number(it[3])||0;
+      const badge=n>0?`<span class="sb-badge ${it[4]||''}">${n>99?'99+':n}</span>`:'';
+      return `<button type="button" class="sb-item ${active===it[0]?'active':''}" data-nav="${it[0]}" ${active===it[0]?'aria-current="page"':''}>${sbIcon(it[2])}<span class="sb-text">${esc(it[1])}</span>${badge}</button>`;
+    }).join('');
+    if(!g.label)return `<div class="sb-group" data-gid="${g.id}"><div class="sb-items" style="margin-top:4px">${items}</div></div>`;
+    const isCollapsed=collapsed.includes(g.id)&&!hasActive;
+    return `<div class="sb-group ${isCollapsed?'collapsed':''}" data-gid="${g.id}">
+      <button type="button" class="sb-label" data-sb-group="${g.id}" aria-expanded="${isCollapsed?'false':'true'}"><span>${esc(g.label)}</span>${sbIcon('chev')}</button>
+      <div class="sb-items">${items}</div></div>`;
+  }).join('');
+  const uname=(user&&(user.name||user.email))||'Owner';
+  return `<aside class="sidebar sb" id="appSidebar">
+    <div class="sb-brand">
+      ${logoHtml(b.name,accent,36)}
+      <div style="min-width:0"><div class="sb-brand-name">${esc(b.name)}</div><div class="sb-brand-sub">MyBusinessHub</div></div>
+    </div>
+    <div class="sb-biz no-print">
+      ${(myBusinesses().length>1)?`<select id="bizSwitch">${bizSwitch}</select>`:''}
+      <button type="button" id="newBizBtn" style="${myBusinesses().length>1?'':'margin-top:0'}">+ New business</button>
+    </div>
+    <div class="sb-search no-print"><input type="search" id="sbFilter" placeholder="Search menu…" autocomplete="off" aria-label="Search menu"/></div>
+    <nav class="sb-scroll" aria-label="Main menu">${groupsHtml}</nav>
+    <div class="sb-foot">
+      <div class="sb-user">
+        <div class="sb-avatar">${esc(initials(uname))}</div>
+        <div style="min-width:0"><div class="sb-user-name">${esc(user&&user.name?user.name:'Owner')}</div><div class="sb-user-mail">${esc((user&&user.email)||'')}</div></div>
+        <button type="button" id="signOut" class="sb-logout" title="Log out" aria-label="Log out">${sbIcon('logout','')}</button>
+      </div>
+      ${installBtn('','Install on this device',accent)}
+    </div>
+  </aside><div class="sb-backdrop" id="sbBackdrop"></div>`;
+}
+
 function viewApp(){
   const b=biz();if(!b){S.view='onboard';return viewOnboard()}
   if(needsPlanPaywall(b))return viewPaywall(b);
@@ -3325,15 +3457,6 @@ function viewApp(){
       </div></div>`;
   }
   const accent=S.accent();const user=currentUser();
-  const nav=[
-    ['dashboard','Dashboard'],['wallet','Wallet & trends'],['shop','Shop (POS)'],['stock','Stock'],
-    ['products','Products'],['purchases','Purchases'],['customers','Customers'],
-    ['quotations','Quotations'],['invoices','Invoices'],['expenses','Finance'],
-    ['reports','Reports'],['onlineorders','Online store'],['orders','Online orders'],
-    ['delivery','Delivery'],['branches','Branches'],['team','Workers'],
-    ['loyalty','Loyalty'],['shifts','Shifts'],['ai','AI assistant'],['help','User guide'],['settings','Settings']
-  ];
-  const side=nav.map(([k,l])=>`<button type="button" class="nav-item ${S.appView===k?'active':''}" data-nav="${k}">${l}</button>`).join('');
   const mine=myBusinesses();
   const bizSwitch=mine.map(x=>`<option value="${x.id}" ${x.id===b.id?'selected':''}>${esc(x.name)}</option>`).join('');
   let main='';
@@ -3364,26 +3487,13 @@ function viewApp(){
   }catch(e){main=`<div class="p-4 text-red-600">${esc(String(e))}</div>`;console.error(e)}
   const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (POS)',stock:'Stock',products:'Products',purchases:'Purchases',customers:'Customers',quotations:'Quotations',invoices:'Invoices',expenses:'Finance',reports:'Reports',onlineorders:'Online store',orders:'Online orders',delivery:'Delivery',branches:'Branches',team:'Workers',loyalty:'Loyalty',shifts:'Cashier shifts',ai:'AI assistant',help:'User guide',settings:'Settings'};
   return `<div class="layout">
-  <aside class="sidebar">
-    <div class="side-brand h-14 flex items-center gap-2 px-3 font-bold text-sm border-b" style="color:${accent}">
-      ${logoHtml(b.name,accent,32)}
-      <span class="truncate">MyBusinessHub</span>
-    </div>
-    <div class="px-2 pt-2 no-print">
-      <select id="bizSwitch" class="w-full border rounded-lg px-2 py-1.5 text-xs bg-white">${bizSwitch}</select>
-      <button type="button" id="newBizBtn" class="w-full mt-1 text-xs py-1.5 rounded-lg border bg-white" style="color:${accent}">+ New business</button>
-    </div>
-    <nav class="flex-1 p-2 space-y-0.5 overflow-y-auto">${side}</nav>
-    <div class="side-foot p-3 border-t text-xs">
-      <p class="truncate px-2 text-slate-500">${esc(b.name)}</p>
-      <p class="truncate px-2 text-slate-400">${esc(user&&user.email)}</p>
-      ${installBtn('mt-2 w-full px-3 py-2 rounded-lg','Install on this device',accent)}
-      <button type="button" id="signOut" class="mt-2 w-full text-left px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm">Log out</button>
-    </div>
-  </aside>
+  ${ownerSidebar(b,accent,user,bizSwitch)}
   <div class="main-wrap">
     <header class="h-14 bg-white border-b flex items-center justify-between px-4 sticky top-0 z-20 no-print">
-      <h1 class="font-semibold text-lg truncate">${S.viewInvoiceId?'Invoice':(titles[S.appView]||'Dashboard')}</h1>
+      <div class="flex items-center gap-2 min-w-0">
+        <button type="button" id="menuToggle" class="sb-burger" aria-label="Open menu">${sbIcon('menu','')}</button>
+        <h1 class="font-semibold text-lg truncate">${S.viewInvoiceId?'Invoice':(titles[S.appView]||'Dashboard')}</h1>
+      </div>
       <div class="flex items-center gap-2">
         <button type="button" id="themeToggle" class="text-xs px-2.5 py-1.5 rounded-lg border bg-white" title="Theme">◐ Theme</button>
         ${installBtn('text-xs px-3 py-1.5 rounded-lg','Install app',accent)}
@@ -5456,6 +5566,28 @@ function bind(){
       if(tab){ev.preventDefault();S.adminTab=tab.getAttribute('data-admin-tab');render();return}
       const mt=ev.target&&ev.target.closest&&ev.target.closest('#menuToggle');
       if(mt){ev.preventDefault();const side=document.getElementById('appSidebar');if(side)side.classList.toggle('mobile-open');return}
+      if(ev.target&&ev.target.closest&&ev.target.closest('#sbBackdrop')){const side=document.getElementById('appSidebar');if(side)side.classList.remove('mobile-open');return}
+      const gl=ev.target&&ev.target.closest&&ev.target.closest('[data-sb-group]');
+      if(gl){
+        ev.preventDefault();
+        const grp=gl.closest('.sb-group');if(!grp)return;
+        grp.classList.toggle('collapsed');
+        gl.setAttribute('aria-expanded',grp.classList.contains('collapsed')?'false':'true');
+        try{localStorage.setItem('bh_sb_collapsed',JSON.stringify([].slice.call(document.querySelectorAll('.sb-group.collapsed')).map(x=>x.getAttribute('data-gid'))))}catch(e){}
+        return;
+      }
+    });
+  }
+  if(!window.bhSbFilter){
+    window.bhSbFilter=true;
+    document.addEventListener('input',function(ev){
+      const f=ev.target&&ev.target.closest&&ev.target.closest('#sbFilter');if(!f)return;
+      const q=f.value.trim().toLowerCase();
+      document.querySelectorAll('.sidebar.sb .sb-item').forEach(function(it){it.classList.toggle('sb-hide',!!q&&it.textContent.toLowerCase().indexOf(q)<0)});
+      document.querySelectorAll('.sidebar.sb .sb-group').forEach(function(g){
+        const any=[].slice.call(g.querySelectorAll('.sb-item')).some(function(i){return !i.classList.contains('sb-hide')});
+        g.classList.toggle('sb-hide',!any);if(q)g.classList.remove('collapsed');
+      });
     });
   }
   // Event delegation for Unlock PIN (works even if buttons re-render)
