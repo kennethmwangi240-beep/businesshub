@@ -95,3 +95,12 @@
 - Bug: every click of "Get recovery code" created a NEW code and cancelled the previous one, so a code the admin had passed on (or an older alert's code) said "Invalid or expired recovery code". An active code is now kept for its 30 minutes, however many times it is requested.
 - The admin no longer copies codes by hand. The client's recovery page waits ("Waiting for admin approval...") and the admin presses "Approve - send code to client's page" on the Alerts tab (admins also get a toast and a badge for new requests). The code then appears on that client's page by itself and is filled in. It is released only to the browser that made the request and only after approval, so typing someone else's email never reveals their code.
 - With SMTP configured the code is emailed to the account instead (no admin step).
+
+# Grouped dark sidebar (owner app)
+- Replaced the flat 21-button list with a dark sidebar grouped into Sales / Catalog / Customers / Finance / Delivery / Manage,
+  with line icons, an accent bar on the active item, collapsible group headings (remembered per device), a "Search menu" box,
+  and a user card with log out at the bottom.
+- Live badges: new online orders (red), low/out-of-stock products (amber), items in the cart (grey).
+- Mobile: hamburger button in the header opens a slide-in drawer with a dimmed backdrop (tap to close); it closes after choosing a page.
+- The duplicate "Online store" / "Online orders" entries (both opened the same page) are now one item, "Online orders".
+- The business switcher only appears when you own more than one business.
