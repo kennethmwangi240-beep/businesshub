@@ -605,6 +605,16 @@ html body .sidebar.sb{background:#16181d!important;color:#cbd5e1!important;borde
   .bhp-back{padding:8px 10px}
 }
 
+
+.bhp-shops-strip{padding:8px 16px 20px;background:#f8fafc}
+.bhp-shop-grid-home{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+.bhp-shop-card-home{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;border:1px solid #e2e8f0;background:#fff;border-radius:14px;padding:14px;cursor:pointer}
+.bhp-shop-card-home:hover{border-color:#93c5fd;box-shadow:0 8px 20px rgba(29,78,216,.08)}
+.bhp-shop-card-home .bhp-shop-ico{width:36px;height:36px;border-radius:10px;background:#eff6ff;color:#1d4ed8;font-weight:800;display:flex;align-items:center;justify-content:center}
+.bhp-shop-card-home .bhp-shop-name{font-weight:700;font-size:14px}
+.bhp-shop-card-home .bhp-shop-sub{font-size:11px;color:#64748b}
+.bhp-shop-card-home .bhp-visit{font-size:12px;font-weight:600;color:#1d4ed8;margin-top:4px}
+
 </style>
 </head>
 <body>
@@ -1649,6 +1659,22 @@ async function api(path, opts){
   return data;
 }
 
+function updateServerBadge(){
+  try{
+    const badge=document.getElementById('serverBadge');
+    if(!badge)return;
+    if(typeof navigator!=='undefined'&&navigator.onLine===false){
+      badge.textContent='Offline';
+      badge.className='text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800';
+    }else if(SERVER_MODE){
+      badge.textContent='Server DB';
+      badge.className='text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800';
+    }else{
+      badge.textContent='Local only';
+      badge.className='text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-500';
+    }
+  }catch(e){}
+}
 async function detectServer(){
   if(!API_BASE || location.protocol==='file:'){ SERVER_MODE=false; return false; }
   if(typeof navigator!=='undefined' && navigator.onLine===false){ SERVER_MODE=false; return false; }
@@ -1658,12 +1684,39 @@ async function detectServer(){
     SERVER_MODE = r.ok;
     if(SERVER_MODE){ try{ await migrateLocalAccounts() }catch(e){ console.warn('migrateLocalAccounts',e) } }
   }catch(e){ SERVER_MODE=false; }
+  try{updateServerBadge()}catch(e){}
   return SERVER_MODE;
 }
 
 /* Accounts created on this device while offline / without a server exist only here, so they cannot log in anywhere else.
    Once the server is reachable, register them there (same email + password), re-point their businesses at the server id and upload the data. */
 let _migrating=false;
+
+/** Push every local owner account that still has a password to the server, then map businesses. */
+async function syncAccounts(){
+  if(!SERVER_MODE)return {synced:0,failed:0};
+  const d0=db();
+  const cand=(d0.users||[]).filter(u=>u.password&&u.role!=='admin'&&u.email!==(d0.adminEmail||'admin@businesshub.ke'));
+  let synced=0, failed=0;
+  // Prefer full migrate (rewrites ids + pushes businesses)
+  try{ await migrateLocalAccounts(); }catch(e){ console.warn(e); }
+  // Count remaining local-password users (still not on server)
+  const d1=db();
+  const left=(d1.users||[]).filter(u=>u.password&&u.role!=='admin'&&u.email!==(d1.adminEmail||'admin@businesshub.ke'));
+  synced = Math.max(0, cand.length - left.length);
+  failed = left.length;
+  // Push profile for current session user
+  try{
+    if(API_TOKEN){
+      const me=typeof currentUser==='function'?currentUser():null;
+      if(me&&me.email){
+        await api('/api/me',{method:'PATCH',body:{name:me.name||'',phone:me.phone||''}});
+      }
+    }
+  }catch(e){ console.warn('profile sync',e); }
+  return {synced:synced,failed:failed,pending:failed};
+}
+
 async function migrateLocalAccounts(){
   if(_migrating||!SERVER_MODE)return;
   _migrating=true;
@@ -1674,8 +1727,11 @@ async function migrateLocalAccounts(){
     for(const u of cand){
       const pw=u.password,email=String(u.email||'').toLowerCase().trim(),oldId=u.id;
       let data=null;
-      try{ API_TOKEN=''; data=await api('/api/register',{method:'POST',body:{email:email,password:pw,name:u.name||''}}); }
-      catch(e){ try{ data=await api('/api/login',{method:'POST',body:{email:email,password:pw,clientOnly:true}}) }catch(e2){ data=null } }
+      try{ API_TOKEN=''; data=await api('/api/accounts/sync',{method:'POST',body:{email:email,password:pw,name:u.name||''}}); }
+      catch(e){
+        try{ data=await api('/api/register',{method:'POST',body:{email:email,password:pw,name:u.name||''}}); }
+        catch(e1){ try{ data=await api('/api/login',{method:'POST',body:{email:email,password:pw,clientOnly:true}}) }catch(e2){ data=null } }
+      }
       if(!data||!data.user||!data.token)continue; // could not register (e.g. password too short) - keep local copy
       const dd=db();const nu=dd.users.find(x=>x.id===oldId);if(!nu)continue;
       const newId=data.user.id;
@@ -1806,6 +1862,69 @@ async function syncPull(){
       API_TOKEN=''; localStorage.removeItem('bh_api_token');
     }
     return false;
+  }
+}
+
+
+/** Full two-way sync: offline sales → push all local businesses → pull server (merge by updatedAt). */
+async function fullServerSync(opts){
+  opts=opts||{};
+  const quiet=!!opts.quiet;
+  try{
+    if(typeof navigator!=='undefined'&&navigator.onLine===false){
+      if(!quiet)toast('Offline — changes stay on this device until you reconnect');
+      return {ok:false,reason:'offline'};
+    }
+    if(typeof detectServer==='function'){
+      await detectServer();
+    }
+    if(!SERVER_MODE){
+      if(!quiet)toast('Server not reachable — will sync when online');
+      return {ok:false,reason:'no_server'};
+    }
+    let acc={synced:0,failed:0};
+    try{ if(typeof syncAccounts==='function') acc=await syncAccounts();
+         else if(typeof migrateLocalAccounts==='function') await migrateLocalAccounts();
+    }catch(e){ console.warn('account sync',e); }
+    try{ if(typeof flushOfflineSales==='function') flushOfflineSales(); }catch(e){}
+    if(!API_TOKEN){
+      if(!quiet){
+        if(acc.synced) toast('Uploaded '+acc.synced+' account(s) to server — log in to sync businesses');
+        else toast('Online — log in to sync accounts & businesses');
+      }
+      return {ok:true,reason:'no_token',accounts:acc};
+    }
+    // Push every business this account owns (or all if admin viewing local)
+    try{
+      const d=db();
+      const u=typeof currentUser==='function'?currentUser():null;
+      let list=(d.businesses||[]);
+      if(u&&u.role!=='admin'&&u.email!==(d.adminEmail||'admin@businesshub.ke')){
+        list=list.filter(function(b){return b.ownerId===u.id||!b.ownerId});
+        // claim unowned local businesses for this user so they upload
+        list.forEach(function(b){ if(!b.ownerId){ b.ownerId=u.id; } });
+      }
+      for(let i=0;i<list.length;i++){
+        try{ await syncPushBiz(list[i]); }catch(e){ console.warn('push',list[i]&&list[i].id,e); }
+      }
+      // Wait for push queue to drain
+      try{ await _pushQueue; }catch(e){}
+    }catch(e){ console.warn('push all',e); }
+    let pulled=false;
+    try{ pulled = await syncPull(); }catch(e){ console.warn('pull',e); }
+    if(!quiet){
+      const bits=[];
+      if(acc&&acc.synced) bits.push(acc.synced+' account(s) uploaded');
+      if(acc&&acc.failed) bits.push(acc.failed+' account(s) still local (check password)');
+      if(pulled) bits.push('businesses synced');
+      toast(bits.length?bits.join(' · '):'Synced with server');
+    }
+    try{ if(typeof render==='function') render(); }catch(e){}
+    return {ok:!!pulled};
+  }catch(e){
+    console.warn('fullServerSync',e);
+    if(!quiet)toast('Sync error: '+(e.message||e));
+    return {ok:false,reason:String(e.message||e)};
   }
 }
 
@@ -2482,6 +2601,168 @@ function requireWorkerSalePassword(onOk){
   onOk();
 }
 
+
+function workerOnShift(b){
+  try{
+    const cw=typeof currentWorker==='function'?currentWorker():null;
+    if(cw&&cw.worker)return cw.worker;
+    const sh=typeof currentShift==='function'?currentShift(b):null;
+    if(sh&&sh.workerId&&b){
+      return (b.workers||[]).find(function(w){return w.id===sh.workerId})||null;
+    }
+  }catch(e){}
+  return null;
+}
+function notifyAdminPinLock(kind,detail){
+  try{
+    const d=db();
+    if(!d.adminAlerts)d.adminAlerts=[];
+    d.adminAlerts.unshift({id:uid(),type:'password_reset_request',kind:kind||'sale_pin_lock',at:new Date().toISOString(),detail:detail||'',businessId:(biz()&&biz().id)||null,businessName:(biz()&&biz().name)||''});
+    d.adminAlerts=d.adminAlerts.slice(0,200);
+    save(d);
+  }catch(e){}
+}
+/** Single confirmation for a sale: worker-on-shift password if any, else owner sales PIN. Max 2 attempts then lock. */
+
+function isDarajaLiveConfigured(payments){
+  const p=payments||{};
+  return !!(p.consumerKey&&p.consumerSecret&&p.passkey&&(p.shortcode||p.till));
+}
+function isValidMpesaCode(raw){
+  const code=String(raw||'').trim().toUpperCase().replace(/\s+/g,'');
+  if(!code)return {ok:false,error:'Enter the M-Pesa transaction code from the customer SMS.'};
+  if(code.length!==10)return {ok:false,error:'M-Pesa codes are exactly 10 characters (from the confirmation SMS).'};
+  if(!/^[A-Z0-9]{10}$/.test(code))return {ok:false,error:'M-Pesa code must be letters and numbers only (A–Z, 0–9).'};
+  if(/^([A-Z0-9])\1{9}$/.test(code))return {ok:false,error:'That code looks invalid (repeated characters).'};
+  const letters=(code.match(/[A-Z]/g)||[]).length;
+  const digits=(code.match(/[0-9]/g)||[]).length;
+  if(letters<1||digits<1)return {ok:false,error:'A real M-Pesa code has both letters and numbers.'};
+  if(/^MPESA/i.test(code)||/^PENDING/i.test(code)||/^TEST/i.test(code)||/^FAKE/i.test(code))
+    return {ok:false,error:'Enter the real code from the M-Pesa SMS, not a placeholder.'};
+  return {ok:true,code:code};
+}
+function mpesaCodeAlreadyUsed(b,code){
+  return (b.usedMpesaCodes||[]).some(function(x){return String(x.code||x).toUpperCase()===code});
+}
+function rememberMpesaCode(b,code,orderId){
+  if(!b.usedMpesaCodes)b.usedMpesaCodes=[];
+  b.usedMpesaCodes.unshift({code:code,orderId:orderId||null,at:new Date().toISOString()});
+  b.usedMpesaCodes=b.usedMpesaCodes.slice(0,500);
+}
+
+function requireSaleAuth(onOk){
+  const b=biz();
+  if(!b){toast('No business');return}
+  const worker=workerOnShift(b);
+  // --- Worker path: only worker password ---
+  if(worker){
+    if(worker.saleLocked||worker.pinLocked){
+      openModal(`<h3 class="text-lg font-bold mb-2 text-red-700">Sale locked</h3>
+        <p class="text-sm text-slate-600 mb-3">Too many wrong password attempts for <b>${esc(worker.name||'worker')}</b>. Ask the owner/admin to unlock.</p>
+        <button type="button" id="pinCancel" class="w-full py-2.5 rounded-xl border">Close</button>`);
+      document.getElementById('pinCancel').onclick=closeModal;
+      return;
+    }
+    openModal(`<h3 class="text-lg font-bold mb-2">Confirm sale</h3>
+      <p class="text-sm text-slate-500 mb-1">Worker on shift: <b>${esc(worker.name||'')}</b></p>
+      <p class="text-xs text-slate-400 mb-3">Enter your worker password only (2 attempts).</p>
+      <input id="saleAuthPw" type="password" class="w-full border rounded-xl px-3 py-2.5 mb-2" placeholder="Worker password" autocomplete="current-password"/>
+      <p id="saleAuthErr" class="hidden text-sm text-red-600 mb-2"></p>
+      <button type="button" id="saleAuthOk" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${S.accent()}">Confirm sale</button>
+      <button type="button" id="pinCancel" class="w-full py-2 text-sm text-slate-500 mt-2">Cancel</button>`);
+    document.getElementById('pinCancel').onclick=closeModal;
+    document.getElementById('saleAuthOk').onclick=function(){
+      const pw=(document.getElementById('saleAuthPw').value||'');
+      if(pw!==String(worker.password||'')){
+        worker.salePinFails=(Number(worker.salePinFails)||0)+1;
+        const left=Math.max(0,2-worker.salePinFails);
+        if(worker.salePinFails>=2){
+          worker.saleLocked=true;worker.pinLocked=true;
+          notifyAdminPinLock('worker_sale_lock','Worker '+(worker.name||'')+' locked after 2 wrong sale passwords');
+          saveBiz(b);
+          closeModal();
+          openModal(`<h3 class="text-lg font-bold text-red-700 mb-2">Sale locked</h3>
+            <p class="text-sm text-slate-600">2 wrong attempts. Admin/owner has been notified.</p>
+            <button type="button" id="pinCancel" class="w-full mt-3 py-2.5 rounded-xl border">Close</button>`);
+          document.getElementById('pinCancel').onclick=closeModal;
+          return;
+        }
+        saveBiz(b);
+        const err=document.getElementById('saleAuthErr');
+        if(err){err.textContent='Incorrect password. '+(left===1?'1 attempt left.':'');err.classList.remove('hidden')}
+        return;
+      }
+      worker.salePinFails=0;
+      S._servedBy={id:worker.id,name:(worker.firstName||worker.name||''),role:worker.role};
+      saveBiz(b);
+      closeModal();
+      if(typeof onOk==='function')onOk();
+    };
+    return;
+  }
+  // --- Owner path: sales PIN only (no second prompt) ---
+  if(b.pinLocked){
+    openModal(`<h3 class="text-lg font-bold mb-2 text-red-700">Sales PIN locked</h3>
+      <p class="text-sm text-slate-600 mb-3">Too many incorrect attempts. Ask platform admin to unlock under Admin → Alerts.</p>
+      <button type="button" id="pinCancel" class="w-full py-2.5 rounded-xl border">Close</button>`);
+    document.getElementById('pinCancel').onclick=closeModal;
+    return;
+  }
+  const pin=typeof getSalesPin==='function'?getSalesPin():(b.salesPin||'');
+  if(!pin){
+    openModal(`<h3 class="text-lg font-bold mb-2">Create sales PIN</h3>
+      <p class="text-sm text-slate-500 mb-3">4–6 digits. After <b>2 wrong tries</b> the PIN locks.</p>
+      <input id="newPin" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-2" placeholder="New PIN"/>
+      <input id="newPin2" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-2" placeholder="Confirm PIN"/>
+      <p id="saleAuthErr" class="hidden text-sm text-red-600 mb-2"></p>
+      <button type="button" id="saleAuthOk" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${S.accent()}">Save &amp; continue</button>
+      <button type="button" id="pinCancel" class="w-full py-2 text-sm text-slate-500 mt-2">Cancel</button>`);
+    document.getElementById('pinCancel').onclick=closeModal;
+    document.getElementById('saleAuthOk').onclick=function(){
+      const a=(document.getElementById('newPin').value||'').trim();
+      const c=(document.getElementById('newPin2').value||'').trim();
+      if(!/^\d{4,6}$/.test(a)){document.getElementById('saleAuthErr').textContent='PIN must be 4–6 digits';document.getElementById('saleAuthErr').classList.remove('hidden');return}
+      if(a!==c){document.getElementById('saleAuthErr').textContent='PINs do not match';document.getElementById('saleAuthErr').classList.remove('hidden');return}
+      b.salesPin=a;b.pinFails=0;saveBiz(b);
+      closeModal();
+      if(typeof onOk==='function')onOk();
+    };
+    return;
+  }
+  openModal(`<h3 class="text-lg font-bold mb-2">Confirm sale</h3>
+    <p class="text-sm text-slate-500 mb-3">Enter your sales PIN (2 attempts only).</p>
+    <input id="saleAuthPw" type="password" inputmode="numeric" maxlength="6" class="w-full border rounded-xl px-3 py-2.5 mb-2" placeholder="Sales PIN"/>
+    <p id="saleAuthErr" class="hidden text-sm text-red-600 mb-2"></p>
+    <button type="button" id="saleAuthOk" class="w-full py-3 rounded-xl text-white font-semibold" style="background:${S.accent()}">Confirm sale</button>
+    <button type="button" id="pinCancel" class="w-full py-2 text-sm text-slate-500 mt-2">Cancel</button>`);
+  document.getElementById('pinCancel').onclick=closeModal;
+  document.getElementById('saleAuthOk').onclick=function(){
+    const entered=(document.getElementById('saleAuthPw').value||'').trim();
+    if(entered!==String(pin)){
+      b.pinFails=(Number(b.pinFails)||0)+1;
+      const left=Math.max(0,2-b.pinFails);
+      if(b.pinFails>=2){
+        b.pinLocked=true;
+        notifyAdminPinLock('sale_pin_lock','Sales PIN locked after 2 wrong attempts');
+        saveBiz(b);
+        closeModal();
+        openModal(`<h3 class="text-lg font-bold text-red-700 mb-2">Sales PIN locked</h3>
+          <p class="text-sm text-slate-600">2 wrong attempts. Admin has been notified.</p>
+          <button type="button" id="pinCancel" class="w-full mt-3 py-2.5 rounded-xl border">Close</button>`);
+        document.getElementById('pinCancel').onclick=closeModal;
+        return;
+      }
+      saveBiz(b);
+      const err=document.getElementById('saleAuthErr');
+      if(err){err.textContent='Incorrect PIN. '+(left===1?'1 attempt left.':'');err.classList.remove('hidden')}
+      return;
+    }
+    b.pinFails=0;saveBiz(b);
+    closeModal();
+    if(typeof onOk==='function')onOk();
+  };
+}
+
 function requireSalesPin(onOk){
   const b=biz();
   if(!b){toast('No business');return}
@@ -2624,13 +2905,15 @@ async function darajaStkPush(opts){
 function showStkModal(opts){
   const via=opts.result&&opts.result.via||'demo';
   const warn=opts.result&&opts.result.warning?('<p class="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 mt-2 text-left">'+esc(opts.result.warning)+'</p>'):'';
-  const demoNote=via==='demo'?'<p class="text-xs text-slate-500 mt-2 text-left">Demo STK (no live phone prompt). Enter the M-Pesa code after paying, or any code to confirm. Add Daraja keys + Passkey in Settings for live API; use Proxy URL to avoid CORS.</p>':'';
-  openModal('<div class="text-center py-2"><div class="w-16 h-16 mx-auto rounded-full bg-green-100 flex items-center justify-center text-2xl font-bold text-green-700 mb-3">M-PESA</div><h3 class="text-xl font-bold text-green-800">M-Pesa STK Push</h3><p class="text-sm text-slate-500 mt-1">'+esc(opts.phone)+'</p><p class="text-2xl font-bold mt-2">'+kes(opts.amount)+'</p><p class="text-xs text-slate-400">Ref '+esc(opts.orderRef||'')+'</p>'+(opts.till?('<p class="text-sm mt-2">Till/Paybill <b>'+esc(opts.till)+'</b></p>'):'')+'<p class="text-sm text-slate-600 mt-3">'+(via==='daraja'||via==='proxy'?'Check your phone and enter M-Pesa PIN.':'Confirm payment below.')+'</p>'+demoNote+warn+'<input id="stkCode" class="w-full border rounded-xl px-3 py-2.5 mt-4 text-center" placeholder="M-Pesa code e.g. QK7X2ABC1Y"/><button type="button" id="stkPaid" class="mt-3 w-full py-3 rounded-xl text-white font-semibold" style="background:'+(opts.color||'#16a34a')+'">I have paid — confirm</button><button type="button" id="stkCancel" class="mt-2 w-full py-2 text-sm text-slate-500">Cancel</button></div>');
+  const demoNote=via==='demo'?'<p class="text-xs text-slate-500 mt-2 text-left">Live STK is not active. Confirm with the real 10-character M-Pesa code from the customer SMS only — fake or empty codes are rejected. Add Daraja keys in Settings for STK push.</p>':'';
+  openModal('<div class="text-center py-2"><div class="w-16 h-16 mx-auto rounded-full bg-green-100 flex items-center justify-center text-2xl font-bold text-green-700 mb-3">M-PESA</div><h3 class="text-xl font-bold text-green-800">M-Pesa STK Push</h3><p class="text-sm text-slate-500 mt-1">'+esc(opts.phone)+'</p><p class="text-2xl font-bold mt-2">'+kes(opts.amount)+'</p><p class="text-xs text-slate-400">Ref '+esc(opts.orderRef||'')+'</p>'+(opts.till?('<p class="text-sm mt-2">Till/Paybill <b>'+esc(opts.till)+'</b></p>'):'')+'<p class="text-sm text-slate-600 mt-3">'+(via==='daraja'||via==='proxy'?'Check your phone and enter M-Pesa PIN.':'Confirm payment below.')+'</p>'+demoNote+warn+'<input id="stkCode" class="w-full border rounded-xl px-3 py-2.5 mt-4 text-center" placeholder="10-character M-Pesa code from SMS" maxlength="12"/><button type="button" id="stkPaid" class="mt-3 w-full py-3 rounded-xl text-white font-semibold" style="background:'+(opts.color||'#16a34a')+'">I have paid — confirm</button><button type="button" id="stkCancel" class="mt-2 w-full py-2 text-sm text-slate-500">Cancel</button></div>');
   document.getElementById('stkCancel').onclick=closeModal;
   document.getElementById('stkPaid').onclick=function(){
-    const code=(document.getElementById('stkCode').value||'').trim()||('MPESA-'+Date.now().toString(36).toUpperCase());
+    const raw=(document.getElementById('stkCode').value||'').trim();
+    const v=isValidMpesaCode(raw);
+    if(!v.ok){alert(v.error);return}
     closeModal();
-    if(opts.onDone)opts.onDone(code);
+    if(opts.onDone)opts.onDone(v.code);
   };
 }
 
@@ -3283,6 +3566,35 @@ function viewLanding(){
     </div>
   </section>
 
+  
+  <section class="bhp-shops-strip">
+    <div class="bhp-features-inner">
+      <div class="bhp-sec-head">
+        <h2>🛒 Order from local shops</h2>
+        <button type="button" data-go="online" class="bhp-link">View all shops →</button>
+      </div>
+      <p class="text-sm text-slate-500 mb-3">Browse participating businesses and place an order online. Or search the marketplace for a product across many shops.</p>
+      <div class="bhp-hero-ctas" style="margin-bottom:14px">
+        <button type="button" data-go="online" class="bhp-cta-primary">Place an order online →</button>
+        <button type="button" data-go="marketplace" class="bhp-cta-secondary">Search marketplace</button>
+      </div>
+      <div class="bhp-shop-grid-home" id="landingShopList">
+        ${(()=>{
+          try{
+            const stores=(typeof publicStores==='function'?publicStores():[])||[];
+            if(!stores.length)return '<p class="text-sm text-slate-400">No online shops listed yet. Businesses that enable online store appear here.</p>';
+            return stores.slice(0,8).map(s=>`<button type="button" class="bhp-shop-card-home" data-go="online" data-online-id="${esc(s.id)}">
+              <span class="bhp-shop-ico">${esc((s.name||'S')[0])}</span>
+              <span class="bhp-shop-name">${esc(s.name||'Shop')}</span>
+              <span class="bhp-shop-sub">${esc(s.address||s.categoryLabel||'Order online')}</span>
+              <span class="bhp-visit">Open shop</span>
+            </button>`).join('');
+          }catch(e){return '<p class="text-sm text-slate-400">Shops loading…</p>'}
+        })()}
+      </div>
+    </div>
+  </section>
+
   <section class="bhp-features">
     <div class="bhp-features-inner">
       <div class="bhp-sec-head">
@@ -3359,7 +3671,7 @@ function viewLogin(){
       ${installBtn('text-xs px-3 py-1.5 rounded-lg border','Install app')}
     </div>
     <h1 class="text-2xl font-bold">Owner log in</h1>
-    <p class="text-sm text-slate-500 mt-1">Business owners manage the full shop from this account.</p>
+    <p class="text-sm text-slate-500 mt-1">Business owners manage the full shop from this account. Use the same email and password on phone or computer — accounts are stored on the server when you use this website online.</p>
     <form id="loginForm" class="mt-6 space-y-4">
       <div>
         <label class="text-sm font-medium text-slate-700">Email</label>
@@ -6209,6 +6521,14 @@ function viewOnline(){
 
 function bind(){
 
+  document.querySelectorAll('[data-online-id]').forEach(function(btn){
+    btn.addEventListener('click',function(ev){
+      const id=btn.getAttribute('data-online-id');
+      if(id){S.onlineBizId=id;S.view='online';render();}
+    });
+  });
+
+
   /* Admin panel binds */
   try{
     document.querySelectorAll('[data-admin-tab]').forEach(function(btn){
@@ -6553,56 +6873,89 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
   document.querySelectorAll('[data-lptheme]').forEach(el=>el.onclick=()=>{const t=el.dataset.lptheme.split(',');const root=document.getElementById('lpRoot');if(root){root.style.setProperty('--brand',t[0]);root.style.setProperty('--brand2',t[1])}document.querySelectorAll('[data-lptheme]').forEach(x=>x.classList.toggle('on',x===el))});
 
   const lf=document.getElementById('loginForm');
-  if(lf)lf.onsubmit=e=>{e.preventDefault();const fd=new FormData(lf);const d=db();
-    const email=String(fd.get('email')).toLowerCase().trim();
-    const password=fd.get('password');
-
-    // Prefer offline unlock when no network (passwords are not stored after server login)
-    if(navigator.onLine===false){
+  if(lf)lf.onsubmit=function(e){
+    e.preventDefault();
+    const fd=new FormData(lf);
+    const email=String(fd.get('email')||'').toLowerCase().trim();
+    const password=String(fd.get('password')||'');
+    const errEl=document.getElementById('loginErr');
+    if(errEl){errEl.textContent='';errEl.classList.add('hidden')}
+    if(!email||!password){
+      if(errEl){errEl.textContent='Enter email and password';errEl.classList.remove('hidden')}
+      return;
+    }
+    const finishServerLogin=function(data){
+      API_TOKEN=data.token;
+      try{localStorage.setItem('bh_api_token',API_TOKEN)}catch(e){}
+      rememberOfflineLogin(email,password);
+      const d=db();
+      let u=d.users.find(function(x){return x.id===data.user.id||String(x.email||'').toLowerCase()===email});
+      if(!u){u={id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:data.user.role||'owner'};d.users.push(u)}
+      else {u.id=data.user.id;u.password='';u.name=data.user.name||u.name;u.role=data.user.role||u.role||'owner'}
+      d.session=u.id;save(d);
+      try{if(document.getElementById('rememberMe')&&document.getElementById('rememberMe').checked)localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
+      const goApp=function(){
+        const mine=db().businesses.filter(function(b){return b.ownerId===u.id});
+        if(!mine.length){S.view='onboard';render()}
+        else{const dd=db();dd.currentBizId=mine[0].id;save(dd);S.appView='dashboard';S.view='app';render()}
+        clearWorkerSession();toast('Logged in');try{fullServerSync({quiet:true})}catch(e){}
+      };
+      if(typeof syncPull==='function'){
+        syncPull().then(goApp).catch(goApp);
+      }else goApp();
+    };
+    const tryServerLogin=function(){
+      return api('/api/login',{method:'POST',body:{email:email,password:password,clientOnly:true}}).then(finishServerLogin);
+    };
+    // Offline: only device-local unlock
+    if(typeof navigator!=='undefined'&&navigator.onLine===false){
       tryOfflineOwnerLogin(email,password,null);
       return;
     }
-
-    if(SERVER_MODE){
-      api('/api/login',{method:'POST',body:{email:email,password:fd.get('password'),clientOnly:true}}).then(function(data){
-        API_TOKEN=data.token; localStorage.setItem('bh_api_token',API_TOKEN);
-        rememberOfflineLogin(email,fd.get('password'));
-        const d=db();
-        let u=d.users.find(x=>x.id===data.user.id);
-        if(!u){u={id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:data.user.role};d.users.push(u)}
-        else {u.password='';u.name=data.user.name}
-        d.session=u.id;save(d);
-        try{if(document.getElementById('rememberMe')&&document.getElementById('rememberMe').checked)localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
-        syncPull().then(function(){
-          const mine=db().businesses.filter(b=>b.ownerId===u.id);
-          if(!mine.length){S.view='onboard';render()}
-          else{db().currentBizId=mine[0].id;save(db());S.appView='dashboard';S.view='app';render()}
-          clearWorkerSession();toast('Logged in (server)');
-        });
-      }).catch(function(err){
-        tryOfflineOwnerLogin(email,fd.get('password'),err);
+    // Online: always talk to server on this origin (phone + desktop)
+    const run=function(){
+      tryServerLogin().catch(function(err){
+        // If account missing on server but exists locally with password, upload then login
+        const local=db().users.find(function(x){return String(x.email||'').toLowerCase()===email&&x.password&&x.password===password&&x.role!=='admin'});
+        if(local&&err&&/invalid email or password/i.test(String(err.message||''))){
+          api('/api/register',{method:'POST',body:{email:email,password:password,name:local.name||''}}).then(function(data){
+            finishServerLogin(data);
+            toast('Account uploaded to server — works on all devices now');
+            try{if(typeof migrateLocalAccounts==='function')migrateLocalAccounts()}catch(e){}
+          }).catch(function(err2){
+            // register failed (email taken with different password) — show original
+            tryOfflineOwnerLogin(email,password,err);
+          });
+          return;
+        }
+        tryOfflineOwnerLogin(email,password,err);
       });
+    };
+    if(SERVER_MODE){run();return}
+    // Re-detect server (fixes phone where SERVER_MODE was still false)
+    if(typeof detectServer==='function'&&API_BASE){
+      Promise.resolve(detectServer()).then(function(on){
+        if(on){run()}
+        else{
+          // no server: local only
+          const d=db();
+          const u=d.users.find(function(x){return x.email===email&&x.password&&x.password===password});
+          if(!u){tryOfflineOwnerLogin(email,password,{message:'Cannot reach the cloud server. Open this same website URL on the device where you registered (while online) once, or check your internet.'});return}
+          if(u.role==='admin'||u.email===(d.adminEmail||'admin@businesshub.ke')){
+            if(errEl){errEl.textContent='This is an admin account — use Admin login';errEl.classList.remove('hidden');return}
+          }
+          d.session=u.id;save(d);clearWorkerSession();
+          const mine=d.businesses.filter(function(b){return b.ownerId===u.id});
+          if(!mine.length){S.view='onboard';render()}
+          else{d.currentBizId=mine[0].id;save(d);S.appView='dashboard';S.view='app';render()}
+          toast('Logged in (this device only — not synced)');
+        }
+      }).catch(function(){tryOfflineOwnerLogin(email,password,{message:'Cannot reach server'})});
       return;
     }
+    tryOfflineOwnerLogin(email,password,null);
+  };
 
-    if(!navigator.onLine){
-      tryOfflineOwnerLogin(email,fd.get('password'),null);
-      return;
-    }
-
-    const u=d.users.find(x=>x.email===email&&x.password&&x.password===fd.get('password'));
-    if(!u){tryOfflineOwnerLogin(email,fd.get('password'),null);return}
-    if(u.role==='admin'||u.email===(d.adminEmail||'admin@businesshub.ke')){
-      document.getElementById('loginErr').textContent='This is a platform admin account. Use Admin login.';
-      document.getElementById('loginErr').classList.remove('hidden');
-      return;
-    }
-    rememberOfflineLogin(email,fd.get('password'));
-    d.session=u.id;save(d);
-    const mine=d.businesses.filter(b=>b.ownerId===u.id);
-    if(!mine.length){S.view='onboard';render()}
-    else{d.currentBizId=mine[0].id;save(d);S.appView='dashboard';S.view='app';render()}
-    clearWorkerSession();toast('Logged in')};
 
   const alf=document.getElementById('adminLoginForm');
   if(alf)alf.onsubmit=e=>{e.preventDefault();const fd=new FormData(alf);const d=db();
@@ -6673,34 +7026,73 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
 
 
   const rf=document.getElementById('regForm');
-  if(rf)rf.onsubmit=e=>{e.preventDefault();const fd=new FormData(rf);const d=db();
-    if(fd.get('password')!==fd.get('password2')){document.getElementById('regErr').textContent='Passwords do not match';document.getElementById('regErr').classList.remove('hidden');return}
-    const email=String(fd.get('email')).toLowerCase().trim();
-
-    if(SERVER_MODE){
-      api('/api/register',{method:'POST',body:{email:email,password:fd.get('password'),name:fd.get('name')||''}}).then(function(data){
-        API_TOKEN=data.token; localStorage.setItem('bh_api_token',API_TOKEN);
-        rememberOfflineLogin(email,fd.get('password'));
-        const d=db();
-        d.users.push({id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:'owner'});
-        d.session=data.user.id;save(d);
-        try{localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
-        S.view='onboard';render();toast('Account created on server');
-      }).catch(function(e){
-        document.getElementById('regErr').textContent=e.message||'Register failed';
-        document.getElementById('regErr').classList.remove('hidden');
-      });
+  if(rf)rf.onsubmit=function(e){
+    e.preventDefault();
+    const fd=new FormData(rf);
+    const err=document.getElementById('regErr');
+    if(fd.get('password')!==fd.get('password2')){
+      if(err){err.textContent='Passwords do not match';err.classList.remove('hidden')}
       return;
     }
-
+    const email=String(fd.get('email')||'').toLowerCase().trim();
+    const password=String(fd.get('password')||'');
+    const name=String(fd.get('name')||'');
+    if(!email||!password){
+      if(err){err.textContent='Email and password required';err.classList.remove('hidden')}
+      return;
+    }
+    const d=db();
     if(email===(d.adminEmail||'admin@businesshub.ke')||email==='admin@businesshub.ke'){
-      document.getElementById('regErr').textContent='Use Admin registration for the platform owner account';
-      document.getElementById('regErr').classList.remove('hidden');return}
-    if(d.users.find(x=>x.email===email)){document.getElementById('regErr').textContent='Email already registered';document.getElementById('regErr').classList.remove('hidden');return}
-    d.users.push({id:uid(),email,password:fd.get('password'),name:fd.get('name')||'',role:'owner'});
-    d.session=d.users[d.users.length-1].id;save(d);
-    try{localStorage.setItem('bh_remember',JSON.stringify({email:email,password:fd.get('password')}))}catch(e){}
-    S.view='onboard';render()};
+      if(err){err.textContent='Use Admin registration for the platform owner account';err.classList.remove('hidden')}
+      return;
+    }
+    const finishLocal=function(){
+      if(d.users.find(function(x){return x.email===email})){
+        if(err){err.textContent='Email already registered on this device';err.classList.remove('hidden')}
+        return;
+      }
+      d.users.push({id:uid(),email:email,password:password,name:name,role:'owner'});
+      d.session=d.users[d.users.length-1].id;save(d);
+      try{localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
+      S.view='onboard';render();
+      toast('Account saved on this device only — open online once to use on other phones');
+    };
+    const finishServer=function(data){
+      API_TOKEN=data.token;
+      try{localStorage.setItem('bh_api_token',API_TOKEN)}catch(e){}
+      rememberOfflineLogin(email,password);
+      const dd=db();
+      if(!dd.users.find(function(x){return x.id===data.user.id})){
+        dd.users.push({id:data.user.id,email:data.user.email,password:'',name:data.user.name,role:'owner'});
+      }
+      dd.session=data.user.id;save(dd);
+      try{localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
+      S.view='onboard';render();
+      toast('Account created — you can log in on any device');try{fullServerSync({quiet:true})}catch(e){}
+    };
+    const registerServer=function(){
+      return api('/api/register',{method:'POST',body:{email:email,password:password,name:name}}).then(finishServer);
+    };
+    if(typeof navigator!=='undefined'&&navigator.onLine===false){
+      finishLocal();
+      return;
+    }
+    const runServer=function(){
+      registerServer().catch(function(e){
+        if(err){err.textContent=e.message||'Register failed';err.classList.remove('hidden')}
+      });
+    };
+    if(SERVER_MODE){runServer();return}
+    if(typeof detectServer==='function'&&API_BASE){
+      Promise.resolve(detectServer()).then(function(on){
+        if(on)runServer();
+        else finishLocal();
+      }).catch(finishLocal);
+      return;
+    }
+    finishLocal();
+  };
+
 
   const ff=document.getElementById('forgotForm');
   if(ff)ff.onsubmit=e=>{e.preventDefault();
@@ -6914,13 +7306,18 @@ render();
     let receipt=(document.getElementById('txCode')||{}).value||'';
     const payMethod=S.payMethod||'Cash';
     if(S._stkCode){receipt=S._stkCode;S._stkCode=null;}
-    if(!receipt){
+    if(payMethod==='M-Pesa'){
+      const v=isValidMpesaCode(receipt);
+      if(!v.ok){alert(v.error);return null}
+      if(mpesaCodeAlreadyUsed(b,v.code)){alert('This M-Pesa code was already used on a previous sale.');return null}
+      receipt=v.code;
+    }else if(!receipt){
       if(payMethod==='Cash')receipt='CASH-'+String(b.orderN).padStart(4,'0');
-      else if(payMethod==='M-Pesa')receipt='MPESA-PENDING';
       else receipt=payMethod.toUpperCase().replace(/\s/g,'')+'-'+String(b.orderN).padStart(4,'0');
     }
     const order={id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items,total,status:(payMethod==='Credit'?'CREDIT':'PAID'),
       method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',discountAmt:discountAmt,discountPct:subtotal>0?Math.round(discountAmt/subtotal*10000)/100:0,subtotal:subtotal,cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null,branchId:(biz()&&biz().currentBranchId)||'main'};S._servedBy=null;S.cartDiscount=0;
+    if(payMethod==='M-Pesa')rememberMpesaCode(b,receipt,order.id);
     if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];S.cartDiscount=0;saveBiz(b);if(!navigator.onLine){enqueueOfflineSale(Object.assign({},order));}else if(SERVER_MODE){/* synced via saveBiz */}pushAudit('sale',order.number);return order;
   }
 
@@ -6950,7 +7347,7 @@ render();
     const b0=biz();
     if(b0&&b0.requireShiftForSale&&!currentShift(b0)){alert('Open a cashier shift before selling');return}
     const phone=(document.getElementById('mpesaPhone')||{}).value||'';
-    if(S.payMethod==='M-Pesa'&&phone.replace(/\s/g,'').length<9){alert('Enter customer M-Pesa number');return}
+    if(S.payMethod==='M-Pesa'&&isDarajaLiveConfigured((biz()&&biz().payments)||{})&&phone.replace(/\s/g,'').length<9){alert('Enter customer M-Pesa number for STK');return}
     if(S.payMethod==='Cash'){
       const due=cartTotal();
       const tendered=Number((document.getElementById('cashTendered')||{}).value||0);
@@ -6958,21 +7355,43 @@ render();
       S._cashTendered=tendered||due;
       S._cashChange=money(Math.max(0,(tendered||due)-due));
     }
-    requireSalesPin(()=>{
-      requireWorkerSalePassword(()=>{
+    requireSaleAuth(()=>{
       if(S.payMethod==='M-Pesa'){
         const b=biz();const amount=cartTotal();
+        const live=isDarajaLiveConfigured(b.payments||{});
+        const codeEl=document.getElementById('txCode');
+        const typed=(codeEl&&codeEl.value)||'';
+        if(!live){
+          const v=isValidMpesaCode(typed);
+          if(!v.ok){alert(v.error);return}
+          if(mpesaCodeAlreadyUsed(b,v.code)){alert('This M-Pesa code was already used on a previous sale.');return}
+          S._stkCode=v.code;
+          const o=checkoutSale();if(!o)return;
+          autoPrintReceipt(o);
+          openModal(`<div class="text-center py-4"><div class="text-4xl mb-2">✓</div><h3 class="text-xl font-bold">M-Pesa sale complete</h3>
+            <p class="text-sm text-slate-500 mt-2">${esc(o.number)}</p><p class="text-xs">Code: ${esc(v.code)}</p>
+            <p class="font-semibold mt-1">${kes(o.total)}</p>
+            <button type="button" id="viewInv" class="mt-4 w-full py-2.5 rounded-xl border font-medium">View invoice</button>
+            <button type="button" id="newSale" class="mt-2 w-full py-2.5 rounded-xl text-white font-semibold" style="background:${S.accent()}">New sale</button></div>`);
+          document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
+          document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
+          toast('M-Pesa code recorded');
+          return;
+        }
         complete.disabled=true;complete.textContent='STK…';
         darajaStkPush({payments:b.payments||{},phone:phone,amount:amount,accountRef:'POS',description:b.name||'Sale'}).then(result=>{
           complete.disabled=false;complete.textContent='Complete sale';
           showStkModal({phone:phone,amount:amount,orderRef:'Sale',color:S.accent(),result:result,till:(b.payments&&(b.payments.till||b.payments.shortcode))||'',onDone:function(code){
-            S._stkCode=code;
+            const v=isValidMpesaCode(code);
+            if(!v.ok){alert(v.error);return}
+            if(mpesaCodeAlreadyUsed(biz(),v.code)){alert('This M-Pesa code was already used.');return}
+            S._stkCode=v.code;
             const o=checkoutSale();if(!o)return;
             const bb=biz();const ord=bb.orders.find(x=>x.id===o.id);
-            if(ord){ord.receipt=code;ord.status='PAID';ord.payMethod='M-Pesa';ord.method='mpesa';saveBiz(bb)}
+            if(ord){ord.receipt=v.code;ord.status='PAID';ord.payMethod='M-Pesa';ord.method='mpesa';saveBiz(bb)}
             autoPrintReceipt(ord||o);
             openModal(`<div class="text-center py-4"><div class="text-4xl mb-2">✓</div><h3 class="text-xl font-bold">M-Pesa sale complete</h3>
-              <p class="text-sm text-slate-500 mt-2">${esc(o.number)}</p><p class="text-xs">Code: ${esc(code)}</p>
+              <p class="text-sm text-slate-500 mt-2">${esc(o.number)}</p><p class="text-xs">Code: ${esc(v.code)}</p>
               <p class="font-semibold mt-1">${kes(o.total)}</p>
               <button type="button" id="viewInv" class="mt-4 w-full py-2.5 rounded-xl border font-medium">View invoice</button>
               <button type="button" id="newSale" class="mt-2 w-full py-2.5 rounded-xl text-white font-semibold" style="background:${S.accent()}">New sale</button></div>`);
@@ -6997,7 +7416,6 @@ render();
       document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
       document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
       toast('Sale saved · stock updated');
-      });
     });
   };
 
@@ -7671,7 +8089,7 @@ render();
 
   
   flushOfflineSales();
-  window.addEventListener('online',function(){flushOfflineSales()});
+  window.addEventListener('online',function(){try{fullServerSync({quiet:false})}catch(e){try{flushOfflineSales()}catch(e2){}}});
   const openShiftBtn=document.getElementById('openShiftBtn');
   if(openShiftBtn)openShiftBtn.onclick=()=>{
     const b=biz();if(!b)return;if(!b.shifts)b.shifts=[];
@@ -8512,14 +8930,20 @@ if(boot.session){
 }else S.view='landing';
 try{const g=new URLSearchParams(location.search).get('go');if(g&&S.view==='app'&&['dashboard','shop','stock','invoices','reports','expenses','onlineorders'].includes(g))S.appView=g}catch(e){}
 render(); // show the app straight away; never wait on the network (a slow connection used to leave a blank screen)
-detectServer().then(function(on){
-  if(on&&API_TOKEN){
-    return syncPull().then(function(ok){
-      if(ok===false)toast('Could not sync yet - will retry');
-      else toast('Synced to server')
-    });
+// Hard refresh / first load: auto sync to and from server when online
+(function bootSync(){
+  try{ render(); }catch(e){console.error(e)}
+  Promise.resolve()
+    .then(function(){ return typeof fullServerSync==='function' ? fullServerSync({quiet:false}) : null; })
+    .catch(function(e){ console.warn('boot sync',e); })
+    .finally(function(){ try{ render(); }catch(e){console.error(e)} });
+})();
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible'&&typeof navigator!=='undefined'&&navigator.onLine&&API_TOKEN&&SERVER_MODE){
+    try{ fullServerSync({quiet:true}); }catch(e){}
   }
-}).catch(function(e){console.warn('boot sync',e)}).finally(function(){try{render()}catch(e){console.error(e)}});
+});
+
 setInterval(function(){if(document.visibilityState==='visible')pullOnlineOrders()},20000);
 /* Admin: check for new plan payments every 20 s and shout about them (banner + sound + pop-up + tab title) */
 let _seenPay=null,_seenRec=null,_payBusy=false;
@@ -8572,11 +8996,10 @@ setInterval(function(){
   window.addEventListener('online',function(){
     setNet();
     try{
-      (typeof detectServer==='function'?detectServer():Promise.resolve()).then(function(){
-        try{if(typeof flushOfflineSales==='function')flushOfflineSales()}catch(e){}
-        try{if(SERVER_MODE&&API_TOKEN&&!isAdmin()){myBusinesses().forEach(syncPushBiz);toast('Back online. Syncing…')}}catch(e){}
-      });
-    }catch(e){}
+      fullServerSync({quiet:false}).then(function(){ toast('Back online — data synced'); }).catch(function(){});
+    }catch(e){
+      try{flushOfflineSales()}catch(e2){}
+    }
   });
   setNet();
   function showUpd(){var b=document.getElementById('updBar');if(b)b.classList.add('show')}
