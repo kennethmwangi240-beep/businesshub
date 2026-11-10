@@ -624,6 +624,15 @@ async function handleApi(req, res, pathname) {
       throw e;
     }
     const user = (await pool.query('SELECT * FROM users WHERE id=$1', [id])).rows[0];
+    try {
+      await appendPlatformAudit({
+        action: 'register',
+        detail: 'New owner account',
+        user: email,
+        clientEmail: email,
+        source: 'auth'
+      });
+    } catch (e) {}
     return json(res, 201, { token: await newSession(id), user: publicUser(user) });
   }
 
@@ -648,6 +657,15 @@ async function handleApi(req, res, pathname) {
     fails.delete('login-em:' + email + '|' + ip);
     if (body.adminOnly && !isAdmin(user)) return json(res, 403, { error: 'Not a platform admin account' });
     if (!body.adminOnly && isAdmin(user) && body.clientOnly) return json(res, 403, { error: 'Use admin login for this account' });
+    try {
+      await appendPlatformAudit({
+        action: isAdmin(user) ? 'admin_login' : 'login',
+        detail: 'Login from ' + (ip || ''),
+        user: user.email,
+        clientEmail: user.email,
+        source: 'auth'
+      });
+    } catch (e) {}
     return json(res, 200, { token: await newSession(user.id), user: publicUser(user), isAdmin: isAdmin(user) });
   }
 
@@ -990,6 +1008,27 @@ async function handleApi(req, res, pathname) {
     delete tokens[email];
     await setCfg('resetTokens', tokens);
     return json(res, 200, { ok: true, message: 'Password updated' });
+  }
+
+    if (pathname === '/api/audit' && method === 'POST') {
+    const u = await authUser(req);
+    // Allow authenticated users to append their own audit events (live stream for admin)
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    try {
+      const body = await readBody(req);
+      await appendPlatformAudit({
+        action: str(body.action || 'event', 80),
+        detail: str(body.detail || '', 500),
+        user: u.email || body.user || 'client',
+        clientEmail: u.email,
+        businessId: body.businessId || null,
+        businessName: body.businessName || null,
+        source: body.source || 'client'
+      });
+      return json(res, 201, { ok: true });
+    } catch (e) {
+      return json(res, 500, { error: e.message || 'Audit failed' });
+    }
   }
 
   if (pathname === '/api/admin/audit' && method === 'GET') {
