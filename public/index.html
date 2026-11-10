@@ -2420,14 +2420,22 @@ function biz(){
   return d.businesses.find(b=>b.id===d.currentBizId)||null;
 }
 function setBiz(id){const d=db();d.currentBizId=id;save(d)}
-function saveBiz(b){
+function saveBiz(b, opts){
   if(!b)return;
-  b.updatedAt = new Date().toISOString();
   const d=db();
   const i=d.businesses.findIndex(x=>x.id===b.id);
+  const isNew=i<0;
+  b.updatedAt = new Date().toISOString();
   if(i>=0)d.businesses[i]=b;else d.businesses.push(b);
   save(d);
   if(typeof SERVER_MODE!=='undefined'&&SERVER_MODE)syncPushBiz(b);
+  try{
+    if(opts&&opts.audit){
+      pushAudit(opts.audit, opts.detail||b.name||b.id, {businessId:b.id,businessName:b.name});
+    }else if(isNew){
+      pushAudit('business_created', b.name||b.id, {businessId:b.id,businessName:b.name});
+    }
+  }catch(e){}
 }
 
 function productsFromCategories(catKeys){
@@ -2511,14 +2519,38 @@ function whatsappShareSale(o,b){
   const url=phone?('https://wa.me/'+(phone.startsWith('254')?phone:('254'+phone.replace(/^0/,'')))+'?text='+text):('https://wa.me/?text='+text);
   window.open(url,'_blank');
 }
-function pushAudit(action, detail){
+function pushAudit(action, detail, extra){
   try{
     const d=db();
     if(!d.auditLogs)d.auditLogs=[];
-    const u=currentUser();const w=currentWorker();
-    d.auditLogs.unshift({id:uid(),at:new Date().toISOString(),action,detail:detail||'',user:(u&&u.email)||(w&&w.worker&&w.worker.name)||'system'});
-    d.auditLogs=d.auditLogs.slice(0,200);
-    save(d);
+    const u=typeof currentUser==='function'?currentUser():null;
+    const w=typeof currentWorker==='function'?currentWorker():null;
+    const b=typeof biz==='function'?biz():null;
+    const row={
+      id:uid(),
+      at:new Date().toISOString(),
+      action:String(action||'event'),
+      detail:String(detail||''),
+      user:(u&&u.email)||(w&&w.worker&&(w.worker.name||w.worker.username))||'system',
+      clientEmail:(u&&u.email)||null,
+      businessId:(extra&&extra.businessId)||(b&&b.id)||null,
+      businessName:(extra&&extra.businessName)||(b&&b.name)||null,
+      source:(extra&&extra.source)||(w?'worker':'owner')
+    };
+    d.auditLogs.unshift(row);
+    d.auditLogs=d.auditLogs.slice(0,2000);
+    // lightweight save without full business push
+    try{
+      const raw=localStorage.getItem('bh_db_v1')||localStorage.getItem('bh_db');
+      // use normal save
+      save(d);
+    }catch(e){save(d)}
+    // Live push to server so admin sees actions as they happen
+    try{
+      if(typeof SERVER_MODE!=='undefined'&&SERVER_MODE&&typeof API_TOKEN!=='undefined'&&API_TOKEN&&typeof api==='function'){
+        api('/api/audit',{method:'POST',body:row}).catch(function(){});
+      }
+    }catch(e){}
   }catch(e){}
 }
 function offlineQueue(){
@@ -6714,7 +6746,7 @@ function bind(){
           reports:!!fd.get('perm_reports')
         }
       });
-      saveBiz(b);pushAudit('worker_added',username);toast('Worker added with separate login');render();
+      saveBiz(b);pushAudit('worker_added',username);toast('Worker added');render();
     };
   }
 
@@ -6898,7 +6930,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
         const mine=db().businesses.filter(function(b){return b.ownerId===u.id});
         if(!mine.length){S.view='onboard';render()}
         else{const dd=db();dd.currentBizId=mine[0].id;save(dd);S.appView='dashboard';S.view='app';render()}
-        clearWorkerSession();toast('Logged in');try{fullServerSync({quiet:true})}catch(e){}
+        clearWorkerSession();toast('Logged in');try{pushAudit('login','Owner logged in')}catch(e){}try{fullServerSync({quiet:true})}catch(e){}
       };
       if(typeof syncPull==='function'){
         syncPull().then(goApp).catch(goApp);
@@ -7068,7 +7100,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
       dd.session=data.user.id;save(dd);
       try{localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
       S.view='onboard';render();
-      toast('Account created — you can log in on any device');try{fullServerSync({quiet:true})}catch(e){}
+      toast('Account created — you can log in on any device');try{pushAudit('register','New owner account')}catch(e){}try{fullServerSync({quiet:true})}catch(e){}
     };
     const registerServer=function(){
       return api('/api/register',{method:'POST',body:{email:email,password:password,name:name}}).then(finishServer);
@@ -7375,7 +7407,7 @@ render();
             <button type="button" id="newSale" class="mt-2 w-full py-2.5 rounded-xl text-white font-semibold" style="background:${S.accent()}">New sale</button></div>`);
           document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
           document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
-          toast('M-Pesa code recorded');
+          pushAudit('sale_mpesa','M-Pesa sale confirmed');toast('M-Pesa code recorded');
           return;
         }
         complete.disabled=true;complete.textContent='STK…';
@@ -7397,7 +7429,7 @@ render();
               <button type="button" id="newSale" class="mt-2 w-full py-2.5 rounded-xl text-white font-semibold" style="background:${S.accent()}">New sale</button></div>`);
             document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
             document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
-            toast('M-Pesa payment saved');
+            pushAudit('sale_mpesa','M-Pesa sale confirmed');toast('M-Pesa payment saved');
           }});
         }).catch(function(err){complete.disabled=false;complete.textContent='Complete sale';alert(String(err.message||err))});
         return;
@@ -7415,7 +7447,7 @@ render();
       document.getElementById('rePrint').onclick=()=>{tpPrintOrder(o).then(()=>toast('🖨 Receipt printed')).catch(e=>toast(/No thermal/.test(String(e&&e.message))?'No thermal printer connected - set it up in Settings':'Printer: '+(e&&e.message||e)))};
       document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
       document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
-      toast('Sale saved · stock updated');
+      pushAudit('sale_complete','POS sale completed');toast('Sale saved · stock updated');
     });
   };
 
@@ -7506,7 +7538,7 @@ render();
       prod.stock=Math.round(((Number(prod.stock)||0)+qtyN)*10000)/10000;
       if(!b.expenses)b.expenses=[];
       b.expenses.push({id:uid(),type:'EXPENSE',amount:total,description:'Purchase '+prod.name+' from '+(sup.company||sup.name),date:today()});
-      saveBiz(b);closeModal();render();toast('Purchase recorded')}};
+      saveBiz(b);closeModal();render();pushAudit('expense',"toast('Purchase recorded')");toast('Purchase recorded')}};
 
   const aq=document.getElementById('addQt');
   if(aq)aq.onclick=()=>{
@@ -8931,6 +8963,19 @@ if(boot.session){
 try{const g=new URLSearchParams(location.search).get('go');if(g&&S.view==='app'&&['dashboard','shop','stock','invoices','reports','expenses','onlineorders'].includes(g))S.appView=g}catch(e){}
 render(); // show the app straight away; never wait on the network (a slow connection used to leave a blank screen)
 // Hard refresh / first load: auto sync to and from server when online
+
+setInterval(function(){
+  try{
+    if(S.view==='admin'&&S.adminTab==='audit'&&SERVER_MODE&&API_TOKEN){
+      api('/api/admin/audit').then(function(d){
+        S.adminAuditLogs=d.logs||[];
+        // soft re-render only if still on audit
+        if(S.view==='admin'&&S.adminTab==='audit')render();
+      }).catch(function(){});
+    }
+  }catch(e){}
+},15000);
+
 (function bootSync(){
   try{ render(); }catch(e){console.error(e)}
   Promise.resolve()
