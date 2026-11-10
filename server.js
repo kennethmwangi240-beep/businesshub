@@ -509,6 +509,12 @@ async function authUser(req) {
   return r.rows[0] || null;
 }
 const isAdmin = (u) => !!u && u.role === 'admin';
+async function requireAuth(req) {
+  const u = await authUser(req);
+  if (!u) return null;
+  return { user: u, isAdmin: isAdmin(u), id: u.id, email: u.email };
+}
+
 const publicUser = (u) => (u ? { id: u.id, email: u.email, name: u.name || '', role: u.role || 'owner', phone: u.phone || '' } : null);
 async function newSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -658,6 +664,50 @@ async function handleApi(req, res, pathname) {
       user: publicUser(u), isAdmin: isAdmin(u),
       plans: mergePlans(await getCfg('plans', DEFAULT_PLANS)), platformUpdate: await getCfg('platformUpdate', null)
     });
+  }
+
+  if (pathname === '/api/me' && method === 'PATCH') {
+    const u = await authUser(req);
+    if (!u) return json(res, 401, { error: 'Unauthorized' });
+    const body = await readBody(req);
+    const name = body.name != null ? str(body.name, 120) : u.name;
+    const phone = body.phone != null ? str(body.phone, 40) : (u.phone || '');
+    await pool.query('UPDATE users SET name=$1, phone=$2 WHERE id=$3', [name, phone, u.id]);
+    const row = (await pool.query('SELECT * FROM users WHERE id=$1', [u.id])).rows[0];
+    return json(res, 200, { user: publicUser(row) });
+  }
+
+  // Upload a local-only account to the server (same as register, used during sync)
+  if (pathname === '/api/accounts/sync' && method === 'POST') {
+    if (limited('accsync:' + ip, 30, 3600000)) return json(res, 429, { error: 'Too many account syncs' });
+    const body = await readBody(req);
+    const email = str(body.email, 254).toLowerCase().trim();
+    const password = String(body.password || '');
+    const name = str(body.name || '', 120);
+    if (!EMAIL_RE.test(email) || password.length < MIN_PASSWORD) {
+      return json(res, 400, { error: 'Valid email and password required to sync account' });
+    }
+    const existing = (await pool.query('SELECT * FROM users WHERE email=$1', [email])).rows[0];
+    if (existing) {
+      const ok = await verifyPassword(password, existing.password_hash);
+      if (!ok) return json(res, 401, { error: 'Account exists with a different password' });
+      return json(res, 200, { token: await newSession(existing.id), user: publicUser(existing), existed: true });
+    }
+    const id = uid();
+    const hash = await hashPassword(password);
+    await pool.query(
+      'INSERT INTO users (id, email, password_hash, name, role) VALUES ($1,$2,$3,$4,$5)',
+      [id, email, hash, name || email.split('@')[0], 'owner']
+    );
+    const row = (await pool.query('SELECT * FROM users WHERE id=$1', [id])).rows[0];
+    await appendPlatformAudit({
+      action: 'account_synced',
+      detail: 'Local account uploaded: ' + email,
+      user: email,
+      clientEmail: email,
+      source: 'sync'
+    }).catch(() => {});
+    return json(res, 201, { token: await newSession(id), user: publicUser(row), existed: false });
   }
 
   if (pathname === '/api/notices' && method === 'GET') {
@@ -1358,6 +1408,7 @@ async function handleApi(req, res, pathname) {
   }
   if (pathname === '/api/marketplace/checkout' && method === 'POST') {
     if (limited('mkt:' + ip, 20, 600000)) return json(res, 429, { error: 'Too many checkouts' });
+    try {
     const body = await readBody(req);
     const storeId = body.storeId;
     const items = Array.isArray(body.items) ? body.items : [];
@@ -1366,13 +1417,16 @@ async function handleApi(req, res, pathname) {
     if (!row.rows[0]) return json(res, 404, { error: 'Store not found' });
     const b = bizOut(row.rows[0]);
     if (!isMarketSeller(b)) return json(res, 400, { error: 'Store not accepting online orders' });
+    if (!Array.isArray(b.products)) b.products = [];
+    if (!Array.isArray(b.orders)) b.orders = [];
     const orderItems = [];
     let total = 0;
     for (const it of items.slice(0, 50)) {
-      const p = (b.products || []).find((x) => x.id === it.productId || x.id === it.id);
-      if (!p || p.active === false) return json(res, 400, { error: 'Product unavailable: ' + (it.name || it.productId) });
+      const pid = it.productId || it.id;
+      const p = (b.products || []).find((x) => x && String(x.id) === String(pid));
+      if (!p || p.active === false) return json(res, 400, { error: 'Product unavailable: ' + (it.name || pid || '') });
       const qty = Math.max(1, Number(it.qty) || 1);
-      if ((p.stock || 0) < qty) return json(res, 400, { error: 'Insufficient stock for ' + p.name });
+      if ((Number(p.stock) || 0) + 1e-9 < qty) return json(res, 400, { error: 'Insufficient stock for ' + p.name });
       const price = Number(p.price) || 0;
       orderItems.push({ product_id: p.id, name: p.name, qty, price, unit: p.unit || 'pc' });
       total += price * qty;
@@ -1428,20 +1482,29 @@ async function handleApi(req, res, pathname) {
     data.ownerId = b.ownerId;
     await pool.query('UPDATE businesses SET data=$2, updated_at=NOW() WHERE id=$1', [b.id, JSON.stringify(data)]);
     return json(res, 200, { ok: true, order: { id: order.id, number: order.number, total: order.total, storeId: b.id, storeName: b.name } });
+    } catch (err) {
+      console.error('marketplace checkout', err);
+      return json(res, 500, { error: err.message || 'Checkout failed' });
+    }
   }
   if (pathname === '/api/marketplace/admin/stats' && method === 'GET') {
-    const c = await requireAuth(req);
-    if (!c || !c.isAdmin) return json(res, 401, { error: 'Admin only' });
-    const all = await loadAllBusinesses();
-    const sellers = all.filter(isMarketSeller);
-    const offers = listMarketOffers(all, '');
-    const groups = groupOffersByProduct(offers);
-    return json(res, 200, {
-      sellers: sellers.length,
-      products: groups.length,
-      offers: offers.length,
-      stores: sellers.map(publicStore)
-    });
+    try {
+      const c = await requireAuth(req);
+      if (!c || !c.isAdmin) return json(res, 401, { error: 'Admin only' });
+      const all = await loadAllBusinesses();
+      const sellers = (all || []).filter(isMarketSeller);
+      const offers = listMarketOffers(all || [], '');
+      const groups = groupOffersByProduct(offers);
+      return json(res, 200, {
+        sellers: sellers.length,
+        products: groups.length,
+        offers: offers.length,
+        stores: sellers.map(publicStore)
+      });
+    } catch (err) {
+      console.error('mkt admin stats', err);
+      return json(res, 500, { error: err.message || 'Stats failed' });
+    }
   }
 
 
