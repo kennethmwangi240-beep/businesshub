@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
 <title>MyBusinessHub</title>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
@@ -46,7 +46,7 @@ body{margin:0;padding:0;width:100%;overflow-x:hidden}
 .main-wrap header{padding:12px 16px!important;width:100%;box-sizing:border-box}
 .main-wrap .content,.main-wrap main,#appContent{padding:16px!important;width:100%;box-sizing:border-box;margin:0 auto}
 #root{width:100%;min-height:100vh;box-sizing:border-box}
-@media(max-width:768px){
+@media(max-width:768px),(orientation:landscape) and (max-height:520px) and (pointer:coarse){
   .sidebar{transform:translateX(-100%);transition:transform .2s}
   .sidebar.mobile-open{transform:translateX(0)}
   .main-wrap{margin-left:0!important;width:100%}
@@ -114,7 +114,7 @@ button.lp-card{cursor:pointer}
   body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   @page{margin:12mm}
 }
-@media(max-width:768px){
+@media(max-width:768px),(orientation:landscape) and (max-height:520px) and (pointer:coarse){
   .sidebar{width:100%;min-width:0;height:auto;position:sticky;top:0;flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid #e2e8f0}
   .sidebar .side-brand{width:100%}.sidebar nav{display:flex;flex-wrap:wrap;gap:4px;padding:8px;flex:1}
   .sidebar .nav-item{width:auto;padding:8px 12px;white-space:nowrap;font-size:12px}
@@ -207,7 +207,7 @@ html[data-theme="warm"] body{background:linear-gradient(165deg,#ffedd5 0%,#fef3c
 #workerMain header{background:rgba(255,255,255,.95);border-bottom:1px solid #e2e8f0;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;position:sticky;top:0;z-index:10;box-sizing:border-box}
 #workerMain .worker-content{padding:16px;width:100%;max-width:1100px;margin:0 auto;box-sizing:border-box}
 #workerMenuToggle{display:none}
-@media(max-width:768px){
+@media(max-width:768px),(orientation:landscape) and (max-height:520px) and (pointer:coarse){
   #workerSidebar{transform:translateX(-100%)}
   #workerSidebar.open{transform:translateX(0);box-shadow:8px 0 24px rgba(0,0,0,.25)}
   #workerMain{margin-left:0!important;width:100%}
@@ -217,7 +217,7 @@ html[data-theme="warm"] body{background:linear-gradient(165deg,#ffedd5 0%,#fef3c
 .layout{display:flex!important;min-height:100vh;width:100%;box-sizing:border-box}
 .sidebar{width:var(--sidebar-w,260px)!important;min-width:var(--sidebar-w,260px)!important;position:fixed!important;top:0;left:0;bottom:0;z-index:40;box-sizing:border-box;overflow-y:auto;background:#fff;border-right:1px solid #e2e8f0}
 .main-wrap{margin-left:var(--sidebar-w,260px)!important;flex:1;min-width:0;width:auto!important;max-width:none!important;box-sizing:border-box}
-@media(max-width:768px){
+@media(max-width:768px),(orientation:landscape) and (max-height:520px) and (pointer:coarse){
   .sidebar{transform:translateX(-100%);transition:transform .2s}
   .sidebar.mobile-open{transform:translateX(0)!important;box-shadow:8px 0 24px rgba(0,0,0,.2)}
   .main-wrap{margin-left:0!important;width:100%!important}
@@ -240,7 +240,7 @@ html,body{width:100%;max-width:100vw;overflow-x:hidden;margin:0;padding:0;box-si
 #workerSidebar .w-nav:hover{background:rgba(255,255,255,.08)!important;color:#fff!important}
 #workerSidebar .w-nav.active{background:rgba(255,255,255,.15)!important;color:#fff!important;font-weight:600!important}
 #workerMenuToggle{display:none}
-@media(max-width:768px){
+@media(max-width:768px),(orientation:landscape) and (max-height:520px) and (pointer:coarse){
   .sidebar{transform:translateX(-105%)!important;transition:transform .2s}
   .sidebar.mobile-open{transform:translateX(0)!important}
   .main-wrap{margin-left:0!important;width:100%!important;max-width:100%!important}
@@ -279,7 +279,7 @@ html,body,#root{width:100%!important;max-width:100vw!important;overflow-x:hidden
 #workerMain .worker-content,.main-wrap .p-4,.main-wrap main{width:100%!important;max-width:100%!important;box-sizing:border-box!important;padding-left:16px!important;padding-right:16px!important}
 .nav-item{display:block!important;width:100%!important;text-align:left!important;padding:10px 14px!important;border-radius:8px!important;font-size:14px!important;color:#334155!important;border:0!important;background:transparent!important;cursor:pointer!important}
 .nav-item.active{background:#f1f5f9!important;color:#0f766e!important;font-weight:600!important}
-@media(max-width:768px){
+@media(max-width:768px),(orientation:landscape) and (max-height:520px) and (pointer:coarse){
   .sidebar{transform:translateX(-105%)!important}
   .sidebar.mobile-open{transform:translateX(0)!important}
   .main-wrap{margin-left:0!important;width:100%!important;max-width:100%!important}
@@ -332,7 +332,7 @@ html body .sidebar.sb{background:#16181d!important;color:#cbd5e1!important;borde
 .sb-backdrop{display:none}
 .sb-burger{display:none;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;cursor:pointer;flex-shrink:0}
 .sb-burger svg{width:20px;height:20px;stroke:#334155;fill:none;stroke-width:2;stroke-linecap:round}
-@media(max-width:768px){
+@media(max-width:768px),(orientation:landscape) and (max-height:520px) and (pointer:coarse){
   html body .sidebar.sb{width:min(86vw,300px)!important;min-width:0!important;max-width:none!important;position:fixed!important;top:0!important;bottom:0!important;left:0!important;height:100%!important;flex-direction:column!important;flex-wrap:nowrap!important;transform:translateX(-105%)!important;transition:transform .22s ease;z-index:60!important}
   html body .sidebar.sb.mobile-open{transform:translateX(0)!important;box-shadow:10px 0 30px rgba(0,0,0,.35)}
   .sidebar.sb .sb-scroll{display:block!important;flex-wrap:nowrap!important}
@@ -606,15 +606,19 @@ html body .sidebar.sb{background:#16181d!important;color:#cbd5e1!important;borde
 }
 
 
-.bhp-shops-strip{padding:8px 16px 20px;background:#f8fafc}
-.bhp-shop-grid-home{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
-.bhp-shop-card-home{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;border:1px solid #e2e8f0;background:#fff;border-radius:14px;padding:14px;cursor:pointer}
-.bhp-shop-card-home:hover{border-color:#93c5fd;box-shadow:0 8px 20px rgba(29,78,216,.08)}
-.bhp-shop-card-home .bhp-shop-ico{width:36px;height:36px;border-radius:10px;background:#eff6ff;color:#1d4ed8;font-weight:800;display:flex;align-items:center;justify-content:center}
-.bhp-shop-card-home .bhp-shop-name{font-weight:700;font-size:14px}
-.bhp-shop-card-home .bhp-shop-sub{font-size:11px;color:#64748b}
-.bhp-shop-card-home .bhp-visit{font-size:12px;font-weight:600;color:#1d4ed8;margin-top:4px}
-
+/* ===== Orientation: phones in portrait AND landscape ===== */
+body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+@media(orientation:landscape) and (max-height:520px){
+  .main-wrap header,#workerMain header{padding:6px 12px!important}
+  .main-wrap .content,.main-wrap main,#appContent,#workerMain .worker-content{padding:10px 12px!important}
+  #modal>div,#modal .modal-box{max-height:94vh;overflow-y:auto}
+  #toast{bottom:10px;right:10px;padding:8px 12px}
+  .sb-burger{width:32px;height:32px}
+  .sidebar.sb .sb-brand{padding:8px 12px 4px}
+  .sidebar.sb .sb-item{padding:6px 10px!important}
+  .sidebar.sb .sb-label{padding:8px 10px 3px}
+  h1{font-size:16px}
+}
 </style>
 </head>
 <body>
@@ -1659,22 +1663,6 @@ async function api(path, opts){
   return data;
 }
 
-function updateServerBadge(){
-  try{
-    const badge=document.getElementById('serverBadge');
-    if(!badge)return;
-    if(typeof navigator!=='undefined'&&navigator.onLine===false){
-      badge.textContent='Offline';
-      badge.className='text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800';
-    }else if(SERVER_MODE){
-      badge.textContent='Server DB';
-      badge.className='text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800';
-    }else{
-      badge.textContent='Local only';
-      badge.className='text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-500';
-    }
-  }catch(e){}
-}
 async function detectServer(){
   if(!API_BASE || location.protocol==='file:'){ SERVER_MODE=false; return false; }
   if(typeof navigator!=='undefined' && navigator.onLine===false){ SERVER_MODE=false; return false; }
@@ -1684,7 +1672,6 @@ async function detectServer(){
     SERVER_MODE = r.ok;
     if(SERVER_MODE){ try{ await migrateLocalAccounts() }catch(e){ console.warn('migrateLocalAccounts',e) } }
   }catch(e){ SERVER_MODE=false; }
-  try{updateServerBadge()}catch(e){}
   return SERVER_MODE;
 }
 
@@ -2420,22 +2407,14 @@ function biz(){
   return d.businesses.find(b=>b.id===d.currentBizId)||null;
 }
 function setBiz(id){const d=db();d.currentBizId=id;save(d)}
-function saveBiz(b, opts){
+function saveBiz(b){
   if(!b)return;
+  b.updatedAt = new Date().toISOString();
   const d=db();
   const i=d.businesses.findIndex(x=>x.id===b.id);
-  const isNew=i<0;
-  b.updatedAt = new Date().toISOString();
   if(i>=0)d.businesses[i]=b;else d.businesses.push(b);
   save(d);
   if(typeof SERVER_MODE!=='undefined'&&SERVER_MODE)syncPushBiz(b);
-  try{
-    if(opts&&opts.audit){
-      pushAudit(opts.audit, opts.detail||b.name||b.id, {businessId:b.id,businessName:b.name});
-    }else if(isNew){
-      pushAudit('business_created', b.name||b.id, {businessId:b.id,businessName:b.name});
-    }
-  }catch(e){}
 }
 
 function productsFromCategories(catKeys){
@@ -2519,38 +2498,14 @@ function whatsappShareSale(o,b){
   const url=phone?('https://wa.me/'+(phone.startsWith('254')?phone:('254'+phone.replace(/^0/,'')))+'?text='+text):('https://wa.me/?text='+text);
   window.open(url,'_blank');
 }
-function pushAudit(action, detail, extra){
+function pushAudit(action, detail){
   try{
     const d=db();
     if(!d.auditLogs)d.auditLogs=[];
-    const u=typeof currentUser==='function'?currentUser():null;
-    const w=typeof currentWorker==='function'?currentWorker():null;
-    const b=typeof biz==='function'?biz():null;
-    const row={
-      id:uid(),
-      at:new Date().toISOString(),
-      action:String(action||'event'),
-      detail:String(detail||''),
-      user:(u&&u.email)||(w&&w.worker&&(w.worker.name||w.worker.username))||'system',
-      clientEmail:(u&&u.email)||null,
-      businessId:(extra&&extra.businessId)||(b&&b.id)||null,
-      businessName:(extra&&extra.businessName)||(b&&b.name)||null,
-      source:(extra&&extra.source)||(w?'worker':'owner')
-    };
-    d.auditLogs.unshift(row);
-    d.auditLogs=d.auditLogs.slice(0,2000);
-    // lightweight save without full business push
-    try{
-      const raw=localStorage.getItem('bh_db_v1')||localStorage.getItem('bh_db');
-      // use normal save
-      save(d);
-    }catch(e){save(d)}
-    // Live push to server so admin sees actions as they happen
-    try{
-      if(typeof SERVER_MODE!=='undefined'&&SERVER_MODE&&typeof API_TOKEN!=='undefined'&&API_TOKEN&&typeof api==='function'){
-        api('/api/audit',{method:'POST',body:row}).catch(function(){});
-      }
-    }catch(e){}
+    const u=currentUser();const w=currentWorker();
+    d.auditLogs.unshift({id:uid(),at:new Date().toISOString(),action,detail:detail||'',user:(u&&u.email)||(w&&w.worker&&w.worker.name)||'system'});
+    d.auditLogs=d.auditLogs.slice(0,200);
+    save(d);
   }catch(e){}
 }
 function offlineQueue(){
@@ -3096,6 +3051,8 @@ function restoreBusinessBackup(payload, mode){
   const keepId=b.id, keepOwner=b.ownerId;
   Object.assign(b,src,{id:keepId,ownerId:keepOwner,cart:src.cart||[]});
   saveBiz(b);
+  // tell the server this is a deliberate restore, so deleted-product records and newer orders don't undo it
+  if(SERVER_MODE&&API_TOKEN){api('/api/businesses/'+keepId,{method:'PUT',body:Object.assign({},b,{_restore:true})}).catch(function(e){console.warn('restore push',e)})}
   return b;
 }
 function restoreAdminBackup(payload){
@@ -3226,7 +3183,13 @@ function cartDiscountAmt(){const sub=cartSubtotal();return money(Math.min(sub,Ma
 function cartTotal(){return money(cartSubtotal()-cartDiscountAmt())}
 function go(v){
   try{if(S.view&&S.view!==v)S.prevView=S.view}catch(e){}
-  if(v==='marketplace'){S.view='marketplace';S.marketResults=S.marketResults||[];render();return;}
+  if(v==='marketplace'){
+    S.view='marketplace';S.marketQ=S.marketQ||'';S.marketResults=S.marketResults||[];S.marketLoading=true;render();
+    const done=function(r){S.marketResults=r||[];S.marketLoading=false;render();};
+    if(SERVER_MODE)api('/api/marketplace/search?q='+encodeURIComponent(S.marketQ)).then(function(d){done(d.results||[])}).catch(function(){done(typeof localMarketSearch==='function'?localMarketSearch(S.marketQ):[])});
+    else done(typeof localMarketSearch==='function'?localMarketSearch(S.marketQ):[]);
+    return;
+  }
 S.view=v;S.viewInvoiceId=null;render()}
 
 function workerSession(){
@@ -3594,35 +3557,6 @@ function viewLanding(){
             <div><span>🛡</span><small>Secure &amp; Reliable</small></div>
           </div>
         </div>
-      </div>
-    </div>
-  </section>
-
-  
-  <section class="bhp-shops-strip">
-    <div class="bhp-features-inner">
-      <div class="bhp-sec-head">
-        <h2>🛒 Order from local shops</h2>
-        <button type="button" data-go="online" class="bhp-link">View all shops →</button>
-      </div>
-      <p class="text-sm text-slate-500 mb-3">Browse participating businesses and place an order online. Or search the marketplace for a product across many shops.</p>
-      <div class="bhp-hero-ctas" style="margin-bottom:14px">
-        <button type="button" data-go="online" class="bhp-cta-primary">Place an order online →</button>
-        <button type="button" data-go="marketplace" class="bhp-cta-secondary">Search marketplace</button>
-      </div>
-      <div class="bhp-shop-grid-home" id="landingShopList">
-        ${(()=>{
-          try{
-            const stores=(typeof publicStores==='function'?publicStores():[])||[];
-            if(!stores.length)return '<p class="text-sm text-slate-400">No online shops listed yet. Businesses that enable online store appear here.</p>';
-            return stores.slice(0,8).map(s=>`<button type="button" class="bhp-shop-card-home" data-go="online" data-online-id="${esc(s.id)}">
-              <span class="bhp-shop-ico">${esc((s.name||'S')[0])}</span>
-              <span class="bhp-shop-name">${esc(s.name||'Shop')}</span>
-              <span class="bhp-shop-sub">${esc(s.address||s.categoryLabel||'Order online')}</span>
-              <span class="bhp-visit">Open shop</span>
-            </button>`).join('');
-          }catch(e){return '<p class="text-sm text-slate-400">Shops loading…</p>'}
-        })()}
       </div>
     </div>
   </section>
@@ -4094,7 +4028,7 @@ function ownerSidebar(b,accent,user,bizSwitch){
   // [view key, label, icon, badge, badge style]
   const groups=[
     {id:'main',label:'',items:[['dashboard','Dashboard','home'],['wallet','Wallet & trends','trend']]},
-    {id:'sales',label:'Sales',items:[['shop','Shop (POS)','cart',cartN,'soft'],['invoices','Invoices','file'],['quotations','Quotations','clip'],['marketplace','Marketplace'],['marketplace','Marketplace','globe'],['onlineorders','Online orders','globe',newOnline,'']]},
+    {id:'sales',label:'Sales',items:[['shop','Shop (POS)','cart',cartN,'soft'],['invoices','Invoices','file'],['quotations','Quotations','clip'],['marketplace','Marketplace','globe'],['onlineorders','Online orders','globe',newOnline,'']]},
     {id:'catalog',label:'Catalog',items:[['products','Products','tag'],['stock','Stock','box',lowN,'warn'],['purchases','Purchases','download']]},
     {id:'people',label:'Customers',items:[['customers','Customers','users'],['loyalty','Loyalty','heart']]},
     {id:'finance',label:'Finance',items:[['expenses','Finance','dollar'],['reports','Reports','chart'],['shifts','Shifts','clock']]},
@@ -6553,14 +6487,6 @@ function viewOnline(){
 
 function bind(){
 
-  document.querySelectorAll('[data-online-id]').forEach(function(btn){
-    btn.addEventListener('click',function(ev){
-      const id=btn.getAttribute('data-online-id');
-      if(id){S.onlineBizId=id;S.view='online';render();}
-    });
-  });
-
-
   /* Admin panel binds */
   try{
     document.querySelectorAll('[data-admin-tab]').forEach(function(btn){
@@ -6746,7 +6672,7 @@ function bind(){
           reports:!!fd.get('perm_reports')
         }
       });
-      saveBiz(b);pushAudit('worker_added',username);toast('Worker added');render();
+      saveBiz(b);pushAudit('worker_added',username);toast('Worker added with separate login');render();
     };
   }
 
@@ -6930,7 +6856,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
         const mine=db().businesses.filter(function(b){return b.ownerId===u.id});
         if(!mine.length){S.view='onboard';render()}
         else{const dd=db();dd.currentBizId=mine[0].id;save(dd);S.appView='dashboard';S.view='app';render()}
-        clearWorkerSession();toast('Logged in');try{pushAudit('login','Owner logged in')}catch(e){}try{fullServerSync({quiet:true})}catch(e){}
+        clearWorkerSession();toast('Logged in');try{fullServerSync({quiet:true})}catch(e){}
       };
       if(typeof syncPull==='function'){
         syncPull().then(goApp).catch(goApp);
@@ -7100,7 +7026,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
       dd.session=data.user.id;save(dd);
       try{localStorage.setItem('bh_remember',JSON.stringify({email:email}))}catch(e){}
       S.view='onboard';render();
-      toast('Account created — you can log in on any device');try{pushAudit('register','New owner account')}catch(e){}try{fullServerSync({quiet:true})}catch(e){}
+      toast('Account created — you can log in on any device');try{fullServerSync({quiet:true})}catch(e){}
     };
     const registerServer=function(){
       return api('/api/register',{method:'POST',body:{email:email,password:password,name:name}}).then(finishServer);
@@ -7407,7 +7333,7 @@ render();
             <button type="button" id="newSale" class="mt-2 w-full py-2.5 rounded-xl text-white font-semibold" style="background:${S.accent()}">New sale</button></div>`);
           document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
           document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
-          pushAudit('sale_mpesa','M-Pesa sale confirmed');toast('M-Pesa code recorded');
+          toast('M-Pesa code recorded');
           return;
         }
         complete.disabled=true;complete.textContent='STK…';
@@ -7429,7 +7355,7 @@ render();
               <button type="button" id="newSale" class="mt-2 w-full py-2.5 rounded-xl text-white font-semibold" style="background:${S.accent()}">New sale</button></div>`);
             document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
             document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
-            pushAudit('sale_mpesa','M-Pesa sale confirmed');toast('M-Pesa payment saved');
+            toast('M-Pesa payment saved');
           }});
         }).catch(function(err){complete.disabled=false;complete.textContent='Complete sale';alert(String(err.message||err))});
         return;
@@ -7447,7 +7373,7 @@ render();
       document.getElementById('rePrint').onclick=()=>{tpPrintOrder(o).then(()=>toast('🖨 Receipt printed')).catch(e=>toast(/No thermal/.test(String(e&&e.message))?'No thermal printer connected - set it up in Settings':'Printer: '+(e&&e.message||e)))};
       document.getElementById('newSale').onclick=()=>{closeModal();goApp('shop')};
       document.getElementById('viewInv').onclick=()=>{closeModal();S.viewInvoiceId=o.id;S.appView='invoices';render()};
-      pushAudit('sale_complete','POS sale completed');toast('Sale saved · stock updated');
+      toast('Sale saved · stock updated');
     });
   };
 
@@ -7538,7 +7464,7 @@ render();
       prod.stock=Math.round(((Number(prod.stock)||0)+qtyN)*10000)/10000;
       if(!b.expenses)b.expenses=[];
       b.expenses.push({id:uid(),type:'EXPENSE',amount:total,description:'Purchase '+prod.name+' from '+(sup.company||sup.name),date:today()});
-      saveBiz(b);closeModal();render();pushAudit('expense',"toast('Purchase recorded')");toast('Purchase recorded')}};
+      saveBiz(b);closeModal();render();toast('Purchase recorded')}};
 
   const aq=document.getElementById('addQt');
   if(aq)aq.onclick=()=>{
@@ -7664,11 +7590,15 @@ render();
   };
 
   const backupBiz=document.getElementById('backupBiz');
-  if(backupBiz)backupBiz.onclick=()=>{
-    const b=biz();if(!b)return;
+  if(backupBiz)backupBiz.onclick=async()=>{
+    let b=biz();if(!b)return;
+    // take the freshest copy from the server (workers, orders from other devices, online/marketplace orders)
+    if(SERVER_MODE&&API_TOKEN){try{await flushPushes();const r=await api('/api/businesses/'+b.id);if(r&&r.business)b=r.business}catch(e){console.warn('backup fetch',e)}}
     const name=(b.name||'business').replace(/[^a-z0-9]+/gi,'_').slice(0,40);
-    downloadJSON('BusinessHub_'+name+'_'+today()+'.json', businessBackupPayload(b));
-    toast('Business backup downloaded');
+    const p=businessBackupPayload(b);
+    p.includes={products:(b.products||[]).length,orders:(b.orders||[]).length,customers:(b.customers||[]).length,workers:(b.workers||[]).length,expenses:(b.expenses||[]).length,quotations:(b.quotations||[]).length,purchases:(b.purchases||[]).length};
+    downloadJSON('BusinessHub_'+name+'_'+today()+'.json', p);
+    toast('Backup downloaded - '+p.includes.products+' products, '+p.includes.workers+' workers, '+p.includes.orders+' orders');
   };
   function readJsonFile(file, cb){
     const reader=new FileReader();
@@ -8963,19 +8893,6 @@ if(boot.session){
 try{const g=new URLSearchParams(location.search).get('go');if(g&&S.view==='app'&&['dashboard','shop','stock','invoices','reports','expenses','onlineorders'].includes(g))S.appView=g}catch(e){}
 render(); // show the app straight away; never wait on the network (a slow connection used to leave a blank screen)
 // Hard refresh / first load: auto sync to and from server when online
-
-setInterval(function(){
-  try{
-    if(S.view==='admin'&&S.adminTab==='audit'&&SERVER_MODE&&API_TOKEN){
-      api('/api/admin/audit').then(function(d){
-        S.adminAuditLogs=d.logs||[];
-        // soft re-render only if still on audit
-        if(S.view==='admin'&&S.adminTab==='audit')render();
-      }).catch(function(){});
-    }
-  }catch(e){}
-},15000);
-
 (function bootSync(){
   try{ render(); }catch(e){console.error(e)}
   Promise.resolve()
