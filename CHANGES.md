@@ -104,3 +104,26 @@
 - Mobile: hamburger button in the header opens a slide-in drawer with a dimmed backdrop (tap to close); it closes after choosing a page.
 - The duplicate "Online store" / "Online orders" entries (both opened the same page) are now one item, "Online orders".
 - The business switcher only appears when you own more than one business.
+
+### Recovery code: no more lost codes
+- Recovery-code requests, approvals and resets now update the stored codes under a database row lock. Two requests at the same moment (two clients, or a double click) could overwrite each other and make a valid code disappear ("invalid or expired").
+- The reset error now says what is wrong: no active request for that email, code expired, or wrong code (with attempts left).
+
+## Test pass on the account-sync + marketplace version
+- Marketplace checkout always failed (500): rewritten to run in one locked transaction, with stock and quantity checks.
+- Marketplace config/stats endpoints crashed (missing `requireAuth`): added.
+- Marketplace JSON-LD could be broken by seller-controlled names: now escaped.
+- Platform audit log and recovery tokens no longer lose entries under concurrent requests (row-locked updates).
+- Opening the Marketplace from the landing page showed "No matches" until a search was made: it now loads offers on open.
+- Duplicate "Marketplace" sidebar item removed.
+- Service worker cache bumped to `bh-offline-v9` so installed apps pick up the update.
+- Recovery-code errors are specific (expired / wrong code / too many tries).
+
+## Backups include everything
+- "Download business backup" now takes the freshest copy from the server (workers, orders from other devices, online/marketplace orders) and records counts of what it holds.
+- Restoring a backup now really restores: products deleted since the backup come back, and newer orders no longer override it. Workers come back with it (up to the plan's worker limit).
+
+## Portrait and landscape on phones
+- The slide-out menu layout now also applies to phones turned sideways (previously the desktop sidebar appeared and ate the screen).
+- Landscape gets compact headers, padding and menu spacing; modals scroll within the short screen; notch/safe-area padding added.
+- Service worker cache bumped to `bh-offline-v10`: installed clients pick up all changes on next open while online.

@@ -140,8 +140,9 @@ const DEFAULT_MARKETPLACE = {
 
 async function appendPlatformAudit(entry) {
   try {
-    const logs = await getCfg('auditLogs', []);
-    const row = {
+    let row = null;
+    await updateCfg('auditLogs', [], async (logs) => {
+    row = {
       id: uid(),
       at: new Date().toISOString(),
       action: entry.action || 'event',
@@ -153,7 +154,8 @@ async function appendPlatformAudit(entry) {
       source: entry.source || 'platform'
     };
     logs.unshift(row);
-    await setCfg('auditLogs', logs.slice(0, 5000));
+    return { value: logs.slice(0, 5000) };
+    });
     return row;
   } catch (e) {
     console.warn('audit', e.message);
@@ -378,7 +380,7 @@ function marketHtmlPage({ title, description, canonical, body, jsonLd }) {
 <link rel="canonical" href="${escapeHtml(canonical)}"/>
 <meta property="og:title" content="${escapeHtml(title)}"/>
 <meta property="og:description" content="${escapeHtml(description)}"/>
-${jsonLd ? `<script type="application/ld+json">${jsonLd}</script>` : ''}
+${jsonLd ? `<script type="application/ld+json">${String(jsonLd).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')}</script>` : ''}
 <style>
 body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;color:#0f172a}
 .wrap{max-width:1100px;margin:0 auto;padding:16px}
@@ -499,6 +501,28 @@ async function setCfg(key, val, c = pool) {
     [key, JSON.stringify(val)]
   );
 }
+/* read-modify-write one config value under a row lock, so two requests at the same time can't overwrite each other
+   (a lost write used to make a valid recovery code vanish -> "invalid or expired") */
+async function updateCfg(key, def, fn) {
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query('INSERT INTO config(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING', [key, JSON.stringify(def)]);
+    const r = await c.query('SELECT value FROM config WHERE key=$1 FOR UPDATE', [key]);
+    const cur = r.rows.length ? r.rows[0].value : def;
+    const out = await fn(cur);
+    await c.query('UPDATE config SET value=$2::jsonb WHERE key=$1', [key, JSON.stringify(out.value)]);
+    await c.query('COMMIT');
+    return out.result;
+  } catch (e) { try { await c.query('ROLLBACK'); } catch (e2) {} throw e; }
+  finally { c.release(); }
+}
+/* marketplace endpoints: returns { user, isAdmin } or null */
+async function requireAuth(req) {
+  const u = await authUser(req);
+  if (!u) return null;
+  return { user: u, isAdmin: isAdmin(u) };
+}
 async function authUser(req) {
   const t = tokenFrom(req);
   if (!t) return null;
@@ -509,12 +533,6 @@ async function authUser(req) {
   return r.rows[0] || null;
 }
 const isAdmin = (u) => !!u && u.role === 'admin';
-async function requireAuth(req) {
-  const u = await authUser(req);
-  if (!u) return null;
-  return { user: u, isAdmin: isAdmin(u), id: u.id, email: u.email };
-}
-
 const publicUser = (u) => (u ? { id: u.id, email: u.email, name: u.name || '', role: u.role || 'owner', phone: u.phone || '' } : null);
 async function newSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -624,15 +642,6 @@ async function handleApi(req, res, pathname) {
       throw e;
     }
     const user = (await pool.query('SELECT * FROM users WHERE id=$1', [id])).rows[0];
-    try {
-      await appendPlatformAudit({
-        action: 'register',
-        detail: 'New owner account',
-        user: email,
-        clientEmail: email,
-        source: 'auth'
-      });
-    } catch (e) {}
     return json(res, 201, { token: await newSession(id), user: publicUser(user) });
   }
 
@@ -657,15 +666,6 @@ async function handleApi(req, res, pathname) {
     fails.delete('login-em:' + email + '|' + ip);
     if (body.adminOnly && !isAdmin(user)) return json(res, 403, { error: 'Not a platform admin account' });
     if (!body.adminOnly && isAdmin(user) && body.clientOnly) return json(res, 403, { error: 'Use admin login for this account' });
-    try {
-      await appendPlatformAudit({
-        action: isAdmin(user) ? 'admin_login' : 'login',
-        detail: 'Login from ' + (ip || ''),
-        user: user.email,
-        clientEmail: user.email,
-        source: 'auth'
-      });
-    } catch (e) {}
     return json(res, 200, { token: await newSession(user.id), user: publicUser(user), isAdmin: isAdmin(user) });
   }
 
@@ -779,12 +779,15 @@ async function handleApi(req, res, pathname) {
       const out = await withBiz(id, async (b, c) => {
         let nb;
         if (!isAdmin(u)) {
+          const restore = body._restore === true; // owner restoring a backup file: the backup wins
           nb = { ...b, ...body };
+          delete nb._restore;
           OWNER_LOCKED.forEach((k) => { nb[k] = b[k]; }); // server keeps control of these
           { // deleted products stay deleted, even if a stale device pushes them again
             const m = {};
             [...(Array.isArray(b.deletedProducts) ? b.deletedProducts : []), ...(Array.isArray(body.deletedProducts) ? body.deletedProducts : [])]
               .forEach((t) => { if (t && t.id) m[t.id] = t; });
+            if (restore && Array.isArray(body.products)) body.products.forEach((p) => { if (p && p.id) delete m[p.id]; });
             nb.deletedProducts = Object.values(m).slice(-5000);
             if (Array.isArray(nb.products) && nb.deletedProducts.length) {
               const gone = new Set(nb.deletedProducts.map((t) => t.id));
@@ -800,7 +803,7 @@ async function handleApi(req, res, pathname) {
             const added = body.workers.filter((w) => w && !have.has(w.id));
             nb.workers = [...keep, ...added.slice(0, Math.max(0, lim - keep.length))];
           }
-          if (Array.isArray(body.orders) && Array.isArray(b.orders)) {
+          if (!restore && Array.isArray(body.orders) && Array.isArray(b.orders)) {
             const known = new Set(body.orders.map((o) => o && o.id));
             const missing = b.orders.filter((o) => o && !known.has(o.id));
             if (missing.length) {
@@ -936,24 +939,23 @@ async function handleApi(req, res, pathname) {
       : { ok: true, waiting: true, requestId, message: 'Request sent to the platform admin. As soon as they approve it, your recovery code appears on this page automatically (valid 30 min). Keep this page open.' };
     const u = (await pool.query('SELECT id, email, name, role FROM users WHERE email=$1 AND role<>\'admin\'', [email])).rows[0];
     if (!u) return json(res, 200, generic);
-    const tokens = await getCfg('resetTokens', {});
-    Object.keys(tokens).forEach((k) => { if (!tokens[k] || tokens[k].expires < Date.now()) delete tokens[k]; });
-    let t = tokens[email];
-    let code;
-    if (t && t.userId === u.id && t.plain) {
-      // a code is already active: keep it (a second click must NOT replace the code the admin approved / was emailed)
-      code = t.plain;
-      t.reqs = [...(t.reqs || []), sha(requestId)].slice(-10);
-    } else {
-      code = String(crypto.randomInt(100000, 1000000));
-      t = { codeHash: sha(code), plain: code, userId: u.id, expires: Date.now() + 30 * 60 * 1000, tries: 0, approved: MAIL_ON ? false : false, reqs: [sha(requestId)] };
-      tokens[email] = t;
-    }
-    await setCfg('resetTokens', tokens);
-    let alerts = await getCfg('adminAlerts', []);
-    alerts = alerts.filter((x) => !(x.type === 'password_reset_request' && x.email === email));
-    alerts.push({ id: uid(), type: 'password_reset_request', email, userId: u.id, name: u.name || '', at: new Date().toISOString(), message: 'Password recovery requested by ' + email + '. Press Approve to send the code straight to their recovery page (valid 30 min). Only approve if you trust the request.' });
-    await setCfg('adminAlerts', alerts.slice(-100));
+    const code = await updateCfg('resetTokens', {}, async (tokens) => {
+      Object.keys(tokens).forEach((k) => { if (!tokens[k] || tokens[k].expires < Date.now()) delete tokens[k]; });
+      let t = tokens[email];
+      if (t && t.userId === u.id && t.plain) {
+        // a code is already active: keep it (a second click must NOT replace the code the admin approved / was emailed)
+        t.reqs = [...(t.reqs || []), sha(requestId)].slice(-10);
+        return { value: tokens, result: t.plain };
+      }
+      const nc = String(crypto.randomInt(100000, 1000000));
+      tokens[email] = { codeHash: sha(nc), plain: nc, userId: u.id, expires: Date.now() + 30 * 60 * 1000, tries: 0, approved: false, reqs: [sha(requestId)] };
+      return { value: tokens, result: nc };
+    });
+    await updateCfg('adminAlerts', [], async (alerts) => {
+      alerts = alerts.filter((x) => !(x.type === 'password_reset_request' && x.email === email));
+      alerts.push({ id: uid(), type: 'password_reset_request', email, userId: u.id, name: u.name || '', at: new Date().toISOString(), message: 'Password recovery requested by ' + email + '. Press Approve to send the code straight to their recovery page (valid 30 min). Only approve if you trust the request.' });
+      return { value: alerts.slice(-100) };
+    });
     if (MAIL_ON) sendMail(email, 'Your BusinessHub recovery code', 'Your BusinessHub password recovery code is ' + code + '.\nIt is valid for 30 minutes. If you did not ask for this, ignore this email.').catch(() => {});
     return json(res, 200, generic);
   }
@@ -977,13 +979,14 @@ async function handleApi(req, res, pathname) {
     if (!isAdmin(u)) return json(res, 403, { error: 'Admin only' });
     const body = await readBody(req);
     const email = String(body.email || '').toLowerCase().trim();
-    const tokens = await getCfg('resetTokens', {});
-    const t = tokens[email];
-    if (!t || Date.now() > (t.expires || 0)) return json(res, 404, { error: 'That request has expired. Ask the client to request a new code.' });
-    t.approved = true;
-    await setCfg('resetTokens', tokens);
-    const alerts = (await getCfg('adminAlerts', [])).filter((x) => !(x.type === 'password_reset_request' && x.email === email));
-    await setCfg('adminAlerts', alerts);
+    const okApprove = await updateCfg('resetTokens', {}, async (tokens) => {
+      const t = tokens[email];
+      if (!t || Date.now() > (t.expires || 0)) return { value: tokens, result: false };
+      t.approved = true;
+      return { value: tokens, result: true };
+    });
+    if (!okApprove) return json(res, 404, { error: 'That request has expired. Ask the client to request a new code.' });
+    await updateCfg('adminAlerts', [], async (alerts) => ({ value: alerts.filter((x) => !(x.type === 'password_reset_request' && x.email === email)) }));
     return json(res, 200, { ok: true });
   }
 
@@ -994,41 +997,24 @@ async function handleApi(req, res, pathname) {
     const password = String(body.password || '');
     if (limited('reset:' + ip, 10, 900000)) return json(res, 429, { error: 'Too many attempts, try again later' });
     if (!email || !code || password.length < MIN_PASSWORD || password.length > 200) return json(res, 400, { error: `Email, recovery code and new password (min ${MIN_PASSWORD} characters) required` });
-    const tokens = await getCfg('resetTokens', {});
-    const t = tokens[email];
-    if (!t || Date.now() > (t.expires || 0)) return json(res, 400, { error: 'Invalid or expired recovery code' });
-    if (t.codeHash !== sha(code)) {
-      t.tries = (t.tries || 0) + 1;
-      if (t.tries >= 5) delete tokens[email];
-      await setCfg('resetTokens', tokens);
-      return json(res, 400, { error: 'Invalid or expired recovery code' });
-    }
-    await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [t.userId, await hashPassword(password)]);
-    await pool.query('DELETE FROM sessions WHERE user_id=$1', [t.userId]);
-    delete tokens[email];
-    await setCfg('resetTokens', tokens);
+    const res2 = await updateCfg('resetTokens', {}, async (tokens) => {
+      const t = tokens[email];
+      if (!t) return { value: tokens, result: { err: 'No active recovery request for this email. Press "Get recovery code" again to get a new code.' } };
+      if (Date.now() > (t.expires || 0)) { delete tokens[email]; return { value: tokens, result: { err: 'This recovery code has expired (codes last 30 minutes). Request a new one.' } }; }
+      if (t.codeHash !== sha(code)) {
+        t.tries = (t.tries || 0) + 1;
+        const left = 5 - t.tries;
+        if (left <= 0) { delete tokens[email]; return { value: tokens, result: { err: 'Too many wrong codes. Request a new code.' } }; }
+        return { value: tokens, result: { err: 'Wrong code - check the digits. ' + left + ' attempt' + (left === 1 ? '' : 's') + ' left.' } };
+      }
+      const uid2 = t.userId;
+      delete tokens[email];
+      return { value: tokens, result: { userId: uid2 } };
+    });
+    if (res2.err) return json(res, 400, { error: res2.err });
+    await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [res2.userId, await hashPassword(password)]);
+    await pool.query('DELETE FROM sessions WHERE user_id=$1', [res2.userId]);
     return json(res, 200, { ok: true, message: 'Password updated' });
-  }
-
-    if (pathname === '/api/audit' && method === 'POST') {
-    const u = await authUser(req);
-    // Allow authenticated users to append their own audit events (live stream for admin)
-    if (!u) return json(res, 401, { error: 'Unauthorized' });
-    try {
-      const body = await readBody(req);
-      await appendPlatformAudit({
-        action: str(body.action || 'event', 80),
-        detail: str(body.detail || '', 500),
-        user: u.email || body.user || 'client',
-        clientEmail: u.email,
-        businessId: body.businessId || null,
-        businessName: body.businessName || null,
-        source: body.source || 'client'
-      });
-      return json(res, 201, { ok: true });
-    } catch (e) {
-      return json(res, 500, { error: e.message || 'Audit failed' });
-    }
   }
 
   if (pathname === '/api/admin/audit' && method === 'GET') {
@@ -1447,103 +1433,92 @@ async function handleApi(req, res, pathname) {
   }
   if (pathname === '/api/marketplace/checkout' && method === 'POST') {
     if (limited('mkt:' + ip, 20, 600000)) return json(res, 429, { error: 'Too many checkouts' });
-    try {
     const body = await readBody(req);
     const storeId = body.storeId;
     const items = Array.isArray(body.items) ? body.items : [];
     if (!storeId || !items.length) return json(res, 400, { error: 'storeId and items required' });
-    const row = await pool.query('SELECT * FROM businesses WHERE id=$1', [storeId]);
-    if (!row.rows[0]) return json(res, 404, { error: 'Store not found' });
-    const b = bizOut(row.rows[0]);
-    if (!isMarketSeller(b)) return json(res, 400, { error: 'Store not accepting online orders' });
-    if (!Array.isArray(b.products)) b.products = [];
-    if (!Array.isArray(b.orders)) b.orders = [];
-    const orderItems = [];
-    let total = 0;
-    for (const it of items.slice(0, 50)) {
-      const pid = it.productId || it.id;
-      const p = (b.products || []).find((x) => x && String(x.id) === String(pid));
-      if (!p || p.active === false) return json(res, 400, { error: 'Product unavailable: ' + (it.name || pid || '') });
-      const qty = Math.max(1, Number(it.qty) || 1);
-      if ((Number(p.stock) || 0) + 1e-9 < qty) return json(res, 400, { error: 'Insufficient stock for ' + p.name });
-      const price = Number(p.price) || 0;
-      orderItems.push({ product_id: p.id, name: p.name, qty, price, unit: p.unit || 'pc' });
-      total += price * qty;
-    }
-    const fee = Number((b.marketplace || {}).deliveryFee || 0);
-    const fulfill = body.fulfill === 'pickup' ? 'pickup' : 'delivery';
-    if (fulfill === 'delivery') total += fee;
-    orderItems.forEach((oi) => {
-      const p = b.products.find((x) => x.id === oi.product_id);
-      if (p) p.stock = Math.max(0, (Number(p.stock) || 0) - oi.qty);
-    });
-    const itemsSubtotal = Math.round(orderItems.reduce((s, oi) => s + oi.price * oi.qty, 0) * 100) / 100;
-    const deliveryFee = fulfill === 'delivery' ? fee : 0;
     const mcfg = await getMarketplaceCfg();
-    const comm = calcCommission(mcfg, b.plan, itemsSubtotal, deliveryFee);
-    const order = {
-      id: uid(),
-      number: 'MKT-' + Date.now().toString(36).toUpperCase(),
-      date: new Date().toISOString().slice(0, 10),
-      createdAt: new Date().toISOString(),
-      source: 'marketplace',
-      orderStatus: 'NEW',
-      status: 'unpaid',
-      payment: body.payMethod || 'mpesa',
-      paymentStatus: 'pending',
-      fulfill,
-      customer: body.customerName || body.name || 'Marketplace customer',
-      phone: body.phone || '',
-      address: body.address || '',
-      items: orderItems,
-      subtotal: itemsSubtotal,
-      total: Math.round((itemsSubtotal + deliveryFee) * 100) / 100,
-      deliveryFee,
-      notes: body.notes || '',
-      commission: { enabled: !!mcfg.commissionEnabled, rate: comm.rate, amount: comm.amount, currency: 'KES' },
-      platformCommission: comm.amount,
-      sellerNet: money2(itemsSubtotal + deliveryFee - comm.amount)
-    };
-    if (!b.orders) b.orders = [];
-    b.orders.unshift(order);
-    await appendPlatformAudit({
-      action: 'marketplace_order',
-      detail: `${b.name}: ${order.number} total ${order.total}`,
-      businessId: b.id,
-      businessName: b.name,
-      user: order.customer || order.phone || 'customer',
-      source: 'marketplace'
+    // read-modify-write under a row lock: parallel checkouts cannot oversell, and the owner's data is never overwritten by a stale copy
+    const out = await withBiz(String(storeId), async (b) => {
+      if (!isMarketSeller(b)) return { status: 400, body: { error: 'Store not accepting online orders' } };
+      const orderItems = [];
+      for (const it of items.slice(0, 50)) {
+        const p = (b.products || []).find((x) => x.id === it.productId || x.id === it.id);
+        if (!p || p.active === false || p.online === false) return { status: 400, body: { error: 'Product unavailable: ' + (it.name || it.productId || it.id) } };
+        const qty = Math.round(Number(it.qty) * 10000) / 10000;
+        if (!isFinite(qty) || qty <= 0 || qty > 1000) return { status: 400, body: { error: 'Invalid quantity for ' + p.name } };
+        orderItems.push({ p, qty });
+      }
+      // total demand per product (same product may appear on several lines)
+      const need = {};
+      orderItems.forEach(({ p, qty }) => { need[p.id] = (need[p.id] || 0) + qty; });
+      for (const id of Object.keys(need)) {
+        const p = b.products.find((x) => x.id === id);
+        if ((Number(p.stock) || 0) < need[id] && p.allowZeroStock !== true) return { status: 400, body: { error: 'Insufficient stock for ' + p.name } };
+      }
+      const lines = orderItems.map(({ p, qty }) => ({ product_id: p.id, name: p.name, qty, price: Number(p.price) || 0, unit: p.unit || 'pc' }));
+      Object.keys(need).forEach((id) => {
+        const p = b.products.find((x) => x.id === id);
+        p.stock = Math.max(0, Math.round(((Number(p.stock) || 0) - need[id]) * 10000) / 10000);
+      });
+      const fee = Number((b.marketplace || {}).deliveryFee || 0);
+      const fulfill = body.fulfill === 'pickup' ? 'pickup' : 'delivery';
+      const itemsSubtotal = Math.round(lines.reduce((s, l) => s + l.price * l.qty, 0) * 100) / 100;
+      const deliveryFee = fulfill === 'delivery' ? fee : 0;
+      const comm = calcCommission(mcfg, b.plan, itemsSubtotal, deliveryFee);
+      const order = {
+        id: uid(),
+        number: 'MKT-' + Date.now().toString(36).toUpperCase() + crypto.randomBytes(1).toString('hex').toUpperCase(),
+        date: new Date().toISOString().slice(0, 10),
+        createdAt: new Date().toISOString(),
+        source: 'marketplace',
+        orderStatus: 'NEW',
+        status: 'unpaid',
+        payment: String(body.payMethod || 'mpesa').slice(0, 30),
+        paymentStatus: 'pending',
+        fulfill,
+        customer: String(body.customerName || body.name || 'Marketplace customer').slice(0, 120),
+        phone: String(body.phone || '').slice(0, 30),
+        address: String(body.address || '').slice(0, 300),
+        items: lines,
+        subtotal: itemsSubtotal,
+        total: Math.round((itemsSubtotal + deliveryFee) * 100) / 100,
+        deliveryFee,
+        notes: String(body.notes || '').slice(0, 500),
+        commission: { enabled: !!mcfg.commissionEnabled, rate: comm.rate, amount: comm.amount, currency: 'KES' },
+        platformCommission: comm.amount,
+        sellerNet: money2(itemsSubtotal + deliveryFee - comm.amount)
+      };
+      if (!b.orders) b.orders = [];
+      b.orders.unshift(order);
+      b.updatedAt = new Date().toISOString();
+      return { save: b, status: 200, body: { ok: true, order: { id: order.id, number: order.number, total: order.total, storeId: b.id, storeName: b.name } }, audit: { b, order } };
     });
-    b.updatedAt = new Date().toISOString();
-    // strip circular / store only data fields
-    const { id: _id, ownerId: _oid, ...data } = b;
-    data.id = b.id;
-    data.ownerId = b.ownerId;
-    await pool.query('UPDATE businesses SET data=$2, updated_at=NOW() WHERE id=$1', [b.id, JSON.stringify(data)]);
-    return json(res, 200, { ok: true, order: { id: order.id, number: order.number, total: order.total, storeId: b.id, storeName: b.name } });
-    } catch (err) {
-      console.error('marketplace checkout', err);
-      return json(res, 500, { error: err.message || 'Checkout failed' });
+    if (out.audit) {
+      await appendPlatformAudit({
+        action: 'marketplace_order',
+        detail: `${out.audit.b.name}: ${out.audit.order.number} total ${out.audit.order.total}`,
+        businessId: out.audit.b.id,
+        businessName: out.audit.b.name,
+        user: out.audit.order.customer || out.audit.order.phone || 'customer',
+        source: 'marketplace'
+      });
     }
+    return json(res, out.status || 200, out.body);
   }
   if (pathname === '/api/marketplace/admin/stats' && method === 'GET') {
-    try {
-      const c = await requireAuth(req);
-      if (!c || !c.isAdmin) return json(res, 401, { error: 'Admin only' });
-      const all = await loadAllBusinesses();
-      const sellers = (all || []).filter(isMarketSeller);
-      const offers = listMarketOffers(all || [], '');
-      const groups = groupOffersByProduct(offers);
-      return json(res, 200, {
-        sellers: sellers.length,
-        products: groups.length,
-        offers: offers.length,
-        stores: sellers.map(publicStore)
-      });
-    } catch (err) {
-      console.error('mkt admin stats', err);
-      return json(res, 500, { error: err.message || 'Stats failed' });
-    }
+    const c = await requireAuth(req);
+    if (!c || !c.isAdmin) return json(res, 401, { error: 'Admin only' });
+    const all = await loadAllBusinesses();
+    const sellers = all.filter(isMarketSeller);
+    const offers = listMarketOffers(all, '');
+    const groups = groupOffersByProduct(offers);
+    return json(res, 200, {
+      sellers: sellers.length,
+      products: groups.length,
+      offers: offers.length,
+      stores: sellers.map(publicStore)
+    });
   }
 
 
