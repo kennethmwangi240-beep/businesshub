@@ -127,3 +127,18 @@
 - The slide-out menu layout now also applies to phones turned sideways (previously the desktop sidebar appeared and ate the screen).
 - Landscape gets compact headers, padding and menu spacing; modals scroll within the short screen; notch/safe-area padding added.
 - Service worker cache bumped to `bh-offline-v10`: installed clients pick up all changes on next open while online.
+
+## Purchases: quick add + confirm
+- Purchases lists every product with search; tap +1 / +2 / +3 / +4 / +5 (repeat taps add up) or Custom.
+- A "This purchase" panel shows the items; quantity and unit cost are editable, supplier is optional (no supplier needs to exist).
+- "Confirm purchase" records the purchases, adds the quantities to stock and logs the cost as an expense. Cache bumped to v11.
+
+## Products, Shop and Stock: A-Z and grouped by name
+- Items are sorted alphabetically in Products, Shop (POS), Stock overview, and the product pickers.
+- Products sharing a name (e.g. "Kienyeji layers - Kenchic - 20 kg", "Kienyeji layers - Hybrid - 50 kg") appear once under "Kienyeji layers"; tap it to open the variants. While searching, matching groups open automatically. Single items show as before. Cache bumped to v12.
+
+## Sidebar look and themes
+- Sidebar menu text is bold italic (owner, worker and admin menus).
+- New sidebar colour styles in Settings > Appearance: Midnight, Ocean, Forest, Plum, Sunset, Rose, Teal, Slate, Light. "Automatic" picks Midnight in dark mode and Ocean otherwise. The white sidebar is never used in dark mode.
+- New page backgrounds: Ocean blue, Fresh mint, Rose pink, Lavender, Sunset (beside Light, Dark, Teal, Warm).
+- Dark theme fix: coloured tiles (sales, income, expenses, profit etc.) no longer show dark text on dark cards. Dark and light styles are kept fully separate. Cache bumped to v13.
