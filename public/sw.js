@@ -1,5 +1,5 @@
 /* MyBusinessHub offline shell — local assets first, API never cached */
-const CACHE = 'bh-offline-v10';
+const CACHE = 'bh-offline-v13';
 const PRECACHE = [
   '/',
   '/index.html',
