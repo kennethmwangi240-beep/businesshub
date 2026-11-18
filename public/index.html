@@ -2311,7 +2311,17 @@ function money(n){return Math.round((Number(n)||0)*100)/100}
 function kes(n){return 'KES '+money(n).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('show'),2800)}
-function today(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+/* Kenya time for everything people read (EAT, UTC+3). Stored timestamps are UTC instants; they are always SHOWN in Nairobi time,
+   whatever the device clock/time zone says. */
+const KE_TZ='Africa/Nairobi';
+const _keFmt=new Intl.DateTimeFormat('en-CA',{timeZone:KE_TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+function keParts(v){try{const dt=v instanceof Date?v:new Date(v);if(isNaN(dt))return null;const o={};_keFmt.formatToParts(dt).forEach(function(p){o[p.type]=p.value});return o}catch(e){return null}}
+function keDT(v,secs){ // "2026-11-18 14:05" (or with seconds) in Kenya time; date-only values are returned unchanged
+  if(!v)return '';const sv=String(v);if(sv.length<=10&&sv.indexOf('T')<0)return sv;
+  const p=keParts(sv);if(!p)return sv.slice(0,secs?19:16).replace('T',' ');
+  return p.year+'-'+p.month+'-'+p.day+' '+p.hour+':'+p.minute+(secs?':'+p.second:'');
+}
+function today(){const p=keParts(new Date());return p?p.year+'-'+p.month+'-'+p.day:new Date().toISOString().slice(0,10)}
 function parseDay(s){return (s||'').slice(0,10)}
 function initials(name){
   const p=String(name||'BH').trim().split(/\s+/).filter(Boolean);
@@ -4044,7 +4054,7 @@ function viewOnboard(){
       <div><label class="text-sm font-medium">County</label>
         <input name="county" class="w-full border rounded-xl px-3 py-2.5 mt-1" placeholder="e.g. Nairobi"/></div>
       <div><label class="text-sm font-medium">Timezone</label>
-        <input name="timezone" value="Africa/Nairobi" class="w-full border rounded-xl px-3 py-2.5 mt-1"/></div>
+        <input name="timezone" value="Africa/Nairobi" readonly class="w-full border rounded-xl px-3 py-2.5 mt-1 bg-slate-50" title="All businesses use Kenya time (EAT, UTC+3)"/></div>
     </div>
     <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="onlineStore" checked/> Enable online ordering for customers</label>
     <div class="border rounded-2xl p-4 bg-slate-50 space-y-3">
@@ -4915,7 +4925,7 @@ function secStock(b,a){
       <table class="w-full text-sm min-w-[640px]"><thead class="text-left text-xs text-slate-500 bg-slate-50"><tr>
         <th class="px-3 py-2">When</th><th class="px-3 py-2">Type</th><th class="px-3 py-2">Product</th><th class="px-3 py-2">Qty</th><th class="px-3 py-2">Batch</th><th class="px-3 py-2">Note</th><th class="px-3 py-2">By</th>
       </tr></thead><tbody>
-      ${moves.map(m=>`<tr class="border-t"><td class="px-3 py-2 text-xs">${esc((m.at||'').slice(0,16).replace('T',' '))}</td>
+      ${moves.map(m=>`<tr class="border-t"><td class="px-3 py-2 text-xs">${esc(keDT(m.at))}</td>
         <td class="px-3 py-2 text-xs font-medium">${esc(m.type)}</td><td class="px-3 py-2">${esc(m.productName)}</td>
         <td class="px-3 py-2">${m.qty}</td><td class="px-3 py-2 text-xs">${esc(m.batch||'—')}</td>
         <td class="px-3 py-2 text-xs">${esc(m.note||'')}${m.fromBranch?` · ${esc(m.fromBranch)}→${esc(m.toBranch||'')}`:''}</td>
@@ -5278,7 +5288,7 @@ function secReports(b,a){
     <h3 class="mt-6 mb-1 font-semibold">Expenses</h3>
     ${exps.length?`<div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr><th ${th}>Date</th><th ${th}>Description</th><th ${thr}>Amount</th></tr></thead><tbody>
       ${exps.slice().sort((x,y)=>String(x.date).localeCompare(String(y.date))).map(e=>`<tr><td ${td}>${esc(String(e.date||'').slice(0,10))}</td><td ${td}>${esc(e.description||'')}</td><td ${tdr}>${M(e.amount)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="text-sm text-slate-500">No expenses in this period.</p>'}`:''}
-    <p class="mt-6 text-xs text-slate-400">Generated ${new Date().toLocaleString('en-GB')} · Cash basis: stock purchases appear under expenses.</p>
+    <p class="mt-6 text-xs text-slate-400">Generated ${new Date().toLocaleString('en-GB',{timeZone:KE_TZ})} · Cash basis: stock purchases appear under expenses.</p>
   </div></div>`;
 }
 function secExpenses(b,a){
@@ -5898,8 +5908,8 @@ const ROLE_PRESETS={cashier:['dashboard','shop','invoices'],manager:WORKER_MENUS
 function wName(w){return ((w&&(w.firstName||w.name))||'')+((w&&w.lastName)?' '+w.lastName:'')||((w&&w.username)||'Worker')}
 function wFull(w){return (wName(w)||'').trim()||(w&&w.username)||'Worker'}
 function wFmtDur(ms){const m=Math.max(0,Math.round(ms/60000));return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m'}
-function wHM(iso){try{return iso?new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'-'}catch(e){return '-'}}
-function wDT(iso){try{return iso?new Date(iso).toLocaleString([],{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'-'}catch(e){return '-'}}
+function wHM(iso){try{return iso?new Date(iso).toLocaleTimeString('en-GB',{timeZone:KE_TZ,hour:'2-digit',minute:'2-digit'}):'-'}catch(e){return '-'}}
+function wDT(iso){try{return iso?new Date(iso).toLocaleString('en-GB',{timeZone:KE_TZ,day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'-'}catch(e){return '-'}}
 function wStaff(b,withOwner){const l=(b.workers||[]).slice();return withOwner?[{id:'owner',firstName:'Owner',role:'owner'}].concat(l):l}
 function wOpenShift(b,w){
   if(!w)return null;
@@ -6263,7 +6273,7 @@ function secSettings(b,a){
       <input type="checkbox" id="autoBackupToggle" ${(b.autoBackup!==false)?'checked':''}/>
       Enable auto-backup for this business (every 2 days)
     </label>
-    <p class="text-xs text-slate-500 mb-3">Last auto-backup: <b id="lastAutoBackupLabel">${esc(b.lastAutoBackupAt?String(b.lastAutoBackupAt).slice(0,16).replace('T',' '):'Never')}</b></p>
+    <p class="text-xs text-slate-500 mb-3">Last auto-backup: <b id="lastAutoBackupLabel">${esc(b.lastAutoBackupAt?keDT(b.lastAutoBackupAt):'Never')}</b></p>
     <button type="button" id="forceAutoBackup" class="w-full py-2.5 rounded-xl border font-semibold bg-white mb-4">Run backup now (server)</button>
     <h3 class="font-semibold mb-1">Business backup</h3>
     <p class="text-xs text-slate-500 mb-3">Save a full copy of <b>${esc(b.name)}</b> (products, stock, sales, customers, expenses). Store the file safely. Restore later on this device or another.</p>
@@ -6304,7 +6314,7 @@ function adminPayBanner(d,plans){
       const pp=b.pendingPlan,pl=(plans&&plans[pp.plan])||{name:pp.plan,price:0};
       const owner=(d.users||[]).find(u=>u.id===b.ownerId);
       return `<div class="bg-white rounded-xl border border-amber-200 p-3 text-sm" style="color:#0f172a">
-        <div class="flex flex-wrap justify-between gap-2"><b>${esc(b.name||'Business')}</b><span class="text-xs text-slate-500">${esc((pp.at||'').slice(0,16).replace('T',' '))}</span></div>
+        <div class="flex flex-wrap justify-between gap-2"><b>${esc(b.name||'Business')}</b><span class="text-xs text-slate-500">${esc(keDT(pp.at))}</span></div>
         <p class="mt-1">Wants <b>${esc(pl.name)}</b> (${kes(pl.price)}) · M-Pesa receipt: <b>${esc(pp.receipt||'none given')}</b> · phone: ${esc(pp.phone||'—')}</p>
         <p class="text-xs text-slate-500">${esc(owner&&owner.email||'')} · current plan: ${esc((plans&&plans[b.plan||'FREE']||{}).name||b.plan||'FREE')}</p>
         <div class="flex flex-wrap gap-2 mt-2">
@@ -6591,7 +6601,7 @@ function viewAdmin(){
         ${alerts.map(a=>`<div class="border rounded-xl p-3 text-sm">
           <div class="flex justify-between gap-2">
             <span class="font-medium">${esc(a.type||'alert')}</span>
-            <span class="text-xs text-slate-400">${esc((a.at||'').slice(0,19).replace('T',' '))}</span>
+            <span class="text-xs text-slate-400">${esc(keDT(a.at,true))}</span>
           </div>
           <p class="text-slate-700 mt-1">${esc(a.message||'')}</p>
           ${a.businessId?`<div class="flex flex-wrap gap-2 mt-2">
@@ -6687,9 +6697,9 @@ function viewAdmin(){
       </div>
       <div class="text-sm max-h-[70vh] overflow-y-auto divide-y">
         ${logs.slice(0,500).map(l=>{const a=aud(l.action);return `<div class="py-2.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span class="text-xs text-slate-500 whitespace-nowrap">${esc(String(l.at||'').slice(0,19).replace('T',' '))}</span>
+          <span class="text-xs text-slate-500 whitespace-nowrap">${esc(keDT(l.at,true))}</span>
           <span class="text-xs font-semibold px-2 py-0.5 rounded-full" style="color:${a.c};background:color-mix(in srgb,${a.c} 16%,transparent);border:1px solid color-mix(in srgb,${a.c} 40%,transparent)">${esc(a.label)}</span>
-          ${l.offline?`<span class="text-[11px] px-2 py-0.5 rounded-full" style="color:${dark?'#fbbf24':'#b45309'};background:color-mix(in srgb,#f59e0b 16%,transparent)" title="Made while the device was offline">offline${l.syncedAt?' · synced '+esc(String(l.syncedAt).slice(0,16).replace('T',' ')):''}</span>`:''}
+          ${l.offline?`<span class="text-[11px] px-2 py-0.5 rounded-full" style="color:${dark?'#fbbf24':'#b45309'};background:color-mix(in srgb,#f59e0b 16%,transparent)" title="Made while the device was offline">offline${l.syncedAt?' · synced '+esc(keDT(l.syncedAt)):''}</span>`:''}
           ${l.businessName?`<span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">${esc(l.businessName)}</span>`:''}
           <span class="text-slate-600">${esc(l.user||'')}</span>
           ${l.clientEmail?`<span class="text-xs text-slate-500">${esc(l.clientEmail)}</span>`:''}
@@ -6708,7 +6718,7 @@ function viewAdmin(){
           <span class="font-medium">${esc(t.subject)}</span>
           <span class="text-xs px-2 py-0.5 rounded-full ${t.status==='resolved'?'bg-emerald-50 text-emerald-800':'bg-amber-50 text-amber-900'}">${esc(t.status||'open')}</span>
         </div>
-        <p class="text-xs text-slate-500 mt-1">${esc(t.email||'')} · ${esc((t.createdAt||'').slice(0,16).replace('T',' '))}</p>
+        <p class="text-xs text-slate-500 mt-1">${esc(t.email||'')} · ${esc(keDT(t.createdAt))}</p>
         <p class="mt-2 text-slate-700">${esc(t.body||'')}</p>
         <div class="mt-2 flex flex-wrap gap-2">
           <button type="button" data-ticket-resolve="${t.id}" class="text-xs border px-2 py-1 rounded-lg">Mark resolved</button>
@@ -7645,7 +7655,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
     const products=mergeProducts([],productsFromCategories(cats));
     const shopMode=fd.get('shopMode')||'solo';
     const b=emptyBiz(u.id,{
-      name:fd.get('name'),phone:fd.get('phone')||'',address:fd.get('address')||'',county:fd.get('county')||'',timezone:fd.get('timezone')||'Africa/Nairobi',
+      name:fd.get('name'),phone:fd.get('phone')||'',address:fd.get('address')||'',county:fd.get('county')||'',timezone:'Africa/Nairobi',
       currency:fd.get('currency')||'KES',categories:cats,categoryLabel:cats.map(c=>CATALOG[c]?CATALOG[c].label:c).join(', '),
       color:S.color,onlineStore:!!fd.get('onlineStore'),products,plan:'FREE',
       shopMode:shopMode,
@@ -8857,7 +8867,7 @@ render();
     if(!SERVER_MODE){toast('Server required to save commission');return;}
     api('/api/marketplace/config',{method:'PUT',body:body}).then(function(){
       const msg=document.getElementById('adminMktCommMsg');
-      if(msg)msg.textContent='Saved '+new Date().toLocaleTimeString();
+      if(msg)msg.textContent='Saved '+new Date().toLocaleTimeString('en-GB',{timeZone:KE_TZ});
       toast('Commission & feed settings saved');
     }).catch(function(err){toast(err.message||'Save failed')});
   };
