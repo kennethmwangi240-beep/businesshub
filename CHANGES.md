@@ -142,3 +142,12 @@
 - New sidebar colour styles in Settings > Appearance: Midnight, Ocean, Forest, Plum, Sunset, Rose, Teal, Slate, Light. "Automatic" picks Midnight in dark mode and Ocean otherwise. The white sidebar is never used in dark mode.
 - New page backgrounds: Ocean blue, Fresh mint, Rose pink, Lavender, Sunset (beside Light, Dark, Teal, Warm).
 - Dark theme fix: coloured tiles (sales, income, expenses, profit etc.) no longer show dark text on dark cards. Dark and light styles are kept fully separate. Cache bumped to v13.
+
+## USB HID scanner + printer, and Worker management
+- Barcode scanners (USB / wireless, 1D/2D, hands-free, keyboard-wedge): no driver or connect step. Scans are caught anywhere in the app, even with no field focused, and a scan never lands as typed text in a search box. The Enter (or Tab) suffix is used when present; scans without a suffix are detected from their speed. Human typing is never mistaken for a scan.
+  - Shop: adds to cart. Purchases: +1 on the purchase list. Stock: shows the item. Products: "Scan to build catalogue" (new item: asks name, price, stock, SKU auto; or count mode: +1 stock per scan).
+  - Link barcodes to catalogue: click an item's Barcode box (table or new-product form) and scan - it fills the box and jumps to the next item.
+  - Settings > Barcode scanner: on/off, beep, Enter-suffix instructions and a live scan test.
+- Printer: added USB HID printer connection (WebHID) beside USB (WebUSB, bulk and interrupt endpoints) and Bluetooth/serial; auto-detected on plug-in. HID path is untested on real hardware.
+- New sidebar group "Worker management": Workers (add, edit, suspend, remove, reset password), Shifts (start/stop per worker, several at once, opening/closing cash, history), Permissions (tick/untick menus per worker, role presets), Performance (sales, revenue, items, hours, KES/hour, commission, CSV), Schedule (weekly roster, repeat weekly, today's roster with late flag).
+- Sales now record time and the shift they belong to; "require shift before sale" is checked per worker. Suspended workers are logged out and cannot sign in. Cache bumped to v14.
