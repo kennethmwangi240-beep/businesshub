@@ -161,24 +161,87 @@ async function appendPlatformAudit(entry) {
     console.warn('audit', e.message);
   }
 }
+/* ---------- business audit log (synced with the business, offline entries included) ---------- */
+const AUDIT_BIZ_MAX = 3000;
+function cleanAuditEntry(e) {
+  if (!e || typeof e !== 'object') return null;
+  const t = Date.parse(e.at);
+  const at = isNaN(t) ? new Date().toISOString() : new Date(t).toISOString();
+  let id = String(e.id || '');
+  if (!/^[A-Za-z0-9_.:-]{4,80}$/.test(id)) id = sha(at + '|' + str(e.action, 60) + '|' + str(e.detail, 300) + '|' + str(e.user, 120)).slice(0, 16);
+  const out = {
+    id, at,
+    action: str(e.action, 60) || 'event',
+    detail: str(e.detail, 300),
+    user: str(e.user, 120),
+    role: str(e.role, 20)
+  };
+  if (e.ref) out.ref = str(e.ref, 60);
+  if (e.pub) out.pub = str(e.pub, 120);
+  if (e.offline === true) out.offline = true;
+  if (e.legacy === true) out.legacy = true;
+  return out;
+}
+// Union by id. Entries already on the server are never changed or removed (an audit trail), so several devices
+// that were offline can all upload their entries and a stale device can never wipe them. New entries get syncedAt.
+function mergeAuditLogs(existing, incoming) {
+  const m = new Map();
+  (Array.isArray(existing) ? existing : []).forEach((e) => { if (e && e.id) m.set(e.id, e); });
+  const now = new Date().toISOString();
+  (Array.isArray(incoming) ? incoming.slice(0, 2000) : []).forEach((raw) => {
+    const e = cleanAuditEntry(raw);
+    if (!e || m.has(e.id)) return;
+    e.syncedAt = now;
+    m.set(e.id, e);
+  });
+  return [...m.values()].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, AUDIT_BIZ_MAX);
+}
+/* The platform admin must not see invoice numbers or prices of a client's sales. Applied to EVERY row the admin
+   audit endpoint returns (stored, derived, old and new), and the admin search runs on the redacted text. */
+const SALES_AUDIT_ACTIONS = new Set(['sale', 'refund', 'offline_sale_queued', 'offline_sales_synced', 'online_order', 'marketplace_order', 'invoice', 'order', 'quotation']);
+function scrubSalesText(s) {
+  return String(s == null ? '' : s)
+    .replace(/\b[A-Z]{2,6}-[A-Z0-9]{2,}\b/g, '')
+    .replace(/\b(?:KES|KSH|Ksh|Kes)\.?\s*[\d,]+(?:\.\d+)?/g, '')
+    .replace(/\s*·\s*(?=·|$)/g, '')
+    .replace(/\s{2,}/g, ' ').trim();
+}
+function redactAuditForAdmin(l) {
+  const out = { ...l };
+  const pub = out.pub;
+  delete out.ref; delete out.amount; delete out.pub;
+  out.detail = SALES_AUDIT_ACTIONS.has(l.action) ? scrubSalesText(pub || '') : scrubSalesText(l.detail);
+  return out;
+}
+
 function deriveAuditFromBusinesses(businesses) {
   const logs = [];
   (businesses || []).forEach((b) => {
     const bName = b.name || 'Business';
     const bId = b.id;
     const owner = b.ownerEmail || '';
+    const loggedSales = new Set((b.auditLogs || []).filter((e) => e && e.action === 'sale' && e.ref).map((e) => e.ref));
     (b.orders || []).slice(0, 80).forEach((o) => {
+      if (o.number && loggedSales.has(o.number)) return; // already has a real audit entry (shown below)
+      const nItems = (o.items || []).length;
       logs.push({
         id: 'ord-' + (o.id || o.number),
-        at: o.createdAt || (o.date ? o.date + 'T12:00:00.000Z' : null) || new Date().toISOString(),
+        at: o.createdAt || o.at || (o.date ? o.date + 'T12:00:00.000Z' : null) || new Date().toISOString(),
         action: o.source === 'marketplace' ? 'marketplace_order' : (o.source === 'online' ? 'online_order' : 'sale'),
         detail: `${bName}: ${o.number || o.id || 'order'} · ${o.total != null ? o.total : ''} · ${o.payment || o.paymentStatus || ''} · ${o.orderStatus || o.status || ''}`,
+        pub: `${nItems} item${nItems === 1 ? '' : 's'}${o.payMethod || o.payment ? ' · ' + String(o.payMethod || o.payment).toLowerCase() : ''}`,
+        ref: o.number || '',
         user: o.customer || (o.servedBy && (o.servedBy.name || o.servedBy.id)) || owner || 'client',
         businessId: bId,
         businessName: bName,
         clientEmail: owner,
         source: 'business'
       });
+    });
+    // actions recorded inside the business itself (refunds, shifts, workers, permissions, offline sync...)
+    (b.auditLogs || []).forEach((e) => {
+      if (!e || !e.id) return;
+      logs.push({ ...e, id: 'bl-' + bId + '-' + e.id, businessId: bId, businessName: bName, clientEmail: owner, source: 'business' });
     });
     (b.expenses || []).slice(0, 30).forEach((e) => {
       logs.push({
@@ -783,6 +846,7 @@ async function handleApi(req, res, pathname) {
           nb = { ...b, ...body };
           delete nb._restore;
           OWNER_LOCKED.forEach((k) => { nb[k] = b[k]; }); // server keeps control of these
+          nb.auditLogs = mergeAuditLogs(b.auditLogs, body.auditLogs); // offline + multi-device entries are unioned, never overwritten
           { // deleted products stay deleted, even if a stale device pushes them again
             const m = {};
             [...(Array.isArray(b.deletedProducts) ? b.deletedProducts : []), ...(Array.isArray(body.deletedProducts) ? body.deletedProducts : [])]
@@ -1036,7 +1100,7 @@ async function handleApi(req, res, pathname) {
     const derived = deriveAuditFromBusinesses(businesses);
     const q = (qparams.get('q') || '').toLowerCase();
     const bizFilter = qparams.get('businessId') || '';
-    let logs = [...(platformLogs || []), ...derived];
+    let logs = [...(platformLogs || []), ...derived].map(redactAuditForAdmin);
     // de-dupe by id
     const seen = new Set();
     logs = logs.filter((l) => {

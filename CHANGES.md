@@ -1,3 +1,31 @@
+# Audit log: actions visible, offline entries sync, no sales details for the platform admin
+Applies to ALL existing clients automatically: no data is deleted or converted by hand, and old app versions keep working.
+
+- Audit entries now live INSIDE each business (`auditLogs`), so they are saved and uploaded together with the business.
+  Before, they went to a device-wide list that was never sent to the server, so refunds, shifts, workers, permission
+  changes and offline events never reached the admin's Audit log.
+- Offline: entries made without internet are marked "offline" and uploaded on the next sync (reconnect, login or the
+  Sync button). The server merges entries from every device by id: several offline devices can all upload, a stale or
+  old-version device can never wipe them, and existing entries cannot be edited. The server stamps the sync time.
+- Offline sales queue: queued sales are put back into the business they were made in (before: whichever business was
+  open), and the queue is cleared only after the server really received the data (before: it was never cleared and
+  "offline_sales_synced" was never logged).
+- Admin > Audit log: every action has a readable, colour-coded label (Sale, Refund, Shift started, Permission changed,
+  Worker added, Offline sales synced ...). Before, the action text used a dark colour that was invisible in the admin
+  dark theme. Offline entries show "offline - synced <time>".
+- Platform admin can no longer see invoice numbers or prices of client sales in the Audit log. Sale / refund / online and
+  marketplace order rows show only who, when, which business, number of items and payment method. This is enforced on
+  the SERVER for every row (old and new) and the admin search also runs on the hidden-text-free rows, so an invoice number
+  or an amount cannot be searched for either. Business owners still see everything in their own business.
+- Existing clients: their past sales, expenses and workers still appear in the admin log (derived from their data, with
+  prices hidden). Entries that older app versions had stored on a device are moved into the business the first time that
+  owner opens the updated app (the owner's only business, or the business that has the invoice number they mention;
+  entries that cannot be attributed safely stay on the device).
+- Service worker cache `bh-offline-v15`: installed apps download the update the next time they open while online.
+- tests/api-smoke.js: 13 new checks (79 total).
+Not changed on purpose: expense amounts still show in the admin Audit log; the admin "full platform backup" file still
+contains complete business data (it exists for disaster recovery).
+
 # Fixes in the latest verification pass
 - Customers can now order from their OWN phone: the shop list / shop page / checkout use the server's public API
   (/api/public/shops...). Before, the store only listed shops saved in the same browser, so anyone else saw "No shops".

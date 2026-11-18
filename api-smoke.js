@@ -75,6 +75,25 @@ r=await f('GET','/api/me',null,T);ok('sessions revoked after reset',r.s===401);
 r=await f('POST','/api/login',{email:'own1@test.com',password:'newpassword1'});ok('login new pw',r.s===200);const T1b=r.j.token;
 r=await f('POST','/api/admin/users/reset-password',{userId:U,password:'adminset123'},A);ok('admin reset pw',r.s===200);
 r=await f('POST','/api/logout',null,T1b);ok('logout',r.s===200);r=await f('GET','/api/me',null,T1b);ok('logout kills session',r.s===401);
+// audit log: synced with the business (offline entries), admin cannot see invoice numbers / prices
+{
+  r=await f('POST','/api/register',{email:'audit1@test.com',password:'password1'});const TA=r.j.token,UA=r.j.user.id;
+  r=await f('POST','/api/businesses',{name:'Audit Shop'},TA);const AB=r.j.business.id;
+  await f('PUT','/api/businesses/'+AB,{orders:[{id:'ao1',number:'INV-0001',date:'2026-11-10',items:[{name:'x',qty:1,price:7777}],total:7777,status:'PAID',payMethod:'Cash',source:'pos'}]},TA);
+  const t0=Date.now();
+  const devA=[{id:'aud-a-0001',at:new Date(t0-3000).toISOString(),action:'refund',detail:'INV-0001',ref:'INV-0001',user:'audit1@test.com',role:'owner',offline:true}];
+  const devB=[{id:'aud-b-0001',at:new Date(t0-2000).toISOString(),action:'shift_open',detail:'Jane',user:'Jane',role:'worker',offline:true}];
+  r=await f('PUT','/api/businesses/'+AB,{auditLogs:devA},TA);ok('audit: device A offline entries upload',r.j.business.auditLogs.length===1&&r.j.business.auditLogs[0].syncedAt,r.j);
+  r=await f('PUT','/api/businesses/'+AB,{auditLogs:devB},TA);ok('audit: device B merges, does not overwrite',r.j.business.auditLogs.length===2,r.j.business.auditLogs);
+  r=await f('PUT','/api/businesses/'+AB,{auditLogs:[]},TA);ok('audit: stale/old client cannot wipe entries',r.j.business.auditLogs.length===2);
+  r=await f('PUT','/api/businesses/'+AB,{name:'Audit Shop 2'},TA);ok('audit: old client (no auditLogs field) keeps them',r.j.business.auditLogs.length===2);
+  r=await f('GET','/api/admin/audit?businessId='+AB,null,A);const at=JSON.stringify(r.j.logs);
+  ok('audit: admin sees the actions',r.j.logs.some(l=>l.action==='refund')&&r.j.logs.some(l=>l.action==='shift_open'),r.j.logs.map(l=>l.action));
+  ok('audit: admin sees NO invoice numbers or prices',!/INV-0001|7777/.test(at)&&!r.j.logs.some(l=>'ref' in l||'pub' in l),at.slice(0,300));
+  r=await f('GET','/api/admin/audit?q=7777',null,A);ok('audit: admin cannot search for a price',r.j.logs.length===0);
+  r=await f('GET','/api/admin/audit',null,TA);ok('audit: owner cannot call admin audit',r.s===403);
+  await f('DELETE','/api/admin/users',{userId:UA},A); // leave no trace for the totals checks below
+}
 // misc
 r=await f('GET','/api/nope');ok('unknown api 404',r.s===404);
 let x=await fetch(B+'/nope.js');ok('unknown asset 404',x.status===404);x=await fetch(B+'/some/route');ok('SPA fallback',x.status===200);
