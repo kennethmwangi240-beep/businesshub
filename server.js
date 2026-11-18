@@ -3,6 +3,9 @@
  * Storage: PostgreSQL (any host) via DATABASE_URL.  Node 18+, one dependency: pg.
  */
 'use strict';
+/* Every business is on Kenya time (EAT, UTC+3, no daylight saving). Set before any Date is used so today(), trial dates,
+   order dates and backup file names follow Kenya's calendar even on a UTC host. Stored timestamps stay UTC instants. */
+process.env.TZ = 'Africa/Nairobi';
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -226,7 +229,7 @@ function deriveAuditFromBusinesses(businesses) {
       const nItems = (o.items || []).length;
       logs.push({
         id: 'ord-' + (o.id || o.number),
-        at: o.createdAt || o.at || (o.date ? o.date + 'T12:00:00.000Z' : null) || new Date().toISOString(),
+        at: o.createdAt || o.at || (o.date ? new Date(o.date + 'T12:00:00+03:00').toISOString() : null) || new Date().toISOString(),
         action: o.source === 'marketplace' ? 'marketplace_order' : (o.source === 'online' ? 'online_order' : 'sale'),
         detail: `${bName}: ${o.number || o.id || 'order'} · ${o.total != null ? o.total : ''} · ${o.payment || o.paymentStatus || ''} · ${o.orderStatus || o.status || ''}`,
         pub: `${nItems} item${nItems === 1 ? '' : 's'}${o.payMethod || o.payment ? ' · ' + String(o.payMethod || o.payment).toLowerCase() : ''}`,
@@ -602,7 +605,8 @@ async function newSession(userId) {
   await pool.query("INSERT INTO sessions VALUES($1,$2,now()+($3::int * interval '1 day'))", [sha(token), userId, SESSION_DAYS]);
   return token;
 }
-const bizOut = (r) => ({ ...r.data, id: r.id, ownerId: r.owner_id });
+const KE_TZ = 'Africa/Nairobi';
+const bizOut = (r) => ({ ...r.data, id: r.id, ownerId: r.owner_id, timezone: KE_TZ });
 
 function emptyBiz(ownerId, extra) {
   const clean = { ...(extra || {}) };
@@ -613,6 +617,7 @@ function emptyBiz(ownerId, extra) {
     customers: [], quotations: [], expenses: [], purchases: [], orderN: 0, qtN: 0, purN: 0, onlineN: 0,
     payments: { provider: 'mpesa' },
     ...clean,
+    timezone: 'Africa/Nairobi',
     plan: 'FREE', suspended: false, createdAt: today(), trialEndsAt: addDays(today(), 3)
   };
 }
@@ -846,6 +851,7 @@ async function handleApi(req, res, pathname) {
           nb = { ...b, ...body };
           delete nb._restore;
           OWNER_LOCKED.forEach((k) => { nb[k] = b[k]; }); // server keeps control of these
+          nb.timezone = KE_TZ;
           nb.auditLogs = mergeAuditLogs(b.auditLogs, body.auditLogs); // offline + multi-device entries are unioned, never overwritten
           { // deleted products stay deleted, even if a stale device pushes them again
             const m = {};
@@ -1235,7 +1241,7 @@ async function handleApi(req, res, pathname) {
     const clients = (await pool.query("SELECT * FROM users WHERE role<>'admin'")).rows;
     const bizs = (await pool.query('SELECT * FROM businesses')).rows.map(bizOut);
     const plans = mergePlans(await getCfg('plans', DEFAULT_PLANS));
-    const today = new Date().toISOString().slice(0, 10);
+    const today = fmt(new Date());
     const month = today.slice(0, 7);
     let mrr = 0;
     bizs.forEach((b) => {
@@ -1533,7 +1539,7 @@ async function handleApi(req, res, pathname) {
       const order = {
         id: uid(),
         number: 'MKT-' + Date.now().toString(36).toUpperCase() + crypto.randomBytes(1).toString('hex').toUpperCase(),
-        date: new Date().toISOString().slice(0, 10),
+        date: today(),
         createdAt: new Date().toISOString(),
         source: 'marketplace',
         orderStatus: 'NEW',

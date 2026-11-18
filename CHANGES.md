@@ -1,3 +1,13 @@
+# Kenya time (EAT, UTC+3) for every business
+- Audit log (and stock movements, plan-payment alerts, tickets, last backup, worker shift times, report timestamps) were shown
+  in raw UTC, 3 hours behind Kenya. They are now always displayed in Nairobi time, whatever the device's own time zone is.
+- Server runs on Kenya time (`TZ=Africa/Nairobi`), so "today", trial dates, online/marketplace order dates and backup file
+  names follow Kenya's calendar even on a UTC host (before, orders placed 00:00-03:00 got the previous day's date).
+- POS "today" on the device is the Kenya date. Every business (new and existing) now carries `timezone: Africa/Nairobi`;
+  the Timezone box in business setup is fixed and cannot be changed. Stored timestamps remain UTC instants, so no existing
+  data was altered.
+- Service worker cache `bh-offline-v16`.
+
 # Audit log: actions visible, offline entries sync, no sales details for the platform admin
 Applies to ALL existing clients automatically: no data is deleted or converted by hand, and old app versions keep working.
 
