@@ -2601,9 +2601,14 @@ function flushOfflineSales(){
   if(n){saveBiz(b);setOfflineQueue([]);pushAudit('offline_sales_synced', String(n));toast(n+' offline sale(s) synced')}
   return n;
 }
-function currentShift(b){
+function currentShift(b,workerId){
   if(!b||!b.shifts)return null;
-  return (b.shifts||[]).find(s=>s.status==='open')||null;
+  const open=(b.shifts||[]).filter(s=>s.status==='open');
+  if(workerId){
+    const w=(b.workers||[]).find(x=>x.id===workerId);const nm=w?((w.firstName||w.name||'')+' '+(w.lastName||'')).trim():'';
+    return open.find(s=>s.workerId===workerId||(!s.workerId&&nm&&s.openedBy===nm))||null;
+  }
+  return open[0]||null;
 }
 
 
@@ -3278,7 +3283,7 @@ function currentWorker(){
     const b=(d.businesses||[]).find(x=>x.id===ws.businessId);
     if(!b)return null;
     const w=(b.workers||[]).find(x=>x.id===ws.workerId);
-    if(!w)return null;
+    if(!w||w.suspended)return null;
     return {session:ws,business:b,worker:w};
   }catch(e){return null}
 }
@@ -4097,6 +4102,8 @@ const SB_ICONS={
   book:'<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
   gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
+  lock:'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  cal:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
   chev:'<polyline points="6 9 12 15 18 9"/>',
   menu:'<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>'
 };
@@ -4112,9 +4119,10 @@ function ownerSidebar(b,accent,user,bizSwitch){
     {id:'sales',label:'Sales',items:[['shop','Shop (POS)','cart',cartN,'soft'],['invoices','Invoices','file'],['quotations','Quotations','clip'],['marketplace','Marketplace','globe'],['onlineorders','Online orders','globe',newOnline,'']]},
     {id:'catalog',label:'Catalog',items:[['products','Products','tag'],['stock','Stock','box',lowN,'warn'],['purchases','Purchases','download']]},
     {id:'people',label:'Customers',items:[['customers','Customers','users'],['loyalty','Loyalty','heart']]},
-    {id:'finance',label:'Finance',items:[['expenses','Finance','dollar'],['reports','Reports','chart'],['shifts','Shifts','clock']]},
+    {id:'finance',label:'Finance',items:[['expenses','Finance','dollar'],['reports','Reports','chart']]},
     {id:'delivery',label:'Delivery',items:[['delivery','Delivery','truck'],['branches','Branches','pin']]},
-    {id:'manage',label:'Manage',items:[['team','Workers','userplus'],['ai','AI assistant','bolt'],['help','User guide','book'],['settings','Settings','gear']]}
+    {id:'staff',label:'Worker management',items:[['team','Workers','userplus'],['shifts','Shifts','clock'],['wperms','Permissions','lock'],['wperf','Performance','chart'],['wsched','Schedule','cal']]},
+    {id:'manage',label:'Manage',items:[['ai','AI assistant','bolt'],['help','User guide','book'],['settings','Settings','gear']]}
   ];
   let collapsed=[];try{collapsed=JSON.parse(localStorage.getItem('bh_sb_collapsed')||'[]')||[]}catch(e){}
   const groupsHtml=groups.map(g=>{
@@ -4189,12 +4197,15 @@ function viewApp(){
     else if(S.appView==='team')main=secTeam(b,accent);
     else if(S.appView==='loyalty')main=secLoyalty(b,accent);
     else if(S.appView==='shifts')main=secShifts(b,accent);
+    else if(S.appView==='wperms')main=secPerms(b,accent);
+    else if(S.appView==='wperf')main=secPerf(b,accent);
+    else if(S.appView==='wsched')main=secSched(b,accent);
     else if(S.appView==='ai')main=secAI(b,accent);
     else if(S.appView==='help')main=secHelp(b,accent);
     else if(S.appView==='settings')main=secSettings(b,accent);
     else main=secDash(b,accent);
   }catch(e){main=`<div class="p-4 text-red-600">${esc(String(e))}</div>`;console.error(e)}
-  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (POS)',stock:'Stock',products:'Products',purchases:'Purchases',customers:'Customers',quotations:'Quotations',invoices:'Invoices',expenses:'Finance',reports:'Reports',marketplace:'Marketplace',onlineorders:'Online store',orders:'Online orders',delivery:'Delivery',branches:'Branches',team:'Workers',loyalty:'Loyalty',shifts:'Cashier shifts',ai:'AI assistant',help:'User guide',settings:'Settings'};
+  const titles={dashboard:'Dashboard',wallet:'Wallet & trends',shop:'Shop (POS)',stock:'Stock',products:'Products',purchases:'Purchases',customers:'Customers',quotations:'Quotations',invoices:'Invoices',expenses:'Finance',reports:'Reports',marketplace:'Marketplace',onlineorders:'Online store',orders:'Online orders',delivery:'Delivery',branches:'Branches',team:'Workers',wperms:'Worker permissions',wperf:'Worker performance',wsched:'Worker schedule',loyalty:'Loyalty',shifts:'Worker shifts',ai:'AI assistant',help:'User guide',settings:'Settings'};
   return `<div class="layout">
   ${ownerSidebar(b,accent,user,bizSwitch)}
   <div class="main-wrap">
@@ -4858,7 +4869,7 @@ function secProducts(b,a){
     <td class="px-2 py-2 ${ind?'pl-5':''}">${productThumb(p,40)}</td>
     <td class="px-2 py-2"><input data-pname="${p.id}" value="${esc(p.name)}" class="w-full min-w-[120px] border rounded-lg px-2 py-1 text-sm"/></td>
     <td class="px-2 py-2"><input data-psku="${p.id}" value="${esc(p.sku||'')}" class="w-24 border rounded-lg px-2 py-1 text-xs" placeholder="SKU"/></td>
-    <td class="px-2 py-2"><input data-pbarcode="${p.id}" value="${esc(p.barcode||'')}" class="w-28 border rounded-lg px-2 py-1 text-xs" placeholder="Barcode"/>${p.barcode?`<div class="mt-1 overflow-x-auto">${barcodeSvg(p.barcode,{height:28})}</div>`:''}</td>
+    <td class="px-2 py-2"><input data-pbarcode="${p.id}" data-scan-target="row" value="${esc(p.barcode||'')}" class="w-28 border rounded-lg px-2 py-1 text-xs" placeholder="Barcode"/>${p.barcode?`<div class="mt-1 overflow-x-auto">${barcodeSvg(p.barcode,{height:28})}</div>`:''}</td>
     <td class="px-2 py-2"><input data-psub="${p.id}" value="${esc(p.sub||'')}" class="w-20 border rounded-lg px-2 py-1 text-sm" placeholder="Sub"/></td>
     <td class="px-2 py-2"><select data-punit="${p.id}" class="border rounded-lg px-1 py-1 text-xs max-w-[100px]">
       ${UNIT_OPTIONS.map(u=>`<option value="${u.id}" ${productPriceUnit(p)===u.id?'selected':''}>${esc(u.suffix)}</option>`).join('')}
@@ -4882,6 +4893,15 @@ function secProducts(b,a){
   return `<div class="space-y-4">
   <div class="bg-white rounded-2xl border p-4">
     <h3 class="font-semibold mb-2">Register product</h3>
+    <div class="mb-3 p-3 rounded-xl border-2 border-teal-600 bg-teal-50 text-sm">
+      <div class="flex flex-wrap items-center gap-3">
+        <b>Scan to build catalogue</b>
+        <label class="flex items-center gap-1"><input type="radio" name="scanRegMode" value="register" ${S.scanRegMode==='count'?'':'checked'}/> New items (asks name, price, stock)</label>
+        <label class="flex items-center gap-1"><input type="radio" name="scanRegMode" value="count" ${S.scanRegMode==='count'?'checked':''}/> Count stock (+1 per scan)</label>
+      </div>
+      <p class="text-xs text-slate-600 mt-1">Just scan with your USB / wireless scanner - no need to click a field. ${S.scanLast?'<b>Last: '+esc(S.scanLast)+'</b>':''}</p>
+      <p class="text-xs text-slate-600">To link barcodes to items you already have: click an item's <b>Barcode</b> box in the table below and scan - it fills the box and jumps to the next item's barcode box. Then press Save.</p>
+    </div>
     <div class="flex flex-wrap gap-2 mb-3 p-3 rounded-xl border bg-slate-50">
       <input id="prodBarcodeScan" class="flex-1 min-w-[160px] border rounded-xl px-3 py-2 text-sm" placeholder="Scan existing barcode to load / edit"/>
       <button type="button" id="prodCameraScan" class="px-3 py-2 rounded-xl border-2 border-teal-600 bg-teal-50 text-sm font-semibold">📷 Scan</button>
@@ -4892,7 +4912,7 @@ function secProducts(b,a){
       <datalist id="catList">${cats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
       <input name="sub" placeholder="Subcategory / variant" class="border rounded-xl px-3 py-2"/>
       <input name="sku" placeholder="SKU (auto if empty)" class="border rounded-xl px-3 py-2"/>
-      <input name="barcode" placeholder="Barcode (auto if empty)" class="border rounded-xl px-3 py-2"/>
+      <input name="barcode" data-scan-target="field" placeholder="Barcode - click here and scan (auto if empty)" class="border rounded-xl px-3 py-2"/>
       <select name="unit" class="border rounded-xl px-3 py-2">
         ${UNIT_OPTIONS.map(u=>`<option value="${u.id}">${esc(u.label)}</option>`).join('')}
       </select>
@@ -5406,44 +5426,253 @@ function secOnlineOrders(b,a){
 }
 
 
+
+/* ----- Shifts ----- */
 function secShifts(b,a){
   if(!b.shifts)b.shifts=[];
-  const open=currentShift(b);
-  const workers=b.workers||[];
-  const recent=(b.shifts||[]).slice().reverse().slice(0,20);
-  const workerOpts=workers.map(w=>{
-    const nm=((w.firstName||w.name||'')+' '+(w.lastName||'')).trim()||w.username||'Worker';
-    return `<option value="${esc(nm)}" data-wid="${w.id}">${esc(nm)} (@${esc(w.username||'')})</option>`;
+  const cw=(typeof isWorkerMode==='function'&&isWorkerMode())?currentWorker():null;
+  const me=cw&&cw.worker;
+  const staff=me?[me]:wStaff(b,true).filter(function(w){return !w.suspended});
+  const now=Date.now();
+  const cards=staff.map(function(w){
+    const s=wOpenShift(b,w);const st=s?wShiftStats(b,s):null;
+    const sch=wScheduleLabel(b,w.id,today());
+    return `<div class="border rounded-2xl p-3 bg-white">
+      <div class="flex justify-between gap-2"><div><b>${esc(wFull(w))}</b><div class="text-xs text-slate-500">${esc(w.role||'')}${sch?' · planned today '+esc(sch):''}</div></div>
+      <span class="text-[11px] h-fit px-2 py-0.5 rounded-full ${s?'bg-emerald-100 text-emerald-800':'bg-slate-100 text-slate-600'}">${s?'ON SHIFT':'Off'}</span></div>
+      ${s?`<p class="text-xs mt-2">Since <b>${esc(wHM(s.startedAt))}</b> · ${esc(wFmtDur(now-new Date(s.startedAt).getTime()))} · ${st.count} sale${st.count===1?'':'s'} · ${kes(st.total)}</p>
+        <div class="flex gap-2 mt-2"><input type="number" min="0" step="0.01" data-shift-closecash="${s.id}" placeholder="Closing cash" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-sm"/><button type="button" data-shift-stop="${s.id}" class="px-3 py-1.5 rounded-lg border text-sm font-medium">Stop shift</button></div>`
+      :`<div class="flex gap-2 mt-3"><input type="number" min="0" step="0.01" data-shift-float="${esc(w.id)}" placeholder="Opening cash" class="flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-sm"/><button type="button" data-shift-start="${esc(w.id)}" class="px-3 py-1.5 rounded-lg text-white text-sm font-medium" style="background:${a}">Start shift</button></div>`}
+    </div>`;
   }).join('');
+  const filt=S.shiftWorker||'all';
+  const range=Number(S.shiftDays||30);
+  const since=new Date(now-range*86400000).toISOString();
+  let hist=(b.shifts||[]).filter(function(s){return s.status!=='open'&&String(s.startedAt||'')>=since});
+  if(me)hist=hist.filter(function(s){return s.workerId===me.id||(!s.workerId&&s.openedBy===wFull(me))});
+  else if(filt!=='all')hist=hist.filter(function(s){return s.workerId===filt||(!s.workerId&&s.openedBy===filt)});
+  hist=hist.slice().sort(function(x,y){return String(y.startedAt).localeCompare(String(x.startedAt))}).slice(0,80);
   return `<div class="space-y-4">
+    ${me?'':wTabs('shifts',a)}
     <div class="bg-white rounded-2xl border p-4">
-      <h3 class="font-semibold mb-1">Cashier shifts</h3>
-      <p class="text-xs text-slate-500 mb-3">The <b>worker name</b> is stored on each shift when you start it.</p>
-      ${open?`<div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-sm mb-3">
-        <b>Shift open</b> · Worker: <span class="font-bold text-emerald-900">${esc(open.openedBy||'—')}</span>
-        · ${esc((open.startedAt||'').slice(0,16).replace('T',' '))}
-        <button type="button" id="closeShiftBtn" class="ml-2 text-xs border px-2 py-1 rounded-lg">Close shift</button>
-      </div>`:`
-      <div class="flex flex-wrap gap-2 items-end mb-3">
-        <div class="flex-1 min-w-[200px]"><label class="text-xs text-slate-500">Worker on this shift</label>
-          <select id="shiftWorkerName" class="w-full border rounded-xl px-3 py-2 text-sm">
-            <option value="">— select worker —</option>
-            ${workerOpts}
-            <option value="Owner">Owner</option>
-          </select>
+      <h3 class="font-semibold mb-1">Shifts</h3>
+      <p class="text-xs text-slate-500 mb-3">${me?'Start your shift when you begin work and stop it when you finish.':'Start and stop shifts for each worker here. Several workers can be on shift at the same time. Sales made during a shift are counted against it.'}</p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">${cards||'<p class="text-slate-400 text-sm">No workers yet - add some under Workers.</p>'}</div>
+    </div>
+    <div class="bg-white rounded-2xl border p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h3 class="font-semibold">Shift history</h3>
+        <div class="flex gap-2 text-sm">
+          ${me?'':`<select id="shiftWorkerFilter" class="border rounded-lg px-2 py-1"><option value="all">All workers</option>${wStaff(b,true).map(function(w){return `<option value="${esc(w.id)}" ${filt===w.id?'selected':''}>${esc(wFull(w))}</option>`}).join('')}</select>`}
+          <select id="shiftDaysFilter" class="border rounded-lg px-2 py-1">${[[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[365,'Last year']].map(function(o){return `<option value="${o[0]}" ${range===o[0]?'selected':''}>${o[1]}</option>`}).join('')}</select>
         </div>
-        <button type="button" id="openShiftBtn" class="px-4 py-2.5 rounded-xl text-white font-semibold" style="background:${a}">Start shift</button>
-      </div>`}
-      <h4 class="text-sm font-medium mt-4 mb-2">Recent shifts (by worker name)</h4>
-      <div class="text-sm space-y-1">${recent.map(s=>`<div class="border-b py-2 flex justify-between gap-2">
-        <span>Worker: <b>${esc(s.openedBy||'Unknown')}</b> · ${esc(s.status)}</span>
-        <span class="text-xs text-slate-400">${esc((s.startedAt||'').slice(0,16).replace('T',' '))}</span>
-      </div>`).join('')||'<p class="text-slate-400">No shifts yet</p>'}</div>
+      </div>
+      <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500"><th class="py-2 pr-3">Worker</th><th class="pr-3">Started</th><th class="pr-3">Stopped</th><th class="pr-3">Duration</th><th class="pr-3 text-right">Sales</th><th class="pr-3 text-right">Total</th><th class="pr-3 text-right">Opening</th><th class="text-right">Closing</th></tr></thead><tbody>
+      ${hist.map(function(s){const st=wShiftStats(b,s);const sum=s.summary||st;return `<tr class="border-t"><td class="py-2 pr-3 font-medium">${esc(s.openedBy||'-')}</td><td class="pr-3">${esc(wDT(s.startedAt))}</td><td class="pr-3">${esc(wDT(s.endedAt))}</td><td class="pr-3">${esc(wFmtDur(new Date(s.endedAt||s.startedAt)-new Date(s.startedAt)))}</td><td class="pr-3 text-right">${sum.count||0}</td><td class="pr-3 text-right">${kes(sum.total||0)}</td><td class="pr-3 text-right">${s.openingFloat?kes(s.openingFloat):'-'}</td><td class="text-right">${s.closingCash!=null&&s.closingCash!==''?kes(s.closingCash):'-'}</td></tr>`}).join('')||'<tr><td colspan="8" class="py-6 text-center text-slate-400">No finished shifts in this period</td></tr>'}
+      </tbody></table></div>
     </div>
   </div>`;
 }
-
-
+/* ----- Permissions ----- */
+function secPerms(b,a){
+  const workers=b.workers||[];
+  return `<div class="space-y-4">
+    ${wTabs('wperms',a)}
+    <div class="bg-white rounded-2xl border p-4">
+      <h3 class="font-semibold mb-1">Permissions</h3>
+      <p class="text-xs text-slate-500 mb-3">Tick a menu to give a worker access, untick to remove it. Changes save instantly and apply the next time the worker opens a screen. Workers never see Settings, Workers, Wallet or the owner's finance.</p>
+      ${workers.length?`<div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-xs text-slate-500 text-left"><th class="py-2 pr-3">Worker</th>${WORKER_MENUS.map(function(m){return `<th class="px-2 text-center font-medium">${esc(m[1])}</th>`}).join('')}<th class="px-2">Quick set</th></tr></thead><tbody>
+      ${workers.map(function(w){const p=w.permissions||{};return `<tr class="border-t ${w.suspended?'opacity-50':''}"><td class="py-2 pr-3"><b>${esc(wFull(w))}</b><div class="text-xs text-slate-500">${esc(w.role||'cashier')}</div></td>
+        ${WORKER_MENUS.map(function(m){return `<td class="px-2 text-center"><input type="checkbox" data-wperm="${esc(w.id)}|${m[0]}" ${p[m[0]]?'checked':''} class="w-4 h-4"/></td>`}).join('')}
+        <td class="px-2 whitespace-nowrap"><select data-wpreset="${esc(w.id)}" class="border rounded-lg px-1 py-1 text-xs"><option value="">Apply role...</option><option value="cashier">Cashier</option><option value="manager">Manager (all)</option><option value="storekeeper">Storekeeper</option><option value="delivery">Delivery</option><option value="none">Remove all</option></select></td></tr>`}).join('')}
+      </tbody></table></div>`:'<p class="text-slate-400 text-sm">No workers yet - add some under Workers.</p>'}
+    </div>
+  </div>`;
+}
+/* ----- Performance ----- */
+function wPerfRange(){
+  const r=S.perfRange||'30';const t=today();
+  const ago=function(n){const d=new Date();d.setDate(d.getDate()-n);return localYMD(d)};
+  if(r==='today')return {from:t,to:t,label:'Today'};
+  if(r==='7')return {from:ago(6),to:t,label:'Last 7 days'};
+  if(r==='month')return {from:t.slice(0,8)+'01',to:t,label:'This month'};
+  if(r==='custom')return {from:S.perfFrom||ago(29),to:S.perfTo||t,label:(S.perfFrom||'')+' to '+(S.perfTo||'')};
+  return {from:ago(29),to:t,label:'Last 30 days'};
+}
+function wPerfRows(b){
+  const R=wPerfRange();const now=Date.now();
+  return wStaff(b,true).map(function(w){
+    const os=wOrdersOf(b,w).filter(function(o){return o.date>=R.from&&o.date<=R.to});
+    let rev=0,items=0,disc=0;os.forEach(function(o){rev+=Number(o.total||0);disc+=Number(o.discountAmt||0);(o.items||[]).forEach(function(it){items+=Number(it.qty||0)})});
+    const sh=(b.shifts||[]).filter(function(s){const mine=s.workerId===w.id||(!s.workerId&&s.openedBy===wFull(w));const d=String(s.startedAt||'').slice(0,10);return mine&&d>=R.from&&d<=R.to});
+    let ms=0;sh.forEach(function(s){ms+=(s.endedAt?new Date(s.endedAt).getTime():now)-new Date(s.startedAt).getTime()});
+    const hrs=ms/3600000;
+    return {w:w,name:wFull(w),count:os.length,rev:rev,items:items,disc:disc,avg:os.length?rev/os.length:0,shifts:sh.length,hrs:hrs,perHr:hrs>0?rev/hrs:0,comm:rev*(Number(w.commissionPct)||0)/100};
+  });
+}
+function secPerf(b,a){
+  const R=wPerfRange();const rows=wPerfRows(b).filter(function(r){return r.w.id!=='owner'||r.count>0});
+  const total=rows.reduce(function(s,r){return s+r.rev},0);
+  const top=rows.slice().sort(function(x,y){return y.rev-x.rev})[0];
+  return `<div class="space-y-4">
+    ${wTabs('wperf',a)}
+    <div class="bg-white rounded-2xl border p-4">
+      <div class="flex flex-wrap items-end justify-between gap-2 mb-3">
+        <div><h3 class="font-semibold">Worker performance</h3><p class="text-xs text-slate-500">${esc(R.label)} · based on sales each worker rang up and the shifts they worked</p></div>
+        <div class="flex flex-wrap gap-2 text-sm items-center no-print">
+          <select id="perfRange" class="border rounded-lg px-2 py-1">${[['today','Today'],['7','Last 7 days'],['30','Last 30 days'],['month','This month'],['custom','Custom']].map(function(o){return `<option value="${o[0]}" ${(S.perfRange||'30')===o[0]?'selected':''}>${o[1]}</option>`}).join('')}</select>
+          ${(S.perfRange==='custom')?`<input type="date" id="perfFrom" value="${esc(R.from)}" class="border rounded-lg px-2 py-1"/><input type="date" id="perfTo" value="${esc(R.to)}" class="border rounded-lg px-2 py-1"/>`:''}
+          <button type="button" id="perfCsv" class="border rounded-lg px-3 py-1">Export CSV</button>
+        </div>
+      </div>
+      ${top&&top.rev>0?`<div class="rounded-xl p-3 mb-3 text-sm bg-emerald-50 border border-emerald-100">🏆 Top performer: <b>${esc(top.name)}</b> - ${kes(top.rev)} from ${top.count} sale${top.count===1?'':'s'}</div>`:''}
+      <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-xs text-slate-500 text-left"><th class="py-2 pr-3">Worker</th><th class="pr-3 text-right">Sales</th><th class="pr-3 text-right">Revenue</th><th class="pr-3 text-right">Items</th><th class="pr-3 text-right">Avg sale</th><th class="pr-3 text-right">Discounts</th><th class="pr-3 text-right">Shifts</th><th class="pr-3 text-right">Hours</th><th class="pr-3 text-right">KES / hour</th><th class="pr-3 text-right">Commission</th><th class="min-w-[120px]">Share</th></tr></thead><tbody>
+      ${rows.map(function(r){const pct=total>0?Math.round(r.rev/total*100):0;return `<tr class="border-t"><td class="py-2 pr-3 font-medium">${esc(r.name)}</td><td class="pr-3 text-right">${r.count}</td><td class="pr-3 text-right font-semibold">${kes(money(r.rev))}</td><td class="pr-3 text-right">${Math.round(r.items*100)/100}</td><td class="pr-3 text-right">${kes(money(r.avg))}</td><td class="pr-3 text-right">${r.disc?kes(money(r.disc)):'-'}</td><td class="pr-3 text-right">${r.shifts}</td><td class="pr-3 text-right">${r.hrs.toFixed(1)}</td><td class="pr-3 text-right">${r.perHr?kes(money(r.perHr)):'-'}</td><td class="pr-3 text-right">${r.comm?kes(money(r.comm)):'-'}</td><td><div class="flex items-center gap-2"><div class="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-2 rounded-full" style="width:${pct}%;background:${a}"></div></div><span class="text-xs w-8 text-right">${pct}%</span></div></td></tr>`}).join('')||'<tr><td colspan="11" class="py-6 text-center text-slate-400">No workers yet</td></tr>'}
+      </tbody>${rows.length?`<tfoot><tr class="border-t-2 font-semibold"><td class="py-2 pr-3">Total</td><td class="pr-3 text-right">${rows.reduce(function(s,r){return s+r.count},0)}</td><td class="pr-3 text-right">${kes(money(total))}</td><td colspan="8"></td></tr></tfoot>`:''}</table></div>
+    </div>
+  </div>`;
+}
+/* ----- Schedule (weekly roster) ----- */
+function wMonday(offset){const d=new Date();d.setHours(12,0,0,0);const dow=(d.getDay()+6)%7;d.setDate(d.getDate()-dow+7*(offset||0));return d}
+function wDayYMD(mon,i){const d=new Date(mon.getTime());d.setDate(d.getDate()+i);return localYMD(d)}
+function wDowOf(ymd){return new Date(ymd+'T12:00:00').getDay()}
+function wEntries(b,wid,ymd){
+  return (b.schedule||[]).filter(function(e){return e.workerId===wid&&((e.weekly&&e.dow===wDowOf(ymd)&&ymd>=(e.from||'0000'))||(!e.weekly&&e.date===ymd))}).sort(function(x,y){return String(x.start).localeCompare(String(y.start))});
+}
+function wScheduleLabel(b,wid,ymd){return wEntries(b,wid,ymd).map(function(e){return e.start+'-'+e.end}).join(', ')}
+function wHours(e){const p=function(x){const m=String(x||'0:0').split(':');return Number(m[0])*60+Number(m[1]||0)};let d=p(e.end)-p(e.start);if(d<0)d+=1440;return d/60}
+function secSched(b,a){
+  const off=Number(S.schedWeek||0);const mon=wMonday(off);
+  const days=[0,1,2,3,4,5,6].map(function(i){return wDayYMD(mon,i)});
+  const names=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const workers=(b.workers||[]).filter(function(w){return !w.suspended});
+  const t=today();
+  const nowHM=(function(){const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')})();
+  const todayRows=workers.map(function(w){
+    const es=wEntries(b,w.id,t);if(!es.length)return '';
+    const on=wOpenShift(b,w);
+    const late=!on&&es.some(function(e){return nowHM>e.start&&nowHM<e.end});
+    return `<div class="flex justify-between gap-2 py-1.5 border-t first:border-t-0 text-sm"><span><b>${esc(wFull(w))}</b> <span class="text-slate-500">${esc(es.map(function(e){return e.start+'-'+e.end}).join(', '))}</span></span><span class="text-xs ${on?'text-emerald-700':(late?'text-red-600':'text-slate-500')}">${on?'On shift since '+esc(wHM(on.startedAt)):(late?'Should be on shift - not started':'Not started')}</span></div>`;
+  }).join('');
+  return `<div class="space-y-4">
+    ${wTabs('wsched',a)}
+    <div class="bg-white rounded-2xl border p-4">
+      <h3 class="font-semibold mb-2">Today's roster</h3>
+      ${todayRows||'<p class="text-sm text-slate-400">Nobody is scheduled for today.</p>'}
+    </div>
+    <div class="bg-white rounded-2xl border p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div><h3 class="font-semibold">Weekly schedule</h3><p class="text-xs text-slate-500">${esc(days[0])} to ${esc(days[6])} · tap + to plan a shift, tap a shift to change or delete it</p></div>
+        <div class="flex gap-2 text-sm no-print"><button type="button" data-sched-week="-1" class="border rounded-lg px-3 py-1">‹ Prev</button><button type="button" data-sched-week="0" class="border rounded-lg px-3 py-1">This week</button><button type="button" data-sched-week="1" class="border rounded-lg px-3 py-1">Next ›</button></div>
+      </div>
+      ${workers.length?`<div class="overflow-x-auto"><table class="w-full text-sm" style="min-width:760px"><thead><tr class="text-xs text-slate-500"><th class="text-left py-2 pr-3">Worker</th>${days.map(function(d,i){return `<th class="px-1 text-center ${d===t?'font-bold':''}" ${d===t?`style="color:${a}"`:''}>${names[i]}<div class="font-normal">${esc(d.slice(5))}</div></th>`}).join('')}<th class="px-2 text-right">Hours</th></tr></thead><tbody>
+      ${workers.map(function(w){let hrs=0;const cells=days.map(function(d){const es=wEntries(b,w.id,d);es.forEach(function(e){hrs+=wHours(e)});return `<td class="px-1 py-2 align-top text-center ${d===t?'bg-slate-50':''}">${es.map(function(e){return `<button type="button" data-sched-edit="${esc(e.id)}|${d}" class="block w-full mb-1 text-[11px] rounded-lg px-1 py-1 text-white" style="background:${a}" title="${esc(e.note||'')}">${esc(e.start)}-${esc(e.end)}${e.weekly?' ↻':''}</button>`}).join('')}<button type="button" data-sched-add="${esc(w.id)}|${d}" class="text-xs border border-dashed rounded-lg px-2 py-0.5 text-slate-500">+</button></td>`}).join('');return `<tr class="border-t"><td class="py-2 pr-3 font-medium whitespace-nowrap">${esc(wFull(w))}</td>${cells}<td class="px-2 text-right font-semibold">${Math.round(hrs*10)/10}h</td></tr>`}).join('')}
+      </tbody></table></div><p class="text-[11px] text-slate-400 mt-2">↻ = repeats every week on that day.</p>`:'<p class="text-slate-400 text-sm">Add workers first (Workers menu), then plan their shifts here.</p>'}
+    </div>
+  </div>`;
+}
+function wSchedModal(b,wid,ymd,eid){
+  const w=(b.workers||[]).find(function(x){return x.id===wid});if(!w)return;
+  const e=eid?(b.schedule||[]).find(function(x){return x.id===eid}):null;
+  openModal(`<h3 class="text-lg font-bold mb-1">${e?'Edit':'Plan'} shift</h3>
+    <p class="text-xs text-slate-500 mb-3">${esc(wFull(w))} · ${esc(ymd)}</p>
+    <form id="schedForm" class="space-y-2 text-sm">
+      <div class="grid grid-cols-2 gap-2"><label class="text-xs">Start<input type="time" name="start" required value="${esc(e?e.start:'08:00')}" class="w-full border rounded-xl px-3 py-2 text-sm"/></label><label class="text-xs">End<input type="time" name="end" required value="${esc(e?e.end:'17:00')}" class="w-full border rounded-xl px-3 py-2 text-sm"/></label></div>
+      <input name="note" placeholder="Note (optional)" value="${esc(e&&e.note||'')}" class="w-full border rounded-xl px-3 py-2"/>
+      <label class="flex items-center gap-2"><input type="checkbox" name="weekly" ${e&&e.weekly?'checked':''}/> Repeat every week on this day</label>
+      <div class="flex gap-2 pt-2">${e?'<button type="button" id="schedDel" class="border rounded-xl px-3 py-2 text-red-600">Delete</button>':''}<button type="button" id="schedCancel" class="flex-1 border rounded-xl py-2">Cancel</button><button class="flex-1 rounded-xl py-2 text-white font-semibold" style="background:${S.accent()}">Save</button></div>
+    </form>`);
+  const f=document.getElementById('schedForm');
+  document.getElementById('schedCancel').onclick=closeModal;
+  const del=document.getElementById('schedDel');
+  if(del)del.onclick=function(){const bb=biz();bb.schedule=(bb.schedule||[]).filter(function(x){return x.id!==eid});saveBiz(bb);closeModal();render();toast('Shift removed')};
+  f.onsubmit=function(ev){
+    ev.preventDefault();const bb=biz();if(!bb.schedule)bb.schedule=[];
+    const fd=new FormData(f);const weekly=!!fd.get('weekly');
+    const rec={workerId:wid,start:String(fd.get('start')),end:String(fd.get('end')),note:String(fd.get('note')||'').trim(),weekly:weekly,date:weekly?'':ymd,dow:wDowOf(ymd),from:ymd};
+    if(eid){const x=bb.schedule.find(function(q){return q.id===eid});if(x)Object.assign(x,rec)}else bb.schedule.push(Object.assign({id:uid()},rec));
+    saveBiz(bb);closeModal();render();toast('Schedule saved');
+  };
+}
+/* ----- one delegated listener for every worker-management control (survives re-renders) ----- */
+document.addEventListener('click',function(ev){
+  const t=ev.target&&ev.target.closest?ev.target.closest('[data-shift-start],[data-shift-stop],[data-wedit],[data-wsuspend],[data-sched-week],[data-sched-add],[data-sched-edit],#perfCsv'):null;
+  if(!t)return;
+  const b=biz();if(!b)return;
+  if(t.hasAttribute('data-shift-start')){
+    const wid=t.getAttribute('data-shift-start');
+    const w=wid==='owner'?{id:'owner',firstName:'Owner'}:(b.workers||[]).find(function(x){return x.id===wid});if(!w)return;
+    if(wOpenShift(b,w)){toast('Shift already started');return}
+    const inp=document.querySelector('[data-shift-float="'+wid+'"]');
+    if(!b.shifts)b.shifts=[];
+    b.shifts.push({id:uid(),status:'open',startedAt:new Date().toISOString(),openedBy:wFull(w),workerId:wid,openingFloat:inp?(Number(inp.value)||0):0});
+    saveBiz(b);pushAudit('shift_open',wFull(w));toast('Shift started: '+wFull(w));render();return;
+  }
+  if(t.hasAttribute('data-shift-stop')){
+    const s=(b.shifts||[]).find(function(x){return x.id===t.getAttribute('data-shift-stop')});if(!s||s.status!=='open')return;
+    const inp=document.querySelector('[data-shift-closecash="'+s.id+'"]');
+    s.status='closed';s.endedAt=new Date().toISOString();
+    if(inp&&inp.value!=='')s.closingCash=Number(inp.value)||0;
+    s.summary=wShiftStats(b,s);
+    saveBiz(b);pushAudit('shift_close',s.openedBy||'');toast('Shift stopped: '+(s.openedBy||''));render();return;
+  }
+  if(t.hasAttribute('data-wsuspend')){
+    const w=(b.workers||[]).find(function(x){return x.id===t.getAttribute('data-wsuspend')});if(!w)return;
+    if(!w.suspended&&!confirm('Suspend '+wFull(w)+'? They will be logged out and cannot sign in until reactivated.'))return;
+    w.suspended=!w.suspended;
+    if(w.suspended){const s=wOpenShift(b,w);if(s){s.status='closed';s.endedAt=new Date().toISOString();s.summary=wShiftStats(b,s)}}
+    saveBiz(b);pushAudit(w.suspended?'worker_suspended':'worker_reactivated',w.username||'');render();return;
+  }
+  if(t.hasAttribute('data-wedit')){
+    const w=(b.workers||[]).find(function(x){return x.id===t.getAttribute('data-wedit')});if(!w)return;
+    ensureBranches(b);
+    openModal(`<h3 class="text-lg font-bold mb-3">Edit ${esc(wFull(w))}</h3>
+      <form id="wEditForm" class="space-y-2 text-sm">
+        <div class="grid grid-cols-2 gap-2"><input name="firstName" required value="${esc(w.firstName||w.name||'')}" placeholder="First name" class="border rounded-xl px-3 py-2"/><input name="lastName" value="${esc(w.lastName||'')}" placeholder="Last name" class="border rounded-xl px-3 py-2"/></div>
+        <input name="phone" value="${esc(w.phone||'')}" placeholder="Phone" class="w-full border rounded-xl px-3 py-2"/>
+        <div class="grid grid-cols-2 gap-2"><select name="role" class="border rounded-xl px-3 py-2">${['cashier','manager','storekeeper','delivery'].map(function(r){return `<option value="${r}" ${(w.role||'cashier')===r?'selected':''}>${r[0].toUpperCase()+r.slice(1)}</option>`}).join('')}</select>
+        <select name="branchId" class="border rounded-xl px-3 py-2">${(b.branches||[]).map(function(br){return `<option value="${esc(br.id)}" ${w.branchId===br.id?'selected':''}>${esc(br.name)}</option>`}).join('')}</select></div>
+        <input name="commissionPct" type="number" min="0" max="100" step="0.1" value="${esc(w.commissionPct||0)}" placeholder="Commission %" class="w-full border rounded-xl px-3 py-2"/>
+        <input name="password" type="text" placeholder="New password (leave blank to keep)" autocomplete="off" class="w-full border rounded-xl px-3 py-2"/>
+        <div class="flex gap-2 pt-2"><button type="button" id="wEditCancel" class="flex-1 border rounded-xl py-2">Cancel</button><button class="flex-1 rounded-xl py-2 text-white font-semibold" style="background:${S.accent()}">Save</button></div>
+      </form>`);
+    document.getElementById('wEditCancel').onclick=closeModal;
+    document.getElementById('wEditForm').onsubmit=function(e2){
+      e2.preventDefault();const f=e2.target;const bb=biz();const x=(bb.workers||[]).find(function(q){return q.id===w.id});if(!x)return;
+      x.firstName=f.firstName.value.trim();x.lastName=f.lastName.value.trim();x.name=(x.firstName+' '+x.lastName).trim();
+      x.phone=f.phone.value.trim();x.role=f.role.value;x.branchId=f.branchId.value;x.commissionPct=Number(f.commissionPct.value)||0;
+      if(f.password.value)x.password=f.password.value;
+      saveBiz(bb);pushAudit('worker_edited',x.username||'');closeModal();render();toast('Worker updated');
+    };
+    return;
+  }
+  if(t.hasAttribute('data-sched-week')){S.schedWeek=t.getAttribute('data-sched-week')==='0'?0:(Number(S.schedWeek||0)+Number(t.getAttribute('data-sched-week')));render();return}
+  if(t.hasAttribute('data-sched-add')){const p=t.getAttribute('data-sched-add').split('|');wSchedModal(b,p[0],p[1],null);return}
+  if(t.hasAttribute('data-sched-edit')){const p=t.getAttribute('data-sched-edit').split('|');const e=(b.schedule||[]).find(function(x){return x.id===p[0]});if(e)wSchedModal(b,e.workerId,p[1],e.id);return}
+  if(t.id==='perfCsv'){
+    const rows=[['Worker','Sales','Revenue','Items','Avg sale','Discounts','Shifts','Hours','KES per hour','Commission']];
+    wPerfRows(b).forEach(function(r){rows.push([r.name,r.count,money(r.rev),Math.round(r.items*100)/100,money(r.avg),money(r.disc),r.shifts,r.hrs.toFixed(2),money(r.perHr),money(r.comm)])});
+    const csv=rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"'}).join(',')}).join('\n');
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='worker_performance_'+today()+'.csv';a.click();return;
+  }
+});
+document.addEventListener('change',function(ev){
+  const t=ev.target;if(!t||!t.getAttribute)return;
+  if(t.hasAttribute('data-wperm')){
+    const p=t.getAttribute('data-wperm').split('|');const b=biz();if(!b)return;const w=(b.workers||[]).find(function(x){return x.id===p[0]});if(!w)return;
+    if(!w.permissions)w.permissions={};w.permissions[p[1]]=!!t.checked;saveBiz(b);pushAudit('permission',wFull(w)+' '+p[1]+'='+(t.checked?'on':'off'));toast((t.checked?'Allowed: ':'Removed: ')+p[1]+' for '+wFull(w));return;
+  }
+  if(t.hasAttribute('data-wpreset')){
+    const b=biz();if(!b)return;const w=(b.workers||[]).find(function(x){return x.id===t.getAttribute('data-wpreset')});if(!w||!t.value)return;
+    const set=t.value==='none'?[]:(ROLE_PRESETS[t.value]||[]);w.permissions={};WORKER_MENUS.forEach(function(m){w.permissions[m[0]]=set.indexOf(m[0])>=0});
+    saveBiz(b);pushAudit('permission',wFull(w)+' preset '+t.value);toast('Permissions set for '+wFull(w));render();return;
+  }
+  if(t.id==='shiftWorkerFilter'){S.shiftWorker=t.value;render();return}
+  if(t.id==='shiftDaysFilter'){S.shiftDays=Number(t.value);render();return}
+  if(t.id==='perfRange'){S.perfRange=t.value;render();return}
+  if(t.id==='perfFrom'){S.perfFrom=t.value;render();return}
+  if(t.id==='perfTo'){S.perfTo=t.value;render();return}
+});
 function secAI(b,a){
   const tips=aiInsights(b);
   const forecast=stockForecast(b).slice(0,15);
@@ -5578,42 +5807,80 @@ function ensureWorkers(b){
   return b;
 }
 
+/* ================= Worker management (Workers / Shifts / Permissions / Performance / Schedule) ================= */
+const WORKER_MENUS=[['dashboard','Mini dashboard'],['shop','Shop / POS'],['invoices','Invoices'],['onlineorders','Online orders'],['delivery','Delivery'],['stock','Stock'],['products','Products'],['customers','Customers'],['purchases','Purchases'],['expenses','Expenses'],['shifts','Shifts'],['reports','Reports']];
+const ROLE_PRESETS={cashier:['dashboard','shop','invoices'],manager:WORKER_MENUS.map(function(m){return m[0]}),storekeeper:['dashboard','stock','products','purchases'],delivery:['dashboard','delivery','onlineorders']};
+function wName(w){return ((w&&(w.firstName||w.name))||'')+((w&&w.lastName)?' '+w.lastName:'')||((w&&w.username)||'Worker')}
+function wFull(w){return (wName(w)||'').trim()||(w&&w.username)||'Worker'}
+function wFmtDur(ms){const m=Math.max(0,Math.round(ms/60000));return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m'}
+function wHM(iso){try{return iso?new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'-'}catch(e){return '-'}}
+function wDT(iso){try{return iso?new Date(iso).toLocaleString([],{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'-'}catch(e){return '-'}}
+function wStaff(b,withOwner){const l=(b.workers||[]).slice();return withOwner?[{id:'owner',firstName:'Owner',role:'owner'}].concat(l):l}
+function wOpenShift(b,w){
+  if(!w)return null;
+  const nm=wFull(w);
+  return (b.shifts||[]).find(function(s){return s.status==='open'&&(s.workerId===w.id||(!s.workerId&&s.openedBy===nm))})||null;
+}
+function wOrdersOf(b,w){
+  return (b.orders||[]).filter(function(o){
+    if(!(o.status==='PAID'||o.status==='CREDIT'))return false;
+    if(o.source==='online'&&!o.servedBy)return false;
+    if(w.id==='owner')return !o.servedBy;
+    return o.servedBy&&(o.servedBy.id===w.id);
+  });
+}
+function wShiftStats(b,s){
+  const os=(b.orders||[]).filter(function(o){return o.shiftId===s.id&&(o.status==='PAID'||o.status==='CREDIT')});
+  let total=0,cash=0;os.forEach(function(o){total+=Number(o.total||0);if(String(o.payMethod||o.method||'').toLowerCase()==='cash')cash+=Number(o.total||0)});
+  return {count:os.length,total:total,cash:cash};
+}
+function wTabs(active,a){
+  const t=[['team','Workers'],['shifts','Shifts'],['wperms','Permissions'],['wperf','Performance'],['wsched','Schedule']];
+  return '<div class="flex flex-wrap gap-2 mb-4 no-print">'+t.map(function(x){const on=active===x[0];return '<button type="button" data-nav="'+x[0]+'" class="px-3 py-1.5 rounded-full text-sm border '+(on?'text-white':'bg-white')+'" style="'+(on?'background:'+a+';border-color:'+a:'')+'">'+x[1]+'</button>'}).join('')+'</div>';
+}
 function secTeam(b,a){
   ensureBranches(b);
   const workers=b.workers||[];
   const branches=b.branches||[{id:'main',name:'Main branch'}];
-  const permLabels={dashboard:'Mini dashboard',shop:'Shop / POS',invoices:'Invoices & receipts',marketplace:'Marketplace',onlineorders:'Online orders',delivery:'Delivery',stock:'View stock'};
   return `<div class="space-y-4">
+    ${wTabs('team',a)}
     <div class="bg-white rounded-2xl border p-4">
-      <h3 class="font-semibold">Worker management</h3>
+      <h3 class="font-semibold">Workers</h3>
       ${workerUsageHtml(b)}
-      <p class="text-xs text-slate-500 mb-3">Assign login credentials and which menu sections each worker may open. They never access full owner settings.</p>
+      <p class="text-xs text-slate-500 mb-3">Add workers with their own login, start / stop their shifts, then set what each can open under <b>Permissions</b>, check <b>Performance</b> and plan the <b>Schedule</b>.</p>
       <label class="flex items-center gap-2 text-sm mb-2 p-3 rounded-xl bg-slate-50 border">
         <input type="checkbox" id="requireWorkerSalePw" ${b.requireWorkerSalePassword?'checked':''}/>
         Require worker password on every POS sale
       </label>
       <label class="flex items-center gap-2 text-sm mb-4 p-3 rounded-xl bg-slate-50 border">
         <input type="checkbox" id="requireShiftForSale" ${b.requireShiftForSale?'checked':''}/>
-        Require open cashier shift before POS sales
+        Worker must have a started shift before making POS sales
       </label>
-      <div class="space-y-2 mb-4">${workers.map((w,idx)=>{
-        const sales=(b.orders||[]).filter(o=>o.servedBy&&o.servedBy.id===w.id&&(o.status==='PAID'||o.status==='CREDIT'));
-        const total=sales.reduce((s,o)=>s+Number(o.total||0),0);
+      <div class="space-y-2 mb-4">${workers.map(function(w,idx){
+        const sales=wOrdersOf(b,w);
+        const total=sales.reduce(function(s,o){return s+Number(o.total||0)},0);
         const perms=w.permissions||{dashboard:true,shop:true,invoices:true};
-        const permStr=Object.keys(permLabels).filter(k=>perms[k]).map(k=>permLabels[k]).join(', ')||'none';
-        return `<div class="border rounded-xl p-3 text-sm">
+        const n=WORKER_MENUS.filter(function(m){return perms[m[0]]}).length;
+        const sh=wOpenShift(b,w);
+        return `<div class="border rounded-xl p-3 text-sm ${w.suspended?'opacity-60':''}">
           <div class="flex flex-wrap justify-between gap-2">
             <div>
-              <b>${esc(w.firstName||w.name||'')} ${esc(w.lastName||'')}</b>
-              <span class="text-xs text-slate-500"> · @${esc(w.username||'—')} · ${esc(w.role||'cashier')}</span>
-              <p class="text-xs text-slate-500">Menus: ${esc(permStr)}</p>
-              <p class="text-xs mt-1">Sales: ${sales.length} · ${kes(total)}</p>
+              <b>${esc(wFull(w))}</b>
+              <span class="text-xs text-slate-500"> · @${esc(w.username||'-')} · ${esc(w.role||'cashier')}${w.phone?' · '+esc(w.phone):''}</span>
+              ${w.suspended?'<span class="ml-1 text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-700">Suspended</span>':(sh?'<span class="ml-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">On shift since '+esc(wHM(sh.startedAt))+'</span>':'<span class="ml-1 text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Off shift</span>')}
+              <p class="text-xs text-slate-500 mt-1">${n} menu${n===1?'':'s'} allowed · Sales: ${sales.length} · ${kes(total)}</p>
             </div>
-            <button type="button" data-del-worker="${idx}" class="text-xs text-red-600">Remove</button>
+            <div class="flex flex-wrap gap-2 items-start">
+              ${w.suspended?'':(sh?`<button type="button" data-shift-stop="${sh.id}" class="text-xs border px-2 py-1 rounded-lg">Stop shift</button>`:`<button type="button" data-shift-start="${w.id}" class="text-xs text-white px-2 py-1 rounded-lg" style="background:${a}">Start shift</button>`)}
+              <button type="button" data-wedit="${w.id}" class="text-xs border px-2 py-1 rounded-lg">Edit</button>
+              <button type="button" data-wsuspend="${w.id}" class="text-xs border px-2 py-1 rounded-lg">${w.suspended?'Reactivate':'Suspend'}</button>
+              <button type="button" data-del-worker="${idx}" class="text-xs text-red-600 px-1">Remove</button>
+            </div>
           </div>
         </div>`;
       }).join('')||'<p class="text-slate-400 text-sm">No workers yet</p>'}</div>
       <form id="addWorkerForm2" class="grid sm:grid-cols-2 gap-2 text-sm border-t pt-4">
+        <p class="sm:col-span-2 font-medium">Add a worker</p>
         <input name="firstName" required placeholder="First name" class="border rounded-xl px-3 py-2"/>
         <input name="lastName" placeholder="Last name" class="border rounded-xl px-3 py-2"/>
         <input name="username" required placeholder="Username (login)" class="border rounded-xl px-3 py-2" pattern="[a-zA-Z0-9._\\-]{2,32}"/>
@@ -5626,24 +5893,13 @@ function secTeam(b,a){
           <option value="delivery">Delivery</option>
         </select>
         <select name="branchId" class="border rounded-xl px-3 py-2">
-          ${branches.map(br=>`<option value="${br.id}">${esc(br.name)}</option>`).join('')}
+          ${branches.map(function(br){return `<option value="${br.id}">${esc(br.name)}</option>`}).join('')}
         </select>
         <input name="commissionPct" type="number" min="0" max="100" step="0.1" placeholder="Commission %" class="border rounded-xl px-3 py-2"/>
         <div class="sm:col-span-2 p-3 rounded-xl bg-slate-50 border">
-          <p class="text-xs font-medium mb-2">Authorise menu sections</p>
+          <p class="text-xs font-medium mb-2">Menus this worker may open (change any time under Permissions)</p>
           <div class="flex flex-wrap gap-3 text-xs">
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_dashboard" checked/> Mini dashboard</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_shop" checked/> Shop / POS</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_invoices" checked/> Invoices & receipts</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_onlineorders"/> Online orders</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_delivery"/> Delivery</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_stock"/> Stock</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_products"/> Products</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_customers"/> Customers</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_purchases"/> Purchases</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_expenses"/> Expenses</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_shifts"/> Shifts</label>
-            <label class="flex items-center gap-1"><input type="checkbox" name="perm_reports"/> Reports</label>
+            ${WORKER_MENUS.map(function(m){return `<label class="flex items-center gap-1"><input type="checkbox" name="perm_${m[0]}" ${['dashboard','shop','invoices'].includes(m[0])?'checked':''}/> ${esc(m[1])}</label>`}).join('')}
           </div>
         </div>
         <button class="sm:col-span-2 py-2.5 rounded-xl text-white font-medium" style="background:${a}">Add worker with login</button>
@@ -5651,8 +5907,6 @@ function secTeam(b,a){
     </div>
   </div>`;
 }
-
-
 function secDelivery(b,a){
   ensureDeliveries(b);
   const list=(b.deliveries||[]).slice().reverse();
@@ -5754,11 +6008,25 @@ function secSettings(b,a){
     <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="toggleOnline" ${b.onlineStore!==false?'checked':''}/> Accept online orders for this business</label>
   </div>
   <div class="bg-white rounded-2xl border p-6">
+    <h3 class="font-semibold mb-1">Barcode scanner (USB / wireless, plug-and-play)</h3>
+    <p class="text-xs text-slate-500 mb-3">Any 1D/2D hands-free, handheld or wireless USB scanner that works as a <b>keyboard (HID keyboard wedge)</b> works here with no driver and no connect button - just plug it in (or its USB dongle) and scan. Scans are caught anywhere in the app: in the Shop they add to the cart, in Purchases they add +1, in Stock they show the item, in Products they register or count items.</p>
+    <div class="rounded-xl bg-slate-50 border p-3 text-xs mb-3 space-y-1">
+      <p class="font-medium">Make every scan submit automatically (Enter suffix)</p>
+      <p>1. Open your scanner's manual and find the setting <b>"Add Enter / CR / Carriage return suffix"</b> (most scanners ship with it on).</p>
+      <p>2. Scan that configuration barcode once. From then on each scan ends with Enter, so the code goes straight to the next cart line or product.</p>
+      <p>3. Test below. Even without the suffix the app detects a fast scan and submits it for you.</p>
+    </div>
+    <label class="flex items-center gap-2 text-sm mb-1"><input type="checkbox" id="scanOn" ${scanCfg().on?'checked':''}/> Scanner detection on</label>
+    <label class="flex items-center gap-2 text-sm mb-3"><input type="checkbox" id="scanBeep" ${scanCfg().beep?'checked':''}/> Beep on scan</label>
+    <div id="scanTest" class="rounded-xl border-2 border-dashed p-3 text-sm text-slate-500">Scan any barcode now to test your scanner...</div>
+  </div>
+  <div class="bg-white rounded-2xl border p-6">
     <h3 class="font-semibold mb-1">Thermal receipt printer</h3>
-    <p class="text-xs text-slate-500 mb-3">Connect once. After that the printer is detected automatically and every sale prints its receipt. Needs Chrome or Edge. For a Bluetooth printer, pair it in your phone/computer Bluetooth settings first.</p>
+    <p class="text-xs text-slate-500 mb-3">Plug-and-play, no driver to install: plug the USB cable in, press Connect once and pick the printer. After that it is detected automatically every time it is plugged in and each sale prints its receipt. Use <b>Connect USB printer</b> for normal USB receipt printers, <b>USB HID printer</b> for printers that appear as an HID device. Needs Chrome or Edge. For a Bluetooth printer, pair it in your phone/computer Bluetooth settings first.</p>
     <p id="printerStatus" class="text-sm mb-3"></p>
     <div class="flex flex-wrap gap-2 mb-3">
       <button type="button" id="tpConnectUsb" class="px-3 py-2 rounded-xl border text-sm font-medium">Connect USB printer</button>
+      <button type="button" id="tpConnectHid" class="px-3 py-2 rounded-xl border text-sm font-medium">Connect USB HID printer</button>
       <button type="button" id="tpConnectSerial" class="px-3 py-2 rounded-xl border text-sm font-medium">Connect Bluetooth / serial printer</button>
       <button type="button" id="tpTest" class="px-3 py-2 rounded-xl text-white text-sm font-medium" style="background:${a}">Print test receipt</button>
       <button type="button" id="tpForget" class="px-3 py-2 rounded-xl border text-sm text-red-700">Forget printer</button>
@@ -6740,6 +7008,7 @@ function bind(){
     }
     if(!found||!bizFound){err.textContent='Worker username not found for this owner';err.classList.remove('hidden');return}
     if(String(found.password||'')!==password){err.textContent='Incorrect worker password';err.classList.remove('hidden');return}
+    if(found.suspended){err.textContent='This worker account is suspended. Ask the owner to reactivate it.';err.classList.remove('hidden');return}
     // Clear owner session if any
     d.session=null;d.currentBizId=bizFound.id;save(d);
     setWorkerSession({workerId:found.id,businessId:bizFound.id,ownerId:owner.id,name:found.name,username:found.username});
@@ -6814,13 +7083,29 @@ function bind(){
     };
     cartDiscount.onchange=()=>{S.cartDiscount=cartDiscountAmt();safeRender()};
   }
-  tpUI();
+  tpUI();scanStatUI();
+  const scanOn=document.getElementById('scanOn');
+  if(scanOn)scanOn.onchange=()=>{scanSave(Object.assign(scanCfg(),{on:scanOn.checked}));toast(scanOn.checked?'Scanner detection on':'Scanner detection off')};
+  const scanBeepEl=document.getElementById('scanBeep');
+  if(scanBeepEl)scanBeepEl.onchange=()=>{scanSave(Object.assign(scanCfg(),{beep:scanBeepEl.checked}))};
   const tpU=document.getElementById('tpConnectUsb');
   if(tpU)tpU.onclick=async()=>{
     if(!navigator.usb){alert('USB printing needs Chrome or Edge.');return}
     try{
       const dev=await navigator.usb.requestDevice({filters:[]});
       tpUseUsb(dev);tpSave(Object.assign(tpCfg(),{kind:'usb',vid:dev.vendorId,pid:dev.productId,name:TP.name}));
+      tpUI();toast('🖨 Printer connected: '+TP.name);
+    }catch(e){if(!/No device selected/i.test(String(e&&e.message)))alert('Could not connect: '+(e&&e.message||e))}
+  };
+  const tpH=document.getElementById('tpConnectHid');
+  if(tpH)tpH.onclick=async()=>{
+    if(!navigator.hid){alert('USB HID printing needs Chrome or Edge.');return}
+    try{
+      const l=await navigator.hid.requestDevice({filters:[]});
+      const dev=(l||[]).find(function(d){return tpHidOut(d)});
+      if(!dev){alert('That device cannot receive print data. For a barcode scanner you do not need to connect anything - just scan.');return}
+      if(!dev.opened)await dev.open();
+      tpUseHid(dev);tpSave(Object.assign(tpCfg(),{kind:'hid',vid:dev.vendorId,pid:dev.productId,name:TP.name}));
       tpUI();toast('🖨 Printer connected: '+TP.name);
     }catch(e){if(!/No device selected/i.test(String(e&&e.message)))alert('Could not connect: '+(e&&e.message||e))}
   };
@@ -6840,7 +7125,7 @@ function bind(){
       .then(()=>toast('🖨 Test receipt sent')).catch(e=>alert('Printer: '+(e&&e.message||e)));
   };
   const tpF=document.getElementById('tpForget');
-  if(tpF)tpF.onclick=()=>{TP.dev=null;TP.port=null;TP.portOpen=false;tpSave(Object.assign(tpCfg(),{kind:'',vid:0,pid:0}));tpUI();toast('Printer forgotten on this device')};
+  if(tpF)tpF.onclick=()=>{TP.dev=null;TP.port=null;TP.hid=null;TP.portOpen=false;tpSave(Object.assign(tpCfg(),{kind:'',vid:0,pid:0}));tpUI();toast('Printer forgotten on this device')};
   const tpA=document.getElementById('tpAuto');
   if(tpA)tpA.onchange=()=>{tpSave(Object.assign(tpCfg(),{auto:tpA.checked}));tpUI()};
   const tpW=document.getElementById('tpWidth');
@@ -7401,7 +7686,7 @@ render();
       else receipt=payMethod.toUpperCase().replace(/\s/g,'')+'-'+String(b.orderN).padStart(4,'0');
     }
     const order={id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items,total,status:(payMethod==='Credit'?'CREDIT':'PAID'),
-      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',discountAmt:discountAmt,discountPct:subtotal>0?Math.round(discountAmt/subtotal*10000)/100:0,subtotal:subtotal,cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null,branchId:(biz()&&biz().currentBranchId)||'main'};S._servedBy=null;S.cartDiscount=0;
+      method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',discountAmt:discountAmt,discountPct:subtotal>0?Math.round(discountAmt/subtotal*10000)/100:0,subtotal:subtotal,cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null,at:new Date().toISOString(),shiftId:(function(){try{const sb=S._servedBy&&S._servedBy.id;const cw=isWorkerMode()?currentWorker():null;const s=currentShift(b,sb||(cw&&cw.worker&&cw.worker.id)||null)||currentShift(b);return s?s.id:''}catch(e){return ''}})(),branchId:(biz()&&biz().currentBranchId)||'main'};S._servedBy=null;S.cartDiscount=0;
     if(payMethod==='M-Pesa')rememberMpesaCode(b,receipt,order.id);
     if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];S.cartDiscount=0;saveBiz(b);if(!navigator.onLine){enqueueOfflineSale(Object.assign({},order));}else if(SERVER_MODE){/* synced via saveBiz */}pushAudit('sale',order.number);return order;
   }
@@ -7430,7 +7715,7 @@ render();
   const complete=document.getElementById('btnCompleteSale');
   if(complete)complete.onclick=()=>{
     const b0=biz();
-    if(b0&&b0.requireShiftForSale&&!currentShift(b0)){alert('Open a cashier shift before selling');return}
+    if(b0&&b0.requireShiftForSale){const cw0=(typeof isWorkerMode==='function'&&isWorkerMode())?currentWorker():null;if(!currentShift(b0,cw0&&cw0.worker?cw0.worker.id:null)){alert('Start your shift before selling (Shifts menu)');return}}
     const phone=(document.getElementById('mpesaPhone')||{}).value||'';
     if(S.payMethod==='M-Pesa'&&isDarajaLiveConfigured((biz()&&biz().payments)||{})&&phone.replace(/\s/g,'').length<9){alert('Enter customer M-Pesa number for STK');return}
     if(S.payMethod==='Cash'){
@@ -8690,6 +8975,7 @@ render();
   };
 
   
+  document.querySelectorAll('input[name="scanRegMode"]').forEach(function(r){r.onchange=function(){S.scanRegMode=r.value;toast(r.value==='count'?'Scan = +1 stock':'Scan = register new items')}});
   const prodBarcodeScan=document.getElementById('prodBarcodeScan');
   if(prodBarcodeScan)prodBarcodeScan.onkeydown=e=>{
     if(e.key!=='Enter')return;
@@ -8947,16 +9233,16 @@ render();
 /* ===== Thermal receipt printer (ESC/POS) over WebUSB or Web Serial (USB cable or paired Bluetooth) =====
    The browser asks permission ONCE (Connect button). After that the printer is found automatically whenever it is plugged in / switched on,
    and every completed sale is printed without any dialog. Works in Chrome / Edge (desktop and Android). */
-const TP={dev:null,port:null,kind:'',name:'',ep:0,iface:0,cfgv:1,portOpen:false,busy:false};
+const TP={dev:null,port:null,hid:null,hidRid:0,hidSize:64,kind:'',name:'',ep:0,iface:0,cfgv:1,portOpen:false,busy:false};
 function tpCfg(){try{return JSON.parse(localStorage.getItem('bh_printer')||'{}')||{}}catch(e){return{}}}
 function tpSave(c){try{localStorage.setItem('bh_printer',JSON.stringify(c))}catch(e){}}
-function tpSupported(){return !!(navigator.usb||navigator.serial)}
-function tpConnected(){return !!(TP.dev||TP.port)}
+function tpSupported(){return !!(navigator.usb||navigator.serial||navigator.hid)}
+function tpConnected(){return !!(TP.dev||TP.port||TP.hid)}
 function tpUI(){
   const on=tpConnected(),c=tpCfg();
   const st=document.getElementById('printerStatus');
   if(st){
-    st.innerHTML=on?`<span class="text-emerald-700 font-semibold">● Connected</span> - ${esc(TP.name||'Thermal printer')} (${TP.kind==='usb'?'USB':'Bluetooth / serial'})${c.auto===false?' · auto-print OFF':' · auto-print ON'}`
+    st.innerHTML=on?`<span class="text-emerald-700 font-semibold">● Connected</span> - ${esc(TP.name||'Thermal printer')} (${TP.kind==='usb'?'USB':(TP.kind==='hid'?'USB HID':'Bluetooth / serial')})${c.auto===false?' · auto-print OFF':' · auto-print ON'}`
       :(tpSupported()?'<span class="text-slate-500">○ No printer connected. Plug it in (or switch it on) - it is detected automatically once set up.</span>':'<span class="text-amber-700">This browser cannot talk to printers directly. Use Chrome or Edge.</span>');
   }
   const pill=document.getElementById('printerPill');
@@ -8964,7 +9250,7 @@ function tpUI(){
 }
 function tpHasOut(dev){
   for(const c of (dev.configurations||[]))for(const i of c.interfaces)for(const a of i.alternates){
-    const ep=(a.endpoints||[]).find(e=>e.direction==='out'&&e.type==='bulk');
+    const ep=(a.endpoints||[]).find(e=>e.direction==='out'&&(e.type==='bulk'||e.type==='interrupt'));
     if(ep)return {c,i,a,ep};
   }
   return null;
@@ -8972,10 +9258,21 @@ function tpHasOut(dev){
 function tpUseUsb(dev){
   const f=tpHasOut(dev);
   if(!f)throw new Error('This USB device has no printer port');
-  TP.dev=dev;TP.port=null;TP.kind='usb';TP.ep=f.ep.endpointNumber;TP.iface=f.i.interfaceNumber;TP.cfgv=f.c.configurationValue;TP.name=dev.productName||'USB printer';
+  TP.dev=dev;TP.port=null;TP.hid=null;TP.kind='usb';TP.ep=f.ep.endpointNumber;TP.iface=f.i.interfaceNumber;TP.cfgv=f.c.configurationValue;TP.name=dev.productName||'USB printer';
 }
+function tpHidOut(dev){
+  for(const col of (dev.collections||[])){const r=(col.outputReports||[])[0];if(r){let bits=0;(r.items||[]).forEach(function(it){bits+=(it.reportSize||8)*(it.reportCount||1)});return {rid:r.reportId||0,size:Math.max(1,Math.floor(bits/8))||64}}}
+  return null;
+}
+function tpUseHid(dev){
+  const o=tpHidOut(dev);
+  if(!o)throw new Error('This HID device cannot receive print data');
+  TP.hid=dev;TP.dev=null;TP.port=null;TP.kind='hid';TP.hidRid=o.rid;TP.hidSize=o.size;TP.name=dev.productName||'USB HID printer';
+}
+/* barcode scanners show up as HID devices too (usage page 0x8C/0x01) - never treat them as printers */
+function tpIsScanner(d){return (d.collections||[]).some(function(c){return c.usagePage===0x8C||c.usagePage===0x01})}
 function tpUseSerial(port){
-  TP.port=port;TP.dev=null;TP.kind='serial';TP.portOpen=false;TP.name='Bluetooth / serial printer';
+  TP.port=port;TP.dev=null;TP.hid=null;TP.kind='serial';TP.portOpen=false;TP.name='Bluetooth / serial printer';
 }
 /* find a printer that was already allowed on this device (no prompt needed) */
 async function tpAuto(announce){
@@ -8988,6 +9285,13 @@ async function tpAuto(announce){
       if(dev){tpUseUsb(dev);found=true}
     }
   }catch(e){console.warn('tp usb',e)}
+  try{
+    if(!found&&navigator.hid){
+      const l=(await navigator.hid.getDevices()).filter(function(d){return tpHidOut(d)&&!tpIsScanner(d)});
+      const dev=l.find(function(d){return c.kind==='hid'&&d.vendorId===c.vid&&d.productId===c.pid});
+      if(dev){if(!dev.opened)await dev.open();tpUseHid(dev);found=true}
+    }
+  }catch(e){console.warn('tp hid',e)}
   try{
     if(!found&&navigator.serial&&c.kind==='serial'){
       const ports=await navigator.serial.getPorts();
@@ -9008,6 +9312,10 @@ async function tpSend(bytes){
       if(d.configuration==null||d.configuration.configurationValue!==TP.cfgv)await d.selectConfiguration(TP.cfgv);
       try{await d.claimInterface(TP.iface)}catch(e){if(!/already|claimed/i.test(String(e&&e.message)))throw e}
       for(let i=0;i<bytes.length;i+=4096)await d.transferOut(TP.ep,bytes.slice(i,i+4096));
+    }else if(TP.hid){
+      const d=TP.hid;if(!d.opened)await d.open();
+      const n=Math.max(1,TP.hidSize);
+      for(let i=0;i<bytes.length;i+=n){const chunk=new Uint8Array(n);chunk.set(bytes.slice(i,i+n));await d.sendReport(TP.hidRid,chunk)}
     }else if(TP.port){
       const p=TP.port;
       if(!TP.portOpen){try{await p.open({baudRate:Number(tpCfg().baud)||9600})}catch(e){if(!/already open/i.test(String(e&&e.message)))throw e}TP.portOpen=true}
@@ -9072,12 +9380,156 @@ try{
     navigator.usb.addEventListener('connect',function(){tpAuto(true).then(function(){tpUI()})});
     navigator.usb.addEventListener('disconnect',function(ev){if(TP.dev&&ev.device===TP.dev){TP.dev=null;tpUI();try{toast('Printer unplugged')}catch(e){}}});
   }
+  if(navigator.hid){
+    navigator.hid.addEventListener('connect',function(){tpAuto(true).then(function(){tpUI()})});
+    navigator.hid.addEventListener('disconnect',function(ev){if(TP.hid&&ev.device===TP.hid){TP.hid=null;tpUI();try{toast('Printer unplugged')}catch(e){}}});
+  }
   if(navigator.serial){
     navigator.serial.addEventListener('connect',function(){tpAuto(true).then(function(){tpUI()})});
     navigator.serial.addEventListener('disconnect',function(ev){if(TP.port&&(ev.target===TP.port||ev.port===TP.port)){TP.port=null;TP.portOpen=false;tpUI();try{toast('Printer disconnected')}catch(e){}}});
   }
 }catch(e){}
 setTimeout(function(){tpAuto(true).then(tpUI)},800);
+
+
+/* ===== USB / wireless barcode scanner (HID keyboard wedge) =====
+   A keyboard-wedge scanner "types" the code very fast and ends with Enter (or Tab). We watch for that burst anywhere in the app
+   (focused field or not), swallow it, and route it by screen. If the scanner has no Enter suffix we still detect the burst. */
+const SCAN={buf:'',t0:0,last:0,timer:null,stat:null,ac:null};
+const SCAN_GAP=60;
+function scanCfg(){try{return Object.assign({on:true,beep:true,minLen:4},JSON.parse(localStorage.getItem('bh_scan')||'{}'))}catch(e){return {on:true,beep:true,minLen:4}}}
+function scanSave(c){try{localStorage.setItem('bh_scan',JSON.stringify(c))}catch(e){}}
+function scanBeep(ok){
+  try{if(!scanCfg().beep)return;const A=window.AudioContext||window.webkitAudioContext;if(!A)return;SCAN.ac=SCAN.ac||new A();
+    const o=SCAN.ac.createOscillator(),g=SCAN.ac.createGain();o.frequency.value=ok?1800:320;g.gain.value=.07;o.connect(g);g.connect(SCAN.ac.destination);o.start();o.stop(SCAN.ac.currentTime+(ok?.07:.22))}catch(e){}
+}
+function scanReset(){SCAN.buf='';SCAN.t0=0;SCAN.last=0;clearTimeout(SCAN.timer)}
+function scanLooksFast(){const n=SCAN.buf.length;if(n<2)return false;return (SCAN.last-SCAN.t0)/(n-1)<=45}
+function scanStatUI(){
+  const el=document.getElementById('scanTest');if(!el)return;const s=SCAN.stat;
+  if(!s){el.innerHTML='Scan any barcode now to test your scanner...';return}
+  const suf=s.suffix==='Enter'?'<span class="text-emerald-700 font-semibold">Enter suffix detected ✓</span>':(s.suffix==='Tab'?'<span class="text-emerald-700 font-semibold">Tab suffix detected ✓</span>':'<span class="text-amber-700 font-semibold">No Enter suffix - handled automatically. For best results scan the "Enter suffix" setting barcode from your scanner manual.</span>');
+  el.innerHTML='<div class="text-slate-800"><b class="text-base">'+esc(s.code)+'</b></div><div class="text-xs mt-1">'+s.len+' characters in '+s.ms+' ms · '+suf+'</div>';
+}
+function scanAdvance(el){
+  let nxt=null;
+  if(el.getAttribute('data-scan-target')==='row'){
+    const all=Array.from(document.querySelectorAll('[data-scan-target="row"]'));nxt=all[all.indexOf(el)+1]||null;
+  }else if(el.form){
+    if(el.name==='barcode'){const nm=el.form.elements['name'];nxt=(nm&&!String(nm.value||'').trim())?nm:(el.form.elements['price']||null)}
+    if(!nxt){const f=Array.from(el.form.querySelectorAll('input:not([type=hidden]):not([disabled]),select,textarea'));nxt=f[f.indexOf(el)+1]||null}
+  }
+  if(nxt){nxt.focus();try{if(nxt.select)nxt.select()}catch(e){}}else{try{el.blur()}catch(e){}}
+}
+function scanDone(suffix){
+  const code=SCAN.buf,ms=Math.round(SCAN.last-SCAN.t0);scanReset();
+  SCAN.stat={code:code,len:code.length,suffix:suffix,ms:ms,at:Date.now()};
+  const ae=document.activeElement;
+  const isField=!!ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA')&&ae.type!=='checkbox'&&ae.type!=='radio';
+  const target=isField&&ae.hasAttribute('data-scan-target');
+  if(target){
+    ae.value=code;try{ae.dispatchEvent(new Event('input',{bubbles:true}));ae.dispatchEvent(new Event('change',{bubbles:true}))}catch(e){}
+    scanBeep(true);scanStatUI();scanAdvance(ae);return;
+  }
+  // the burst was also typed into whatever field had focus (search box...): take it back out
+  if(isField&&typeof ae.value==='string'&&ae.value.endsWith(code)){
+    ae.value=ae.value.slice(0,ae.value.length-code.length);
+    try{ae.dispatchEvent(new Event('input',{bubbles:true}))}catch(e){}
+  }
+  scanStatUI();
+  try{scanRoute(code)}catch(e){console.error('scanRoute',e)}
+}
+function scanKeydown(e){
+  const c=scanCfg();if(!c.on)return;
+  if(e.ctrlKey||e.altKey||e.metaKey||e.isComposing)return;
+  const now=performance.now(),k=e.key;
+  if(k==='Enter'||k==='Tab'){
+    if(SCAN.buf.length>=c.minLen&&(now-SCAN.last)<=SCAN_GAP*2&&scanLooksFast()){e.preventDefault();e.stopImmediatePropagation();scanDone(k)}
+    else scanReset();
+    return;
+  }
+  if(!k||k.length!==1)return;
+  if(now-SCAN.last>SCAN_GAP){scanReset();SCAN.t0=now}
+  SCAN.buf+=k;SCAN.last=now;
+  clearTimeout(SCAN.timer);
+  if(SCAN.buf.length>=Math.max(6,c.minLen))SCAN.timer=setTimeout(function(){if(scanLooksFast())scanDone('none')},130);
+}
+document.addEventListener('keydown',scanKeydown,true);
+/* typing Enter by hand in a barcode field: go to the next field instead of submitting the form */
+document.addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&!e.defaultPrevented&&e.target&&e.target.getAttribute&&e.target.hasAttribute('data-scan-target')){e.preventDefault();scanAdvance(e.target)}
+});
+function scanModalOpen(){const m=document.getElementById('modal');return !!m&&!m.classList.contains('hidden')}
+function scanRoute(code){
+  const b=biz();if(!b)return;
+  if(scanModalOpen())return;
+  if(S.view!=='app'&&S.view!=='worker')return;
+  const worker=S.view==='worker';
+  const v=S.appView;
+  const p=findProductByBarcode(b,code);
+  if(v==='shop'){
+    const added=addProductToCartByBarcode(code);scanBeep(!!added);if(added)render();return;
+  }
+  if(v==='purchases'){
+    if(!p){toast('No product for: '+code);scanBeep(false);return}
+    if(!S.purBasket)S.purBasket={};
+    const l=S.purBasket[p.id];
+    if(l)l.qty=String((Number(l.qty)||0)+1);else S.purBasket[p.id]={qty:'1',cost:(p.cost!=null&&p.cost!=='')?p.cost:''};
+    toast('+1 '+p.name+' (purchase list)');scanBeep(true);render();return;
+  }
+  if(v==='stock'){
+    if(!p){toast('Not found: '+code);scanBeep(false);return}
+    S.stockSearch=p.name;S.invTab='overview';toast(p.name+' · stock '+stockLabel(p,true));scanBeep(true);render();return;
+  }
+  if(v==='products'&&!worker){scanCatalog(code);return}
+  if(worker)return;
+  if(p){toast(p.name+' · '+kes(p.price)+' · stock '+stockLabel(p,true));scanBeep(true)}
+  else{toast('Unknown code: '+code);scanBeep(false)}
+}
+/* Products screen: scan items to build / count the catalogue */
+function scanCatalog(code){
+  const b=biz();const p=findProductByBarcode(b,code);
+  if(S.scanRegMode==='count'){
+    if(p){
+      p.stock=Math.round(((Number(p.stock)||0)+1)*10000)/10000;
+      recordMovement(b,{type:'RECEIVE',productId:p.id,productName:p.name,qty:1,note:'Scan count'});
+      saveBiz(b);scanBeep(true);S.scanLast=p.name+' → stock '+stockLabel(p,true);render();return;
+    }
+    scanRegisterModal(code,1);return;
+  }
+  if(p){scanBeep(true);S.prodSearch=p.name;toast('Already in catalogue: '+p.name);render();return}
+  scanRegisterModal(code,0);
+}
+function scanRegisterModal(code,stock){
+  const b=biz();scanBeep(true);
+  openModal(`<h3 class="text-lg font-bold mb-1">New item from scan</h3>
+    <p class="text-xs text-slate-500 mb-3">Barcode <b>${esc(code)}</b> is not in your catalogue yet. Enter the details; press Enter to move on, Enter on the last field saves.</p>
+    <form id="scanRegForm" class="space-y-2 text-sm">
+      <input name="name" required placeholder="Product name *" autocomplete="off" class="w-full border rounded-xl px-3 py-2"/>
+      <div class="grid grid-cols-2 gap-2">
+        <input name="price" type="number" step="0.01" min="0" placeholder="Selling price" class="border rounded-xl px-3 py-2"/>
+        <input name="cost" type="number" step="0.01" min="0" placeholder="Buying cost (optional)" class="border rounded-xl px-3 py-2"/>
+        <input name="stock" type="number" step="any" min="0" value="${stock||''}" placeholder="Stock count" class="border rounded-xl px-3 py-2"/>
+        <input name="sku" placeholder="SKU (auto)" class="border rounded-xl px-3 py-2"/>
+      </div>
+      <div class="flex gap-2 pt-2"><button type="button" id="scanRegCancel" class="flex-1 border rounded-xl py-2">Skip</button><button class="flex-1 rounded-xl py-2 text-white font-semibold" style="background:${S.accent()}">Save item</button></div>
+    </form>`);
+  const f=document.getElementById('scanRegForm');
+  setTimeout(function(){try{f.name.focus()}catch(e){}},50);
+  document.getElementById('scanRegCancel').onclick=function(){closeModal();render()};
+  f.onsubmit=function(ev){
+    ev.preventDefault();
+    const bb=biz();if(!bb.products)bb.products=[];
+    const name=String(f.name.value||'').trim();if(!name)return;
+    const unit='pc';const st=normalizeQty(unit,Number(f.stock.value)||0);
+    const cat=((bb.categories&&bb.categories[0])||'General');
+    const np={id:uid(),name:name,sku:String(f.sku.value||'').trim()||genSKU(bb,name),barcode:code,unit:unit,packQty:1,packUnit:unit,category:cat,sourceCat:'custom',sub:'Custom',
+      price:Number(f.price.value)||0,cost:f.cost.value===''?null:Number(f.cost.value),stock:st,reorder:5,batch:'',expiry:'',serial:'',image:'',active:true};
+    bb.products.push(np);
+    if(st>0)recordMovement(bb,{type:'RECEIVE',productId:np.id,productName:np.name,qty:st,note:'Opening stock (scan)'});
+    saveBiz(bb);closeModal();S.scanLast=name+' saved ('+code+')';toast('✓ '+name+' added');render();
+  };
+}
 
 setAccent('#0d9488');
 const boot=db();
