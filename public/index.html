@@ -148,6 +148,7 @@ button.lp-card{cursor:pointer}
 .ad.dark .border,.ad.dark .border-t{border-color:#2a3a57}
 .ad.dark .border-slate-50,.ad.dark tr.border-t{border-color:#22314d}
 .ad.dark .text-slate-500,.ad.dark .text-slate-600,.ad.dark .text-slate-400,.ad.dark .text-slate-700{color:#94a3b8}
+.ad.dark .text-slate-800,.ad.dark .text-slate-900{color:#e2e8f0}
 .ad.dark input,.ad.dark select,.ad.dark textarea{background:#0f1a2e;color:#e2e8f0;border-color:#2a3a57}
 .ad.dark .bg-amber-50{background:#3a2c0b;color:#fde68a;border-color:#5b4510}
 .ad.dark .bg-sky-50{background:#0c2a3d;color:#bae6fd;border-color:#164e63}
@@ -1891,7 +1892,12 @@ async function syncPull(){
       localMine.forEach(b=>{ localMap[b.id]=b; });
       const merged = remote.map(rb=>{
         const lb = localMap[rb.id];
-        if(lb){ const t=mergeTombstones(lb.deletedProducts,rb.deletedProducts); lb.deletedProducts=t; rb.deletedProducts=t; applyTombstones(lb); applyTombstones(rb); }
+        let auditExtra=false;
+        if(lb){ const t=mergeTombstones(lb.deletedProducts,rb.deletedProducts); lb.deletedProducts=t; rb.deletedProducts=t; applyTombstones(lb); applyTombstones(rb);
+          // audit entries made offline on this device + entries already on the server: keep both, upload the missing ones
+          const rIds=new Set((rb.auditLogs||[]).map(function(e){return e&&e.id}));
+          auditExtra=(lb.auditLogs||[]).some(function(e){return e&&!rIds.has(e.id)});
+          const am=auditMerge(lb.auditLogs,rb.auditLogs);lb.auditLogs=am;rb.auditLogs=am; }
         if(lb && lb.updatedAt && rb.updatedAt && lb.updatedAt > rb.updatedAt){
           // local newer — keep local and push
           syncPushBiz(lb);
@@ -1901,6 +1907,7 @@ async function syncPull(){
           syncPushBiz(lb);
           return lb;
         }
+        if(auditExtra)syncPushBiz(rb);
         return rb;
       });
       // local-only businesses not on server yet
@@ -1944,6 +1951,7 @@ async function fullServerSync(opts){
          else if(typeof migrateLocalAccounts==='function') await migrateLocalAccounts();
     }catch(e){ console.warn('account sync',e); }
     try{ if(typeof flushOfflineSales==='function') flushOfflineSales(); }catch(e){}
+    try{ if(typeof migrateLegacyAudit==='function') migrateLegacyAudit(); }catch(e){}
     if(!API_TOKEN){
       if(!quiet){
         if(acc.synced) toast('Uploaded '+acc.synced+' account(s) to server — log in to sync businesses');
@@ -1966,6 +1974,8 @@ async function fullServerSync(opts){
       }
       // Wait for push queue to drain
       try{ await _pushQueue; }catch(e){}
+      // everything (sales, audit entries) reached the server -> the offline queue can be cleared and logged
+      try{ if(!Object.keys(_pushPending).length && typeof markOfflineSynced==='function') markOfflineSynced(); }catch(e){}
     }catch(e){ console.warn('push all',e); }
     let pulled=false;
     try{ pulled = await syncPull(); }catch(e){ console.warn('pull',e); }
@@ -2482,7 +2492,15 @@ function saveBiz(b){
   b.updatedAt = new Date().toISOString();
   const d=db();
   const i=d.businesses.findIndex(x=>x.id===b.id);
-  if(i>=0)d.businesses[i]=b;else d.businesses.push(b);
+  if(i>=0){
+    const old=d.businesses[i];
+    // never lose audit entries when a caller saves an older copy of the business
+    if(old&&Array.isArray(old.auditLogs)&&old.auditLogs.length){
+      const mine=Array.isArray(b.auditLogs)?b.auditLogs:[];
+      if(mine.length!==old.auditLogs.length||(mine[0]&&mine[0].id)!==old.auditLogs[0].id)b.auditLogs=auditMerge(mine,old.auditLogs);
+    }
+    d.businesses[i]=b;
+  }else d.businesses.push(b);
   save(d);
   if(typeof SERVER_MODE!=='undefined'&&SERVER_MODE)syncPushBiz(b);
 }
@@ -2568,38 +2586,105 @@ function whatsappShareSale(o,b){
   const url=phone?('https://wa.me/'+(phone.startsWith('254')?phone:('254'+phone.replace(/^0/,'')))+'?text='+text):('https://wa.me/?text='+text);
   window.open(url,'_blank');
 }
-function pushAudit(action, detail){
+/* ---- Audit log: lives INSIDE the business (b.auditLogs) so it syncs with the business, offline entries included ---- */
+const AUDIT_BIZ_MAX=500;
+function auditMerge(a,b2,max){
+  const m={};
+  [].concat(a||[],b2||[]).forEach(function(e){
+    if(!e||typeof e!=='object')return;
+    const id=e.id||(String(e.at||'')+'|'+String(e.action||'')+'|'+String(e.detail||''));
+    const prev=m[id];
+    if(prev){if(!prev.syncedAt&&e.syncedAt)prev.syncedAt=e.syncedAt;return}
+    m[id]=Object.assign({},e,{id:id});
+  });
+  return Object.keys(m).map(function(k){return m[k]}).sort(function(x,y){return String(y.at||'').localeCompare(String(x.at||''))}).slice(0,max||AUDIT_BIZ_MAX);
+}
+function pushAudit(action, detail, extra){
   try{
     const d=db();
-    if(!d.auditLogs)d.auditLogs=[];
-    const u=currentUser();const w=currentWorker();
-    d.auditLogs.unshift({id:uid(),at:new Date().toISOString(),action,detail:detail||'',user:(u&&u.email)||(w&&w.worker&&w.worker.name)||'system'});
-    d.auditLogs=d.auditLogs.slice(0,200);
-    save(d);
+    const u=currentUser();const cw=currentWorker();
+    const asWorker=!!(cw&&cw.worker&&!u);
+    const who=asWorker?((typeof wFull==='function'?wFull(cw.worker):(cw.worker.name||cw.worker.username))||'worker'):((u&&u.email)||'system');
+    const e=Object.assign({id:uid(),at:new Date().toISOString(),action:String(action||'event'),detail:detail==null?'':String(detail),user:who,role:asWorker?'worker':(u?'owner':'system'),offline:(typeof navigator!=='undefined'&&navigator.onLine===false)},extra||{});
+    const bid=e.businessId||(asWorker?cw.session.businessId:d.currentBizId);
+    const b=bid?(d.businesses||[]).find(function(x){return x.id===bid}):null;
+    if(b){
+      e.businessId=b.id;
+      b.auditLogs=auditMerge([e],b.auditLogs);
+      saveBiz(b);           // saves locally and queues the upload (or uploads on the next sync when offline)
+    }else{
+      if(!d.auditLogs)d.auditLogs=[];
+      d.auditLogs.unshift(e);d.auditLogs=d.auditLogs.slice(0,200);
+      save(d);
+    }
   }catch(e){}
+}
+/* Entries written by older versions went to a device-wide list that never reached the server. Move them into
+   the business they belong to (the owner's only business, or the one whose invoice number they mention). */
+function migrateLegacyAudit(){
+  try{
+    const d=db();const u=currentUser();
+    if(!u||isAdmin())return;
+    const legacy=(d.auditLogs||[]).filter(function(l){return l&&!l.businessId});
+    if(!legacy.length)return;
+    const mine=(d.businesses||[]).filter(function(b){return b.ownerId===u.id});
+    if(!mine.length)return;
+    const keep=[];const touched={};
+    (d.auditLogs||[]).forEach(function(l){
+      if(!l||l.businessId){keep.push(l);return}
+      let target=mine.length===1?mine[0]:null;
+      if(!target&&l.detail)target=mine.find(function(b){return (b.orders||[]).some(function(o){return o.number===l.detail})})||null;
+      if(!target){keep.push(l);return}
+      const e=Object.assign({},l,{businessId:target.id,legacy:true,role:l.role||'owner'});
+      if(e.action==='sale'||e.action==='refund')e.ref=e.ref||String(l.detail||'');
+      if(e.action==='offline_sale_queued')e.offline=true;
+      target.auditLogs=auditMerge([e],target.auditLogs);touched[target.id]=target;
+    });
+    d.auditLogs=keep;
+    save(d);
+    Object.keys(touched).forEach(function(k){saveBiz(touched[k])});
+  }catch(e){console.warn('migrateLegacyAudit',e)}
 }
 function offlineQueue(){
   try{return JSON.parse(localStorage.getItem('bh_offline_sales')||'[]')}catch(e){return []}
 }
 function setOfflineQueue(q){localStorage.setItem('bh_offline_sales',JSON.stringify(q||[]))}
-function enqueueOfflineSale(sale){
-  const q=offlineQueue();q.push(sale);setOfflineQueue(q);
-  pushAudit('offline_sale_queued', sale.number||'');
+function enqueueOfflineSale(sale,bizId){
+  const q=offlineQueue();
+  if(bizId)sale.bizId=bizId;
+  q.push(sale);setOfflineQueue(q);
+  pushAudit('offline_sale_queued', sale.number||'', {ref:sale.number||'',offline:true,pub:'saved on device while offline',businessId:bizId||undefined});
 }
+/* Make sure every queued offline sale is inside ITS business (not just whichever one is open). The queue is kept
+   until the server has really received the data - see markOfflineSynced(). */
 function flushOfflineSales(){
-  if(!navigator.onLine)return 0;
   const q=offlineQueue();if(!q.length)return 0;
-  const b=biz();if(!b)return 0;
-  let n=0;
-  q.forEach(sale=>{
+  const d=db();let n=0;const touched={};
+  q.forEach(function(sale){
+    const b=(sale.bizId&&(d.businesses||[]).find(function(x){return x.id===sale.bizId}))||biz();
+    if(!b)return;
     if(!b.orders)b.orders=[];
-    if(b.orders.some(o=>o.id===sale.id||o.offlineId===sale.id))return;
-    sale.offlineId=sale.id;sale.syncedAt=new Date().toISOString();
-    b.orders.push(sale);
-    n++;
+    if(b.orders.some(function(o){return o.id===sale.id||o.offlineId===sale.id}))return;
+    const copy=Object.assign({},sale);delete copy.bizId;
+    copy.offlineId=sale.id;copy.syncedAt=new Date().toISOString();
+    b.orders.push(copy);touched[b.id]=b;n++;
   });
-  if(n){saveBiz(b);setOfflineQueue([]);pushAudit('offline_sales_synced', String(n));toast(n+' offline sale(s) synced')}
+  Object.keys(touched).forEach(function(k){saveBiz(touched[k])});
+  if(n)toast(n+' offline sale(s) restored');
   return n;
+}
+/* Called by fullServerSync once every business push has been accepted by the server. */
+function markOfflineSynced(){
+  try{
+    const q=offlineQueue();if(!q.length)return;
+    const by={};
+    q.forEach(function(s){const k=s.bizId||'';by[k]=(by[k]||0)+1});
+    setOfflineQueue([]);
+    Object.keys(by).forEach(function(k){
+      pushAudit('offline_sales_synced',by[k]+' offline sale(s) uploaded',{pub:by[k]+' offline sale(s) uploaded',businessId:k||undefined});
+    });
+    toast(q.length+' offline sale(s) synced');
+  }catch(e){}
 }
 function currentShift(b,workerId){
   if(!b||!b.shifts)return null;
@@ -6537,41 +6622,62 @@ function viewAdmin(){
       </div>
     </div>`;
   }  else if(tab==='audit'){
+    /* Platform admin view. Client sales are private here: no invoice numbers, no prices (the server strips them too). */
     const localDerived=[];
     try{
       (d.businesses||[]).forEach(function(b){
         const owner=(d.users||[]).find(function(u){return u.id===b.ownerId});
         const em=owner?owner.email:(b.ownerEmail||'');
+        const logged={};(b.auditLogs||[]).forEach(function(e){if(e&&e.action==='sale'&&e.ref)logged[e.ref]=1});
         (b.orders||[]).slice(0,40).forEach(function(o){
+          if(o.number&&logged[o.number])return;
+          const n=(o.items||[]).length;
           localDerived.push({
-            at:o.createdAt||o.date,
+            id:'lord-'+(o.id||o.number),at:o.at||o.createdAt||o.date,
             action:o.source==='marketplace'?'marketplace_order':(o.source==='online'?'online_order':'sale'),
-            detail:(b.name||'')+': '+(o.number||'')+' · '+(o.total!=null?o.total:'')+' · '+(o.payment||o.status||''),
+            detail:n+' item'+(n===1?'':'s')+((o.payMethod||o.payment)?' · '+String(o.payMethod||o.payment).toLowerCase():''),
             user:o.customer||em||'client',businessName:b.name,clientEmail:em,source:'business',businessId:b.id
           });
+        });
+        (b.auditLogs||[]).forEach(function(e){
+          if(!e)return;
+          localDerived.push(Object.assign({},e,{id:'lbl-'+b.id+'-'+e.id,businessName:b.name,clientEmail:em,businessId:b.id,source:'business'}));
         });
         (b.expenses||[]).slice(0,15).forEach(function(e){
           localDerived.push({at:e.createdAt||e.date,action:'expense',detail:(b.name||'')+': '+(e.category||e.name||'')+' · '+(e.amount||''),user:em||'client',businessName:b.name,clientEmail:em,source:'business',businessId:b.id});
         });
       });
     }catch(e){console.error(e)}
+    const SALES_ACT={sale:1,refund:1,offline_sale_queued:1,offline_sales_synced:1,online_order:1,marketplace_order:1,invoice:1,order:1,quotation:1};
+    const scrub=function(t){return String(t==null?'':t).replace(/\b[A-Z]{2,6}-[A-Z0-9]{2,}\b/g,'').replace(/\b(?:KES|KSH|Ksh|Kes)\.?\s*[\d,]+(?:\.\d+)?/g,'').replace(/\s*·\s*(?=·|$)/g,'').replace(/\s{2,}/g,' ').trim()};
+    const safe=function(l){const o=Object.assign({},l);const pub=o.pub;delete o.ref;delete o.amount;delete o.pub;o.detail=SALES_ACT[l.action]?scrub(pub||(l.id&&String(l.id).indexOf('lord-')===0?l.detail:'')):scrub(l.detail);return o};
     const serverLogs=S.adminAuditLogs||[];
     const platformLocal=d.auditLogs||[];
-    let logs=[].concat(serverLogs,platformLocal,localDerived);
+    let logs=[].concat(serverLogs,platformLocal,localDerived).map(safe);
     const seen={};
     logs=logs.filter(function(l){
       const id=String(l.id||'')+String(l.at||'')+String(l.action||'')+String(l.detail||'');
       if(seen[id])return false;seen[id]=1;return true;
     });
     logs.sort(function(a,b){return String(b.at||'').localeCompare(String(a.at||''))});
+    const AUD={
+      sale:['Sale','#059669','#34d399'],refund:['Refund','#dc2626','#f87171'],
+      offline_sale_queued:['Sale saved offline','#d97706','#fbbf24'],offline_sales_synced:['Offline sales synced','#0d9488','#2dd4bf'],
+      online_order:['Online order','#2563eb','#60a5fa'],marketplace_order:['Marketplace order','#7c3aed','#a78bfa'],
+      expense:['Expense','#ea580c','#fb923c'],worker:['Worker','#7c3aed','#a78bfa'],worker_added:['Worker added','#7c3aed','#a78bfa'],
+      worker_edited:['Worker edited','#7c3aed','#a78bfa'],worker_suspended:['Worker suspended','#dc2626','#f87171'],worker_reactivated:['Worker reactivated','#059669','#34d399'],
+      shift_open:['Shift started','#2563eb','#60a5fa'],shift_close:['Shift closed','#475569','#cbd5e1'],permission:['Permission changed','#d97706','#fbbf24'],
+      business_update:['Business updated','#475569','#cbd5e1'],account_synced:['Account synced','#0d9488','#2dd4bf']
+    };
+    const aud=function(a){const k=AUD[a];return k?{label:k[0],c:dark?k[2]:k[1]}:{label:String(a||'event').replace(/_/g,' ').replace(/^./,function(c){return c.toUpperCase()}),c:dark?'#cbd5e1':'#475569'}};
     const q=(S.adminAuditQ||'').toLowerCase();
-    if(q)logs=logs.filter(function(l){return [l.action,l.detail,l.user,l.businessName,l.clientEmail].join(' ').toLowerCase().includes(q)});
+    if(q)logs=logs.filter(function(l){return [l.action,aud(l.action).label,l.detail,l.user,l.businessName,l.clientEmail].join(' ').toLowerCase().includes(q)});
     const bizNames=[...new Set(logs.map(function(l){return l.businessName}).filter(Boolean))];
     body=`<div class="bg-white rounded-2xl border p-4 space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 class="font-semibold">Audit log — all clients</h3>
-          <p class="text-xs text-slate-500 mt-1">Platform events plus sales, orders and expenses from every business. Use Refresh when online for the full server history.</p>
+          <p class="text-xs text-slate-500 mt-1">What happened in each business: sales, refunds, shifts, workers, permissions and offline sync. Invoice numbers and prices are never shown to the platform admin. Use Refresh when online for the full server history.</p>
         </div>
         <button type="button" id="adminAuditRefresh" class="px-3 py-1.5 rounded-lg border text-sm font-medium">Refresh from server</button>
       </div>
@@ -6580,14 +6686,15 @@ function viewAdmin(){
         <span class="text-xs text-slate-500 self-center">${logs.length} shown · ${bizNames.length} businesses</span>
       </div>
       <div class="text-sm max-h-[70vh] overflow-y-auto divide-y">
-        ${logs.slice(0,500).map(l=>`<div class="py-2.5 flex flex-wrap gap-x-2 gap-y-1">
-          <span class="text-xs text-slate-400 whitespace-nowrap">${esc(String(l.at||'').slice(0,19).replace('T',' '))}</span>
-          <span class="font-semibold text-slate-800">${esc(l.action)}</span>
+        ${logs.slice(0,500).map(l=>{const a=aud(l.action);return `<div class="py-2.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span class="text-xs text-slate-500 whitespace-nowrap">${esc(String(l.at||'').slice(0,19).replace('T',' '))}</span>
+          <span class="text-xs font-semibold px-2 py-0.5 rounded-full" style="color:${a.c};background:color-mix(in srgb,${a.c} 16%,transparent);border:1px solid color-mix(in srgb,${a.c} 40%,transparent)">${esc(a.label)}</span>
+          ${l.offline?`<span class="text-[11px] px-2 py-0.5 rounded-full" style="color:${dark?'#fbbf24':'#b45309'};background:color-mix(in srgb,#f59e0b 16%,transparent)" title="Made while the device was offline">offline${l.syncedAt?' · synced '+esc(String(l.syncedAt).slice(0,16).replace('T',' ')):''}</span>`:''}
           ${l.businessName?`<span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">${esc(l.businessName)}</span>`:''}
           <span class="text-slate-600">${esc(l.user||'')}</span>
-          ${l.clientEmail?`<span class="text-xs text-slate-400">${esc(l.clientEmail)}</span>`:''}
-          <span class="text-slate-500 basis-full sm:basis-auto">${esc(l.detail||'')}</span>
-        </div>`).join('')||'<p class="text-slate-400 py-8 text-center">No audit entries yet</p>'}
+          ${l.clientEmail?`<span class="text-xs text-slate-500">${esc(l.clientEmail)}</span>`:''}
+          ${l.detail?`<span class="text-slate-500 basis-full sm:basis-auto">${esc(l.detail)}</span>`:''}
+        </div>`}).join('')||'<p class="text-slate-400 py-8 text-center">No audit entries yet</p>'}
       </div>
     </div>`;
   }
@@ -7234,7 +7341,7 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
       if(p)p.stock=Math.round(((Number(p.stock)||0)+stockNeeded(p,it.unit||productPriceUnit(p),Number(it.qty)||0))*10000)/10000;
     });
     o.status='REFUNDED';o.refundedAt=today();
-    saveBiz(b);pushAudit('refund',o.number);toast('Refunded · stock restored');render();
+    saveBiz(b);pushAudit('refund',o.number,{ref:o.number,pub:'sale refunded'});toast('Refunded · stock restored');render();
   };
   document.querySelectorAll('[data-rep-period]').forEach(el=>el.onclick=()=>{S.repPeriod=el.dataset.repPeriod;render()});
   document.querySelectorAll('[data-rep-shift]').forEach(el=>el.onclick=()=>{S.repDate=rpShift(S.repPeriod||'daily',S.repDate||today(),+el.dataset.repShift);render()});
@@ -7688,7 +7795,7 @@ render();
     const order={id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items,total,status:(payMethod==='Credit'?'CREDIT':'PAID'),
       method:payMethod.toLowerCase(),payMethod,phone,receipt,fulfillment,deliveryAddress:fulfillment==='delivery'?delivAddr:'',source:'pos',discountAmt:discountAmt,discountPct:subtotal>0?Math.round(discountAmt/subtotal*10000)/100:0,subtotal:subtotal,cashTendered:payMethod==='Cash'?(S._cashTendered||total):null,cashChange:payMethod==='Cash'?(S._cashChange||0):null,servedBy:S._servedBy||null,at:new Date().toISOString(),shiftId:(function(){try{const sb=S._servedBy&&S._servedBy.id;const cw=isWorkerMode()?currentWorker():null;const s=currentShift(b,sb||(cw&&cw.worker&&cw.worker.id)||null)||currentShift(b);return s?s.id:''}catch(e){return ''}})(),branchId:(biz()&&biz().currentBranchId)||'main'};S._servedBy=null;S.cartDiscount=0;
     if(payMethod==='M-Pesa')rememberMpesaCode(b,receipt,order.id);
-    if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];S.cartDiscount=0;saveBiz(b);if(!navigator.onLine){enqueueOfflineSale(Object.assign({},order));}else if(SERVER_MODE){/* synced via saveBiz */}pushAudit('sale',order.number);return order;
+    if(!b.orders)b.orders=[];b.orders.push(order);b.cart=[];S.cartDiscount=0;saveBiz(b);if(!navigator.onLine){enqueueOfflineSale(Object.assign({},order),b.id);}pushAudit('sale',order.number,{ref:order.number,pub:(items.length+' item'+(items.length===1?'':'s')+' · '+payMethod.toLowerCase())});return order;
   }
 
   
@@ -8531,6 +8638,7 @@ render();
 
   
   flushOfflineSales();
+  try{const _au=currentUser();if(_au&&window._auditMigratedFor!==_au.id){window._auditMigratedFor=_au.id;migrateLegacyAudit()}}catch(e){}
   window.addEventListener('online',function(){try{fullServerSync({quiet:false})}catch(e){try{flushOfflineSales()}catch(e2){}}});
   const openShiftBtn=document.getElementById('openShiftBtn');
   if(openShiftBtn)openShiftBtn.onclick=()=>{
