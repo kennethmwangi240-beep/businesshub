@@ -94,6 +94,19 @@ r=await f('POST','/api/logout',null,T1b);ok('logout',r.s===200);r=await f('GET',
   r=await f('GET','/api/admin/audit',null,TA);ok('audit: owner cannot call admin audit',r.s===403);
   await f('DELETE','/api/admin/users',{userId:UA},A); // leave no trace for the totals checks below
 }
+// plan expiry: paid plans get a 30-day expiry, owners cannot change it, admin can renew
+{
+  const kt=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Nairobi'}).format(new Date());
+  const plus=(d,n)=>{const x=new Date(d+'T12:00:00Z');x.setUTCDate(x.getUTCDate()+n);return x.toISOString().slice(0,10)};
+  r=await f('POST','/api/register',{email:'expiry1@test.com',password:'password1'});const TE=r.j.token,UE=r.j.user.id;
+  r=await f('POST','/api/businesses',{name:'Expiry Shop'},TE);const EB=r.j.business.id;
+  ok('expiry: new business is a trial with no plan expiry',r.j.business.trialEndsAt===plus(kt(),3)&&!r.j.business.planExpiresAt,r.j.business);
+  r=await f('PUT','/api/businesses/'+EB,{plan:'PRO'},A);ok('expiry: admin activates plan -> expires in 30 days',r.j.business.planExpiresAt===plus(kt(),30),r.j.business.planExpiresAt);
+  r=await f('PUT','/api/businesses/'+EB,{plan:'PRO'},A);ok('expiry: same plan sent again does not extend',r.j.business.planExpiresAt===plus(kt(),30));
+  r=await f('PUT','/api/businesses/'+EB,{planExpiresAt:'2099-01-01'},TE);ok('expiry: owner cannot extend own plan',(await f('GET','/api/businesses/'+EB,null,TE)).j.business.planExpiresAt===plus(kt(),30));
+  r=await f('PUT','/api/businesses/'+EB,{planExpiresAt:plus(kt(),2)},A);ok('expiry: admin can set the date',r.j.business.planExpiresAt===plus(kt(),2));
+  await f('DELETE','/api/admin/users',{userId:UE},A);
+}
 // misc
 r=await f('GET','/api/nope');ok('unknown api 404',r.s===404);
 let x=await fetch(B+'/nope.js');ok('unknown asset 404',x.status===404);x=await fetch(B+'/some/route');ok('SPA fallback',x.status===200);
