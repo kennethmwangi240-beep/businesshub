@@ -3118,6 +3118,55 @@ function trialExpired(b){
   if(planIsPaid(b))return false;
   return daysLeftInTrial(b)<0;
 }
+/* ---- Plan / trial expiry: date, exact moment (end of that day, Kenya time), countdown and alert level ---- */
+const PLAN_DAYS=30;
+function expiryInfo(b){
+  if(!b)return null;
+  const paid=planIsPaid(b);
+  const date=paid?(b.planExpiresAt||(b.planPaidAt?addDays(String(b.planPaidAt).slice(0,10),PLAN_DAYS):null)):trialEndsOn(b);
+  if(!date)return null;
+  const endMs=new Date(String(date).slice(0,10)+'T23:59:59+03:00').getTime();
+  if(isNaN(endMs))return null;
+  const ms=endMs-Date.now();
+  const alertAt=(paid?7:2)*86400000;               // paid plans warn 7 days ahead, the 3-day trial warns for its last 2 days
+  const lvl=ms<0?'expired':(ms<=86400000?'urgent':(ms<=alertAt?'soon':'ok'));
+  return {kind:paid?'plan':'trial',paid:paid,date:String(date).slice(0,10),endMs:endMs,ms:ms,expired:ms<0,level:lvl,alert:lvl!=='ok'};
+}
+function expiryWhen(info){ // "Fri, 21 Nov 2026, 11:59 PM EAT"
+  return new Date(info.endMs).toLocaleString('en-GB',{timeZone:KE_TZ,weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true}).replace(/\bam\b/,'AM').replace(/\bpm\b/,'PM')+' EAT';
+}
+function expiryLeft(info){
+  const a=Math.abs(info.ms),d=Math.floor(a/86400000),h=Math.floor(a%86400000/3600000),m=Math.floor(a%3600000/60000);
+  const t=d>0?d+' day'+(d===1?'':'s')+(h?' '+h+' h':''):(h>0?h+' h '+m+' min':Math.max(m,1)+' min');
+  return info.expired?'ended '+t+' ago':t+' left';
+}
+function expiryBanner(b,compact){
+  const x=expiryInfo(b);if(!x)return '';
+  const what=x.paid?(planDisplayName(b)+' plan'):'Free trial';
+  if(!x.alert){
+    if(!compact)return '';
+    return `<div class="rounded-xl p-3 mb-4 text-sm bg-emerald-50 border border-emerald-100 text-emerald-900"><b>${esc(what)}:</b> active until ${esc(expiryWhen(x))} · ${esc(expiryLeft(x))} · <button type="button" data-nav="settings" class="underline font-semibold">Plans</button></div>`;
+  }
+  const red=x.level!=='soon';
+  const cls=red?'bg-red-50 border-red-200 text-red-900':'bg-amber-50 border-amber-200 text-amber-950';
+  const head=x.expired?`Your ${esc(what)} has ended`:(x.level==='urgent'?`Your ${esc(what)} ends soon`:`Your ${esc(what)} is almost over`);
+  return `<div class="expiry-banner rounded-xl p-3 mb-4 text-sm border ${cls} flex flex-wrap items-center justify-between gap-2" role="alert">
+    <div><b>⚠ ${head}.</b> ${x.expired?'Ended':'Expires'} <b>${esc(expiryWhen(x))}</b> · <span class="font-semibold">${esc(expiryLeft(x))}</span>${x.paid&&x.expired?' · renew to avoid losing access.':''}</div>
+    <button type="button" data-nav="settings" class="px-3 py-1.5 rounded-lg text-white text-xs font-semibold" style="background:${red?'#dc2626':'#d97706'}">${x.paid?'Renew plan':'Choose a plan'}</button>
+  </div>`;
+}
+function planDisplayName(b){const pl=(db().plans||DEFAULT_PLANS)[String((b&&b.plan)||'').toUpperCase()]||{};return pl.name||String((b&&b.plan)||'Paid')}
+/* extend a plan 30 days on top of any time still left (local / no-server mode and admin buttons) */
+function renewPlanExpiry(b){const t=today();const base=(b.planExpiresAt&&b.planExpiresAt>t)?b.planExpiresAt:t;b.planExpiresAt=addDays(base,PLAN_DAYS);return b.planExpiresAt}
+/* once per day per level: a popup when the app opens and the plan/trial is almost over */
+function expiryToastOnce(b){
+  try{
+    const x=expiryInfo(b);if(!x||!x.alert)return;
+    const k='bh_exp_toast_'+b.id,v=today()+':'+x.level;
+    if(localStorage.getItem(k)===v)return;localStorage.setItem(k,v);
+    toast((x.expired?'Your plan has ended — ':'Your plan ends ')+(x.expired?'renew now':expiryWhen(x)+' ('+expiryLeft(x)+')'));
+  }catch(e){}
+}
 /** Max workers allowed by the business's plan (Infinity when the plan sets no number) */
 function workerLimit(b){
   const plans=db().plans||DEFAULT_PLANS;
@@ -4316,7 +4365,7 @@ function viewApp(){
         <button type="button" data-nav="shop" class="text-xs px-3 py-1.5 rounded-lg text-white font-medium" style="background:${accent}">Shop</button>
       </div>
     </header>
-    <main class="p-4 md:p-6 flex-1">${main}</main>
+    <main class="p-4 md:p-6 flex-1">${expiryBanner(b,false)}${main}</main>
   </div></div>`;
 }
 
@@ -4373,9 +4422,7 @@ function secDash(b,a){
   });
   const recentInv=(b.orders||[]).slice().reverse().slice(0,6);
   const tips=typeof aiInsights==='function'?aiInsights(b).slice(0,3):[];
-  const trialBanner=!planIsPaid(b)?`<div class="rounded-xl p-3 mb-4 text-sm ${trialLeft<0?'bg-red-50 border border-red-100 text-red-900':trialLeft<=1?'bg-amber-50 border border-amber-100 text-amber-950':'bg-emerald-50 border border-emerald-100 text-emerald-900'}">
-    ${trialLeft<0?`<b>Trial ended.</b> Choose a paid plan.`:`<b>Free trial:</b> ${trialLeft} day(s) left · ends ${esc(trialEndsOn(b))} · <button type="button" data-nav="settings" class="underline font-semibold">Plans</button>`}
-  </div>`:'';
+  const trialBanner=expiryBanner(b,true).includes('expiry-banner')?'':expiryBanner(b,true);
   const teamBanner=(b.shopMode==='team')?`<div class="bg-slate-900 text-white rounded-2xl p-4 mb-4 flex flex-wrap items-center justify-between gap-3">
       <div><p class="font-semibold">Team mode</p><p class="text-xs text-slate-300">Workers use separate login. They cannot open your owner dashboard.</p></div>
       <div class="flex gap-2">
@@ -5111,17 +5158,93 @@ function secQuotations(b,a){
   <div class="bg-white rounded-2xl border"><table class="w-full text-sm"><tbody>${rows||'<tr><td class="p-8 text-center text-slate-400">None</td></tr>'}</tbody></table></div>`;
 }
 
+/* ---- Invoices grouped by day / week (Mon-Sun) / month, newest first; only the newest period is open ---- */
+function invDay(o){return String(o.date||'').slice(0,10)||String(keDT(o.at||o.createdAt)).slice(0,10)||''}
+function invAdd(iso,n){const d=new Date(iso+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)}
+function invGroupKey(day,mode){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return 'none';
+  if(mode==='month')return day.slice(0,7);
+  if(mode==='week'){const dow=(new Date(day+'T12:00:00Z').getUTCDay()+6)%7;return invAdd(day,-dow)}
+  return day;
+}
+function invGroupLabel(key,mode){
+  if(key==='none')return {t:'No date',tag:''};
+  const fm=function(iso,o){return new Date(iso+'T12:00:00Z').toLocaleDateString('en-GB',Object.assign({timeZone:'UTC'},o))};
+  const t=today();
+  if(mode==='month')return {t:fm(key+'-01',{month:'long',year:'numeric'}),tag:key===t.slice(0,7)?'This month':''};
+  if(mode==='week'){
+    const end=invAdd(key,6);
+    const nc=function(x){return x.replace(/^(\w{3}),/,'$1')};
+    return {t:nc(fm(key,{weekday:'short',day:'numeric',month:'short'}))+' – '+nc(fm(end,{weekday:'short',day:'numeric',month:'short',year:'numeric'})),tag:key===invGroupKey(t,'week')?'This week':''};
+  }
+  return {t:fm(key,{weekday:'long',day:'numeric',month:'short',year:'numeric'}),tag:key===t?'Today':(key===invAdd(t,-1)?'Yesterday':'')};
+}
 function secInvoices(b,a){
-  const rows=(b.orders||[]).slice().reverse().map(o=>`<tr class="border-t">
-    <td class="px-4 py-3"><button type="button" data-open-inv="${o.id}" class="font-medium" style="color:${a}">${esc(o.number)}</button></td>
-    <td class="px-4 py-3 text-xs">${o.status}</td>
-    <td class="px-4 py-3 text-xs text-slate-500">${esc(o.payMethod||o.method||'')}${o.source==='online'?' · online':''}</td>
-    <td class="px-4 py-3 text-right font-medium">${kes(o.total)}</td>
-  </tr>`).join('');
-  return `<p class="text-sm text-slate-500 mb-4">Open an invoice for full details, logo and print</p>
-  <div class="bg-white rounded-2xl border"><table class="w-full text-sm"><thead class="bg-slate-50 text-left text-slate-500"><tr>
-    <th class="px-4 py-3">Number</th><th class="px-4 py-3">Status</th><th class="px-4 py-3">Payment</th><th class="px-4 py-3 text-right">Total</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="4" class="p-8 text-center text-slate-400">None</td></tr>'}</tbody></table></div>`;
+  const mode=S.invView==='week'||S.invView==='month'?S.invView:'day';
+  const everything=(b.orders||[]).slice().reverse();
+  let from=/^\d{4}-\d{2}-\d{2}$/.test(S.invFrom||'')?S.invFrom:'',to=/^\d{4}-\d{2}-\d{2}$/.test(S.invTo||'')?S.invTo:'';
+  if(from&&to&&from>to){const t0=from;from=to;to=t0}
+  const filtered=!!(from||to);
+  const all=filtered?everything.filter(function(o){const dd=invDay(o);return dd&&(!from||dd>=from)&&(!to||dd<=to)}):everything;
+  const rangeTotal=all.reduce(function(sum,o){return sum+(o.status==='PAID'?Number(o.total||0):0)},0);
+  const groups={};
+  all.forEach(function(o){
+    const k=invGroupKey(invDay(o),mode);
+    const g=groups[k]||(groups[k]={key:k,rows:[],paid:0,paidN:0});
+    g.rows.push(o);if(o.status==='PAID'){g.paid+=Number(o.total||0);g.paidN++}
+  });
+  const keys=Object.keys(groups).sort(function(x,y){return x==='none'?1:y==='none'?-1:y.localeCompare(x)});
+  S.invOpen=S.invOpen||{};S.invMore=S.invMore||{};
+  const CAP=100;
+  const seg=[['day','Daily'],['week','Weekly'],['month','Monthly']].map(function(v){
+    const on=v[0]===mode;
+    return `<button type="button" data-inv-view="${v[0]}" class="px-4 py-1.5 text-sm font-medium rounded-lg ${on?'text-white':'bg-white border'}" style="${on?'background:'+a:''}">${v[1]}</button>`;
+  }).join('');
+  const rowHtml=function(o){
+    const tm=o.at?keDT(o.at).slice(11):'';
+    return `<tr class="border-t">
+      <td class="px-4 py-3"><button type="button" data-open-inv="${o.id}" class="font-medium" style="color:${a}">${esc(o.number)}</button></td>
+      <td class="px-4 py-3 text-xs text-slate-500">${mode==='day'?esc(tm):esc(invDay(o).slice(5)+(tm?' '+tm:''))}</td>
+      <td class="px-4 py-3 text-xs">${esc(o.status)}</td>
+      <td class="px-4 py-3 text-xs text-slate-500">${esc(o.payMethod||o.method||'')}${o.source==='online'?' · online':''}</td>
+      <td class="px-4 py-3 text-right font-medium">${kes(o.total)}</td>
+    </tr>`;
+  };
+  const sections=keys.map(function(k,idx){
+    const g=groups[k];const lb=invGroupLabel(k,mode);const id=mode+':'+k;
+    const open=S.invOpen[id]===undefined?(filtered&&keys.length<=5?true:idx===0):!!S.invOpen[id];
+    const shown=S.invMore[id]?g.rows:g.rows.slice(0,CAP);
+    return `<details data-inv-grp="${id}" class="bg-white rounded-2xl border mb-3 overflow-hidden" ${open?'open':''}>
+      <summary class="cursor-pointer select-none px-4 py-3 flex flex-wrap items-center justify-between gap-2 bg-slate-50">
+        <span class="font-semibold">${esc(lb.t)}${lb.tag?` <span class="ml-2 text-xs font-medium px-2 py-0.5 rounded-full text-white" style="background:${a}">${lb.tag}</span>`:''}</span>
+        <span class="text-xs text-slate-500">${g.rows.length} invoice${g.rows.length===1?'':'s'} · <b class="text-slate-700">${kes(g.paid)}</b> paid${g.paidN!==g.rows.length?` (${g.paidN} of ${g.rows.length})`:''}</span>
+      </summary>
+      <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-500"><tr>
+        <th class="px-4 py-2">Number</th><th class="px-4 py-2">${mode==='day'?'Time':'Date'}</th><th class="px-4 py-2">Status</th><th class="px-4 py-2">Payment</th><th class="px-4 py-2 text-right">Total</th></tr></thead>
+        <tbody>${shown.map(rowHtml).join('')}</tbody></table></div>
+      ${shown.length<g.rows.length?`<div class="p-3 text-center border-t"><button type="button" data-inv-more="${id}" class="text-sm underline" style="color:${a}">Show all ${g.rows.length} invoices (${g.rows.length-shown.length} more)</button></div>`:''}
+    </details>`;
+  }).join('');
+  const t=today(),wk=invGroupKey(t,'week'),mFirst=t.slice(0,7)+'-01';
+  const lmLast=invAdd(mFirst,-1),lmFirst=lmLast.slice(0,7)+'-01';
+  const presets=[['Today',t,t],['Yesterday',invAdd(t,-1),invAdd(t,-1)],['This week',wk,invAdd(wk,6)],['This month',mFirst,t],['Last month',lmFirst,lmLast]];
+  const chips=presets.map(function(pr){const on=from===pr[1]&&to===pr[2];return `<button type="button" data-inv-preset="${pr[1]}|${pr[2]}" class="text-xs px-3 py-1.5 rounded-full border ${on?'text-white':'bg-white'}" style="${on?'background:'+a+';border-color:'+a:''}">${pr[0]}</button>`}).join('');
+  const fmtD=function(x){return x?new Date(x+'T12:00:00Z').toLocaleDateString('en-GB',{timeZone:'UTC',day:'numeric',month:'short',year:'numeric'}):''};
+  const filterBar=`<div class="bg-white rounded-2xl border p-3 mb-4 flex flex-wrap items-end gap-3">
+    <label class="text-xs text-slate-500">From<input type="date" id="invFrom" value="${esc(from)}" max="${esc(to||'')}" class="block border rounded-lg px-2 py-1.5 text-sm mt-1"/></label>
+    <label class="text-xs text-slate-500">To<input type="date" id="invTo" value="${esc(to)}" min="${esc(from||'')}" class="block border rounded-lg px-2 py-1.5 text-sm mt-1"/></label>
+    <div class="flex flex-wrap gap-1.5 items-center">${chips}${filtered?`<button type="button" id="invClearFilter" class="text-xs px-3 py-1.5 rounded-full border border-red-200 text-red-700 bg-white">✕ Clear dates</button>`:''}</div>
+  </div>
+  ${filtered?`<p class="text-sm mb-3"><b>${all.length}</b> of ${everything.length} invoice${everything.length===1?'':'s'} · ${esc(from?fmtD(from):'start')} → ${esc(to?fmtD(to):'now')} · <b>${kes(rangeTotal)}</b> paid</p>`:''}`;
+  const emptyMsg=filtered?`<div class="bg-white rounded-2xl border p-8 text-center text-slate-400">No invoices between ${esc(from?fmtD(from):'the start')} and ${esc(to?fmtD(to):'today')}.</div>`:'<div class="bg-white rounded-2xl border p-8 text-center text-slate-400">No invoices yet</div>';
+  return `<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <p class="text-sm text-slate-500">${everything.length} invoice${everything.length===1?'':'s'} · open one for full details, logo and print</p>
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="flex gap-1 p-1 rounded-xl bg-slate-100">${seg}</div>
+      ${keys.length>1?`<button type="button" id="invExpandAll" class="text-xs px-3 py-1.5 rounded-lg border bg-white">Expand all</button><button type="button" id="invCollapseAll" class="text-xs px-3 py-1.5 rounded-lg border bg-white">Collapse all</button>`:''}
+    </div></div>
+  ${filterBar}
+  ${sections||emptyMsg}`;
 }
 
 function secInvoiceDetail(b,a){
@@ -5291,17 +5414,112 @@ function secReports(b,a){
     <p class="mt-6 text-xs text-slate-400">Generated ${new Date().toLocaleString('en-GB',{timeZone:KE_TZ})} · Cash basis: stock purchases appear under expenses.</p>
   </div></div>`;
 }
-function secExpenses(b,a){
-  const rows=(b.expenses||[]).slice().reverse().map(e=>`<tr class="border-t"><td class="px-4 py-3 text-sm">${esc(e.date)}</td>
-    <td class="px-4 py-3 text-xs ${e.type==='INCOME'?'text-emerald-600':'text-rose-600'}">${e.type}</td>
-    <td class="px-4 py-3 text-sm">${esc(e.description)}</td>
-    <td class="px-4 py-3 text-right font-medium">${kes(e.amount)}</td></tr>`).join('');
-  return `<div class="flex justify-between mb-4"><p class="text-sm text-slate-500">Income & expenses</p>
-    <button type="button" id="addExp" class="text-sm text-white px-4 py-2 rounded-xl" style="background:${a}">+ Add</button></div>
-  <div class="bg-white rounded-2xl border"><table class="w-full text-sm"><tbody>${rows||'<tr><td class="p-8 text-center text-slate-400">None</td></tr>'}</tbody></table></div>`;
+/* ---- Finance: sales come LIVE from the invoices (paid ones), plus manual income/expenses; weekly / monthly bar graphs ---- */
+function finBuckets(b,mode,n){
+  const t=today(),keys=[];
+  if(mode==='month'){let y=+t.slice(0,4),m=+t.slice(5,7);for(let i=0;i<n;i++){keys.unshift(y+'-'+String(m).padStart(2,'0'));m--;if(m<1){m=12;y--}}}
+  else{const st=invGroupKey(t,'week');for(let i=0;i<n;i++)keys.unshift(invAdd(st,-7*i))}
+  const map={};
+  const fm=function(iso,o){return new Date(iso+'T12:00:00Z').toLocaleDateString('en-GB',Object.assign({timeZone:'UTC'},o))};
+  keys.forEach(function(k){
+    let label,title;
+    if(mode==='month'){label=fm(k+'-01',{month:'short'})+' ’'+k.slice(2,4);title=fm(k+'-01',{month:'long',year:'numeric'})}
+    else{label=fm(k,{day:'numeric',month:'short'});title='Week '+fm(k,{day:'numeric',month:'short'})+' – '+fm(invAdd(k,6),{day:'numeric',month:'short',year:'numeric'})}
+    map[k]={key:k,label:label,title:title,sales:0,other:0,expense:0,invoices:0};
+  });
+  (b.orders||[]).forEach(function(o){
+    if(o.status!=='PAID')return;const d=invDay(o);if(!d)return;
+    const x=map[invGroupKey(d,mode)];if(x){x.sales+=Number(o.total)||0;x.invoices++}
+  });
+  (b.expenses||[]).forEach(function(e){
+    const d=String(e.date||'').slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(d))return;
+    const x=map[invGroupKey(d,mode)];if(!x)return;const amt=Number(e.amount)||0;
+    if(e.type==='EXPENSE')x.expense+=amt;else if(e.type==='INCOME')x.other+=amt;
+  });
+  return keys.map(function(k){const x=map[k];x.sales=money(x.sales);x.other=money(x.other);x.expense=money(x.expense);return x});
 }
-
-
+function finNice(max){
+  if(!(max>0))return {max:4,step:1};
+  const raw=max/4,p=Math.pow(10,Math.floor(Math.log10(raw))),f=raw/p;
+  const nf=f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10,step=nf*p;
+  return {step:step,max:step*Math.ceil(max/step)};
+}
+function finK(v){v=Number(v)||0;if(v>=1e6)return String(+(v/1e6).toFixed(1))+'M';if(v>=1e3)return String(+(v/1e3).toFixed(1))+'k';return String(Math.round(v))}
+function finBars(buckets,series,label){
+  const W=680,H=240,L=46,R=8,T=20,B=34,pw=W-L-R,ph=H-T-B,n=buckets.length;
+  const totals=buckets.map(function(x){return series.reduce(function(sum,se){return sum+(x[se.key]||0)},0)});
+  const sc=finNice(Math.max.apply(null,totals.concat([0])));
+  const yOf=function(v){return T+ph-(v/sc.max)*ph};
+  let g='';
+  for(let v=0;v<=sc.max+1e-9;v+=sc.step){
+    g+=`<line x1="${L}" x2="${W-R}" y1="${yOf(v)}" y2="${yOf(v)}" stroke="currentColor" opacity="${v===0?0.35:0.12}"/><text x="${L-6}" y="${yOf(v)+3}" text-anchor="end" font-size="10" fill="currentColor">${finK(v)}</text>`;
+  }
+  const slot=pw/n,bw=Math.min(44,slot*0.62);
+  buckets.forEach(function(x,i){
+    const bx=L+slot*i+(slot-bw)/2;let acc=0;let bars='';
+    const tip=x.title+'\n'+series.map(function(se){return se.label+': '+kes(x[se.key]||0)}).join('\n')+(series.length>1?'\nTotal: '+kes(totals[i]):'');
+    series.forEach(function(se){
+      const v=x[se.key]||0;if(v<=0)return;
+      const h=(v/sc.max)*ph;
+      bars+=`<rect x="${bx.toFixed(1)}" y="${(yOf(acc+v)).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="3" fill="${se.color}"/>`;
+      acc+=v;
+    });
+    g+=`<g><title>${esc(tip)}</title><rect x="${(L+slot*i).toFixed(1)}" y="${T}" width="${slot.toFixed(1)}" height="${ph}" fill="transparent"/>${bars}`
+      +(totals[i]>0&&n<=14?`<text x="${(bx+bw/2).toFixed(1)}" y="${(yOf(totals[i])-4).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="600" fill="currentColor">${finK(totals[i])}</text>`:'')
+      +`<text x="${(bx+bw/2).toFixed(1)}" y="${H-14}" text-anchor="middle" font-size="10" fill="currentColor">${esc(x.label)}</text></g>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-slate-500" role="img" aria-label="${esc(label)}" style="max-height:300px">${g}</svg>`;
+}
+function secExpenses(b,a){
+  const mode=S.finMode==='month'?'month':'week';
+  const N=12,unit=mode==='month'?'month':'week';
+  const bk=finBuckets(b,mode,N),cur=bk[bk.length-1];
+  const sum=function(k){return money(bk.reduce(function(x,y){return x+y[k]},0))};
+  const stat=function(k){const tot=sum(k),best=bk.reduce(function(m,y){return y[k]>m[k]?y:m},bk[0]);return `Last ${N} ${unit}s: <b>${kes(tot)}</b> · average ${kes(tot/N)} per ${unit}${best[k]>0?` · best: ${esc(best.label)} (${kes(best[k])})`:''}`};
+  const seg=[['week','Weekly'],['month','Monthly']].map(function(v){const on=v[0]===mode;return `<button type="button" data-fin-mode="${v[0]}" class="px-4 py-1.5 text-sm font-medium rounded-lg ${on?'text-white':'bg-white border'}" style="${on?'background:'+a:''}">${v[1]}</button>`}).join('');
+  const net=money(cur.sales+cur.other-cur.expense);
+  const card=function(label,val,cls,note){return `<div class="rounded-2xl p-4 ${cls}"><p class="text-xs opacity-90">${label}</p><p class="text-xl font-bold mt-1">${kes(val)}</p>${note?`<p class="text-[11px] opacity-80 mt-0.5">${note}</p>`:''}</div>`};
+  const cards=`<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+    ${card('Sales (from invoices)',cur.sales,'bg-gradient-to-br from-emerald-600 to-emerald-700 text-white',cur.invoices+' paid invoice'+(cur.invoices===1?'':'s'))}
+    ${card('Other income',cur.other,'bg-gradient-to-br from-teal-600 to-teal-700 text-white','added manually')}
+    ${card('Expenses',cur.expense,'bg-gradient-to-br from-rose-500 to-rose-600 text-white','includes stock purchases')}
+    ${card('Net '+(net>=0?'profit':'loss'),net,'bg-gradient-to-br from-blue-600 to-blue-700 text-white','')}
+  </div>`;
+  const legend=function(items){return `<div class="flex flex-wrap gap-3 text-xs text-slate-500 mb-2">${items.map(function(i){return `<span class="inline-flex items-center gap-1.5"><span style="width:10px;height:10px;border-radius:3px;background:${i[1]};display:inline-block"></span>${i[0]}</span>`}).join('')}</div>`};
+  // ledger: every manual entry + one automatic "sales" row per day built from the paid invoices
+  const byDay={};
+  (b.orders||[]).forEach(function(o){if(o.status!=='PAID')return;const d=invDay(o);if(!d)return;const g=byDay[d]||(byDay[d]={total:0,n:0});g.total+=Number(o.total)||0;g.n++});
+  const rowsAll=[];
+  Object.keys(byDay).forEach(function(d){rowsAll.push({date:d,kind:'SALES',desc:'Sales from '+byDay[d].n+' invoice'+(byDay[d].n===1?'':'s'),amount:money(byDay[d].total)})});
+  (b.expenses||[]).forEach(function(e){rowsAll.push({date:String(e.date||'').slice(0,10),kind:e.type==='INCOME'?'INCOME':'EXPENSE',desc:e.description||'',amount:Number(e.amount)||0})});
+  rowsAll.sort(function(x,y){return y.date.localeCompare(x.date)||(x.kind==='SALES'?-1:1)});
+  const CAP=60,rowsShown=S.finAll?rowsAll:rowsAll.slice(0,CAP);
+  const badge={SALES:['Sales · auto','bg-emerald-50 text-emerald-700'],INCOME:['Income','bg-teal-50 text-teal-700'],EXPENSE:['Expense','bg-rose-50 text-rose-700']};
+  const rows=rowsShown.map(function(r){const bd=badge[r.kind];
+    return `<tr class="border-t"><td class="px-4 py-3 text-sm whitespace-nowrap">${esc(r.date)}</td>
+    <td class="px-4 py-3"><span class="text-[11px] font-medium px-2 py-0.5 rounded-full ${bd[1]}">${bd[0]}</span></td>
+    <td class="px-4 py-3 text-sm">${esc(r.desc)}${r.kind==='SALES'?` <button type="button" data-fin-day="${esc(r.date)}" class="ml-1 text-xs underline" style="color:${a}">View invoices</button>`:''}</td>
+    <td class="px-4 py-3 text-right font-medium ${r.kind==='EXPENSE'?'text-rose-600':'text-emerald-600'}">${r.kind==='EXPENSE'?'−':'+'}${kes(r.amount)}</td></tr>`}).join('');
+  return `<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div><p class="text-sm text-slate-500">Income & expenses · sales update automatically from your paid invoices</p>
+    <p class="text-xs text-slate-400">Cards show the current ${unit}: ${esc(cur.title)}</p></div>
+    <div class="flex flex-wrap items-center gap-2"><div class="flex gap-1 p-1 rounded-xl bg-slate-100">${seg}</div>
+    <button type="button" id="addExp" class="text-sm text-white px-4 py-2 rounded-xl" style="background:${a}">+ Add</button></div></div>
+  ${cards}
+  <div class="grid lg:grid-cols-2 gap-4 mb-5">
+    <div class="bg-white rounded-2xl border p-4"><h3 class="font-semibold mb-1">Income per ${unit}</h3>
+      ${legend([['Sales from invoices','#10b981'],['Other income','#38bdf8']])}
+      ${finBars(bk,[{key:'sales',label:'Sales',color:'#10b981'},{key:'other',label:'Other income',color:'#38bdf8'}],'Income per '+unit)}
+      <p class="text-xs text-slate-500 mt-2">Income · ${(function(){const t=money(sum('sales')+sum('other'));return `Last ${N} ${unit}s: <b>${kes(t)}</b> · average ${kes(t/N)} per ${unit}`})()}</p></div>
+    <div class="bg-white rounded-2xl border p-4"><h3 class="font-semibold mb-1">Expenses per ${unit}</h3>
+      ${legend([['Expenses','#f87171']])}
+      ${finBars(bk,[{key:'expense',label:'Expenses',color:'#f87171'}],'Expenses per '+unit)}
+      <p class="text-xs text-slate-500 mt-2">${stat('expense')}</p></div>
+  </div>
+  <div class="bg-white rounded-2xl border overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-500 bg-slate-50"><tr><th class="px-4 py-2">Date</th><th class="px-4 py-2">Type</th><th class="px-4 py-2">Description</th><th class="px-4 py-2 text-right">Amount</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="4" class="p-8 text-center text-slate-400">Nothing yet. Paid invoices and the entries you add will appear here.</td></tr>'}</tbody></table>
+    ${rowsShown.length<rowsAll.length?`<div class="p-3 text-center border-t"><button type="button" id="finShowAll" class="text-sm underline" style="color:${a}">Show all ${rowsAll.length} rows (${rowsAll.length-rowsShown.length} more)</button></div>`:''}</div>`;
+}
 
 function localMarketSearch(q){
   const tokens=String(q||'').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -6405,12 +6623,12 @@ function viewAdmin(){
   let body='';
   if(tab==='overview'){
     const mrr=businesses.filter(b=>planIsPaid(b)&&!b.suspended).reduce((s2,b)=>s2+((plans[b.plan]||{}).price||0),0);
-    const soon=businesses.filter(b=>!planIsPaid(b)&&!b.suspended&&daysLeftInTrial(b)>=0&&daysLeftInTrial(b)<=1);
-    const expired=businesses.filter(b=>!planIsPaid(b)&&!b.suspended&&daysLeftInTrial(b)<0);
+    const soon=[];const expired=[];
+    businesses.filter(b=>!b.suspended).forEach(function(b){const x=expiryInfo(b);if(!x||!x.alert)return;(x.expired?expired:soon).push(b)});
     const stat=(label,val,color,go,icon,prefix)=>`<button type="button" data-ad-goto="${go}" class="ad-stat text-left bg-white rounded-2xl border p-4" style="--c:${color}">
       <div class="flex items-center justify-between"><p class="text-xs text-slate-500">${label}</p><span class="ad-ico">${icon}</span></div>
       <p class="text-2xl font-bold mt-2" style="color:${color}" data-count="${val}" ${prefix?`data-prefix="${prefix}"`:''}>${prefix||''}${val}</p></button>`;
-    const attn=expired.map(b=>({b,t:'Trial expired',c:'#dc2626'})).concat(soon.map(b=>({b,t:daysLeftInTrial(b)===0?'Ends today':'Ends tomorrow',c:'#d97706'})));
+    const attn=expired.map(b=>{const x=expiryInfo(b);return {b,t:(x.paid?'Plan expired ':'Trial expired ')+x.date,c:'#dc2626',paid:x.paid}}).concat(soon.map(b=>{const x=expiryInfo(b);return {b,t:(x.paid?'Plan ends ':'Trial ends ')+keDT(new Date(x.endMs)).slice(0,10)+' · '+expiryLeft(x),c:x.level==='urgent'?'#dc2626':'#d97706',paid:x.paid}}));
     body=`<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
       ${stat('Client accounts',clients.length,'#2563eb','clients','👥')}
       ${stat('Businesses',businesses.length,accentC,'businesses','🏪')}
@@ -6439,7 +6657,7 @@ function viewAdmin(){
       ${attn.map(x=>{const owner=d.users.find(u=>u.id===x.b.ownerId);return `<div class="ad-row flex flex-wrap items-center justify-between gap-2 text-sm py-2 border-b border-slate-50">
         <span class="font-medium">${esc(x.b.name)}</span><span class="text-xs text-slate-500">${esc(owner&&owner.email)||'—'}</span>
         ${adPill(x.t,x.c)}
-        <button type="button" data-extend-trial="${x.b.id}" class="text-xs ad-text ad-border border px-2 py-1 rounded-lg">+3 days trial</button></div>`}).join('')||'<p class="text-sm text-slate-400">All clear. No trials ending soon.</p>'}
+        ${x.paid?`<button type="button" data-extend-plan="${x.b.id}" class="text-xs ad-text ad-border border px-2 py-1 rounded-lg">+30 days</button>`:`<button type="button" data-extend-trial="${x.b.id}" class="text-xs ad-text ad-border border px-2 py-1 rounded-lg">+3 days trial</button>`}</div>`}).join('')||'<p class="text-sm text-slate-400">All clear. No plans or trials ending soon.</p>'}
     </div>
     <div class="bg-white rounded-2xl border p-4">
       <h3 class="font-semibold mb-2">Recent businesses</h3>
@@ -6490,19 +6708,19 @@ function viewAdmin(){
         <tbody>${businesses.map(b=>{
           const owner=d.users.find(u=>u.id===b.ownerId);
           const left=daysLeftInTrial(b);
-          const trialLabel=planIsPaid(b)?'Paid':(left<0?'Expired':left+'d left');
+          const ex=expiryInfo(b)||{};const trialLabel=(planIsPaid(b)?'Paid · ':'Trial · ')+(ex.expired?'Expired':(ex.ms!=null?expiryLeft(ex):''));
           return `<tr class="border-t ad-row">
             <td class="px-4 py-3 font-medium">${esc(b.name)}</td>
             <td class="px-4 py-3 text-xs text-slate-500">${esc(owner&&owner.email)||'—'}</td>
             <td class="px-4 py-3"><select data-set-plan="${b.id}" class="border rounded-lg px-2 py-1 text-xs">
               ${Object.keys(plans).map(k=>`<option value="${k}" ${(b.plan||'FREE')===k?'selected':''}>${esc(plans[k].name)}</option>`).join('')}
             </select></td>
-            <td class="px-4 py-3 text-xs ${left<0&&!planIsPaid(b)?'text-red-600 font-semibold':'text-slate-600'}">${trialLabel}<br/><span class="text-slate-400">${esc(trialEndsOn(b))}</span></td>
+            <td class="px-4 py-3 text-xs ${ex.expired?'text-red-600 font-semibold':(ex.alert?'text-amber-700 font-semibold':'text-slate-600')}">${esc(trialLabel)}<br/><span class="text-slate-400">${esc(ex.date||'')} 23:59</span></td>
             <td class="px-4 py-3">
               <button type="button" data-toggle-suspend="${b.id}" class="text-xs px-2 py-1 rounded-lg border ${b.suspended?'bg-amber-50 text-amber-800 border-amber-200':'bg-emerald-50 text-emerald-800 border-emerald-200'}">${b.suspended?'Suspended':'Active'}</button>
             </td>
             <td class="px-4 py-3 space-x-1">
-              <button type="button" data-extend-trial="${b.id}" class="text-xs ad-text ad-border border px-2 py-1 rounded-lg">+3 days trial</button>
+              ${planIsPaid(b)?`<button type="button" data-extend-plan="${b.id}" class="text-xs ad-text ad-border border px-2 py-1 rounded-lg">+30 days</button>`:`<button type="button" data-extend-trial="${b.id}" class="text-xs ad-text ad-border border px-2 py-1 rounded-lg">+3 days trial</button>`}
               <button type="button" data-reset-pin="${b.id}" class="text-xs text-amber-800 border border-amber-200 px-2 py-1 rounded-lg">Reset PIN</button>
               <button type="button" data-delete-biz="${b.id}" class="text-xs text-red-700 border border-red-200 px-2 py-1 rounded-lg">Delete</button>
             </td>
@@ -7315,6 +7533,18 @@ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.getAttribut
   document.querySelectorAll('[data-biz-cat-tab]').forEach(b=>b.onclick=()=>{S.bizCatTab=b.getAttribute('data-biz-cat-tab');S.filter='All';render()});
   document.querySelectorAll('[data-pay]').forEach(b=>b.onclick=()=>{S.payMethod=b.getAttribute('data-pay');render()});
   document.querySelectorAll('[data-open-inv]').forEach(b=>b.onclick=()=>{S.viewInvoiceId=b.getAttribute('data-open-inv');S.appView='invoices';render()});
+  document.querySelectorAll('[data-inv-view]').forEach(el=>el.onclick=()=>{S.invView=el.getAttribute('data-inv-view');render()});
+  const _if=document.getElementById('invFrom'),_it=document.getElementById('invTo');
+  if(_if)_if.onchange=()=>{S.invFrom=_if.value||'';S.invOpen={};render()};
+  if(_it)_it.onchange=()=>{S.invTo=_it.value||'';S.invOpen={};render()};
+  document.querySelectorAll('[data-inv-preset]').forEach(el=>el.onclick=()=>{const v=el.getAttribute('data-inv-preset').split('|');S.invFrom=v[0];S.invTo=v[1];S.invOpen={};S.invMore={};render()});
+  const _icf=document.getElementById('invClearFilter');
+  if(_icf)_icf.onclick=()=>{S.invFrom='';S.invTo='';S.invOpen={};S.invMore={};render()};
+  document.querySelectorAll('details[data-inv-grp]').forEach(el=>el.addEventListener('toggle',()=>{S.invOpen=S.invOpen||{};S.invOpen[el.getAttribute('data-inv-grp')]=el.open}));
+  document.querySelectorAll('[data-inv-more]').forEach(el=>el.onclick=()=>{S.invMore=S.invMore||{};S.invMore[el.getAttribute('data-inv-more')]=true;render()});
+  const _ie=document.getElementById('invExpandAll'),_ic=document.getElementById('invCollapseAll');
+  const _setAll=function(v){document.querySelectorAll('details[data-inv-grp]').forEach(el=>{S.invOpen=S.invOpen||{};S.invOpen[el.getAttribute('data-inv-grp')]=v});render()};
+  if(_ie)_ie.onclick=()=>_setAll(true);if(_ic)_ic.onclick=()=>_setAll(false);
   document.querySelectorAll('[data-toggle-pw]').forEach(btn=>{
     btn.onclick=()=>{const i=btn.parentElement.querySelector('input');if(!i)return;if(i.type==='password'){i.type='text';btn.textContent='Hide'}else{i.type='password';btn.textContent='Show'}}});
   document.querySelectorAll('[data-toggle-cat]').forEach(b=>{
@@ -8083,6 +8313,9 @@ render();
     b.orders.push({id:uid(),number:'INV-'+String(b.orderN).padStart(4,'0'),date:today(),items:q.items,total:q.total,status:'PENDING',payMethod:'Invoice',method:'invoice',source:'pos'});
     saveBiz(b);goApp('invoices')});
 
+  document.querySelectorAll('[data-fin-mode]').forEach(el=>el.onclick=()=>{S.finMode=el.getAttribute('data-fin-mode');render()});
+  document.querySelectorAll('[data-fin-day]').forEach(el=>el.onclick=()=>{const dd=el.getAttribute('data-fin-day');S.invFrom=dd;S.invTo=dd;S.invView='day';S.invOpen={};S.viewInvoiceId=null;S.appView='invoices';render()});
+  const _fsa=document.getElementById('finShowAll');if(_fsa)_fsa.onclick=()=>{S.finAll=true;render()};
   const ae=document.getElementById('addExp');
   if(ae)ae.onclick=()=>{
     openModal(`<h3 class="text-lg font-bold mb-4">Entry</h3><form id="expForm" class="space-y-3">
@@ -8139,7 +8372,7 @@ render();
           }).catch(function(e){alert(String(e.message||e))});
           return;
         }
-        b.plan=plan;b.planPaidAt=today();b.planReceipt=code;saveBiz(b);toast(p.name+' plan activated');render();
+        b.plan=plan;b.planPaidAt=today();renewPlanExpiry(b);b.planReceipt=code;saveBiz(b);toast(p.name+' plan activated');render();
       }});
     }).catch(e=>alert(String(e.message||e)));
   });
@@ -8387,7 +8620,7 @@ render();
       }).catch(function(e){btn.disabled=false;alert(e.message||e)});
       return;
     }
-    b.plan=plan;b.planPaidAt=today();b.planReceipt=b.pendingPlan.receipt||('ADMIN-'+Date.now());b.pendingPlan=null;done();
+    b.plan=plan;b.planPaidAt=today();renewPlanExpiry(b);b.planReceipt=b.pendingPlan.receipt||('ADMIN-'+Date.now());b.pendingPlan=null;done();
   });
   document.querySelectorAll('[data-pay-reject]').forEach(btn=>btn.onclick=()=>{
     const id=btn.getAttribute('data-pay-reject');const d=db();const b=d.businesses.find(x=>x.id===id);if(!b)return;
@@ -8405,7 +8638,7 @@ render();
       if(!b)return;
       const plan=sel.value;
       b.plan=plan;
-      if(plan!=='FREE'){b.planPaidAt=today();b.planReceipt=b.planReceipt||('ADMIN-'+Date.now())}
+      if(plan!=='FREE'){b.planPaidAt=today();if(!b.planExpiresAt||b.planExpiresAt<=today())renewPlanExpiry(b);b.planReceipt=b.planReceipt||('ADMIN-'+Date.now())}
       save(d);
       if(SERVER_MODE){
         api('/api/businesses/'+id,{method:'PUT',body:{plan:plan}}).then(function(){
@@ -8648,6 +8881,7 @@ render();
 
   
   flushOfflineSales();
+  try{const _eb=biz();if(_eb&&!isAdmin()&&!currentWorker())expiryToastOnce(_eb)}catch(e){}
   try{const _au=currentUser();if(_au&&window._auditMigratedFor!==_au.id){window._auditMigratedFor=_au.id;migrateLegacyAudit()}}catch(e){}
   window.addEventListener('online',function(){try{fullServerSync({quiet:false})}catch(e){try{flushOfflineSales()}catch(e2){}}});
   const openShiftBtn=document.getElementById('openShiftBtn');
@@ -9216,6 +9450,18 @@ render();
       return;
     }
     render();toast('Trial extended +3 days')});
+  document.querySelectorAll('[data-extend-plan]').forEach(btn=>btn.onclick=()=>{
+    const id=btn.getAttribute('data-extend-plan');
+    const d=db();const b=d.businesses.find(x=>x.id===id);
+    if(!b)return;
+    const ends=renewPlanExpiry(b);save(d);
+    if(SERVER_MODE){
+      api('/api/businesses/'+id,{method:'PUT',body:{planExpiresAt:ends}}).then(function(){
+        render();toast('Plan extended to '+ends);
+      }).catch(function(e){alert(e.message||e);});
+      return;
+    }
+    render();toast('Plan extended to '+ends)});
   document.querySelectorAll('[data-toggle-suspend]').forEach(btn=>btn.onclick=()=>{
     const id=btn.getAttribute('data-toggle-suspend');
     const d=db();const b=d.businesses.find(x=>x.id===id);
