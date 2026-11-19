@@ -312,7 +312,7 @@ function calcCommission(cfg, plan, subtotal, deliveryFee) {
 function money2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
 // Fields a business owner may never set themselves
-const OWNER_LOCKED = ['id', 'ownerId', 'suspended', 'trialEndsAt', 'trialExtended', 'plan', 'planPaidAt', 'planReceipt', 'pendingPlan', 'createdAt'];
+const OWNER_LOCKED = ['id', 'ownerId', 'suspended', 'trialEndsAt', 'trialExtended', 'plan', 'planPaidAt', 'planReceipt', 'pendingPlan', 'createdAt', 'planExpiresAt', 'expiryNotified'];
 const PUBLIC_PRODUCT_FIELDS = ['id', 'name', 'sub', 'category', 'sourceCat', 'unit', 'packQty', 'packUnit', 'price', 'stock', 'image', 'sku', 'barcode'];
 const publicProduct = (p) => { const o = {}; PUBLIC_PRODUCT_FIELDS.forEach((k) => { if (p[k] !== undefined) o[k] = p[k]; }); return o; };
 const HEAVY = ['orders', 'customers', 'quotations', 'expenses', 'purchases', 'cart'];
@@ -610,7 +610,7 @@ const bizOut = (r) => ({ ...r.data, id: r.id, ownerId: r.owner_id, timezone: KE_
 
 function emptyBiz(ownerId, extra) {
   const clean = { ...(extra || {}) };
-  ['id', 'ownerId', 'plan', 'suspended', 'trialEndsAt', 'trialExtended', 'planPaidAt', 'planReceipt', 'createdAt'].forEach((k) => delete clean[k]);
+  ['id', 'ownerId', 'plan', 'suspended', 'trialEndsAt', 'trialExtended', 'planPaidAt', 'planReceipt', 'createdAt', 'planExpiresAt', 'expiryNotified'].forEach((k) => delete clean[k]);
   return {
     id: uid(), ownerId, name: '', phone: '', address: '', payinfo: '', currency: 'KES', categories: [],
     categoryLabel: '', color: '#0d9488', salesPin: '', onlineStore: true, products: [], cart: [], orders: [],
@@ -633,6 +633,62 @@ async function withBiz(id, fn) {
     await c.query('COMMIT');
     return out;
   } catch (e) { await c.query('ROLLBACK').catch(() => {}); throw e; } finally { c.release(); }
+}
+
+/* ---------- plan expiry ---------- */
+const PLAN_DAYS = 30; // plans are priced per month
+const dayDiff = (a, b2) => Math.round((new Date(a + 'T00:00:00+03:00') - new Date(b2 + 'T00:00:00+03:00')) / 86400000);
+function expiryOf(b) { // { kind, date } - the plan runs until the END of that day (Kenya time)
+  const paid = b.plan && b.plan !== 'FREE';
+  const date = paid ? b.planExpiresAt : b.trialEndsAt;
+  return date ? { kind: paid ? 'plan' : 'trial', date: String(date).slice(0, 10) } : null;
+}
+// Existing paid clients had no expiry. Give them one once: last payment + 30 days, or, if that already passed,
+// 7 days from now so they get the alerts and time to renew instead of being shown as expired at once.
+async function migratePlanExpiry() {
+  const rows = (await pool.query("SELECT id FROM businesses WHERE COALESCE(data->>'plan','FREE')<>'FREE' AND (data->>'planExpiresAt') IS NULL")).rows;
+  for (const r of rows) {
+    await withBiz(r.id, async (b) => {
+      if (b.planExpiresAt || !b.plan || b.plan === 'FREE') return { status: 200, body: {} };
+      const t = today();
+      const base = b.planPaidAt ? addDays(String(b.planPaidAt).slice(0, 10), PLAN_DAYS) : addDays(t, PLAN_DAYS);
+      b.planExpiresAt = base >= t ? base : addDays(t, 7);
+      return { save: b, status: 200, body: {} };
+    });
+  }
+  if (rows.length) console.log('[plans] expiry date set for', rows.length, 'existing paid business(es)');
+}
+// Daily: email owners (only if SMTP is set up) when a plan/trial is 7, 3 or 1 day(s) from its end, and once when it has ended.
+async function runExpiryReminders() {
+  if (!MAIL_ON) return;
+  const ids = (await pool.query('SELECT b.id, u.email FROM businesses b JOIN users u ON u.id=b.owner_id')).rows;
+  const t = today();
+  for (const r of ids) {
+    // 1) decide (read only)   2) send   3) record as done only if the email really went out, otherwise retry next run
+    const cur = (await pool.query('SELECT data FROM businesses WHERE id=$1', [r.id])).rows[0];
+    if (!cur) continue;
+    const b0 = cur.data;
+    const ex = expiryOf(b0);
+    if (!ex || b0.suspended) continue;
+    const left = dayDiff(ex.date, t);
+    const marks = b0.expiryNotified && b0.expiryNotified.date === ex.date && b0.expiryNotified.kind === ex.kind ? b0.expiryNotified.done || [] : [];
+    const step = [1, 3, 7].find((x) => left <= x && left >= 0 && (ex.kind === 'plan' || x === 1));
+    const key = left < 0 ? 'ended' : step;
+    if (key == null || marks.includes(key) || left < -3) continue;
+    const what = ex.kind === 'plan' ? 'subscription' : 'free trial';
+    const name = b0.name || 'your business';
+    const sent = await sendMail(r.email,
+      left < 0 ? `Your ${name} ${what} has ended` : `Your ${name} ${what} ends ${left === 0 ? 'today' : 'in ' + left + ' day' + (left === 1 ? '' : 's')}`,
+      `${left < 0 ? `Your ${what} for ${name} ended on ${ex.date}.` : `Your ${what} for ${name} ends on ${ex.date} at 11:59 PM (Kenya time).`}\nOpen MyBusinessHub > Settings > Plans to renew so you don't lose access.`);
+    if (!sent) continue;
+    await withBiz(r.id, async (b) => {
+      const again = expiryOf(b);
+      if (!again || again.date !== ex.date) return { status: 200, body: {} }; // renewed meanwhile
+      const m = b.expiryNotified && b.expiryNotified.date === ex.date && b.expiryNotified.kind === ex.kind ? b.expiryNotified.done || [] : [];
+      b.expiryNotified = { kind: ex.kind, date: ex.date, done: [...m, key] };
+      return { save: b, status: 200, body: {} };
+    });
+  }
 }
 
 async function init() {
@@ -663,6 +719,7 @@ async function init() {
     const r = await pool.query("UPDATE users SET email=$1, password_hash=$2 WHERE role='admin'", [adminEmail, await hashPassword(adminPass)]);
     if (r.rowCount) { await pool.query("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role='admin')"); console.log('Admin credentials reset for', adminEmail, '- now remove ADMIN_RESET'); }
   }
+  await migratePlanExpiry().catch((e) => console.warn('plan expiry migration', e.message));
   await pool.query('DELETE FROM sessions WHERE expires_at<now()');
   setInterval(() => pool.query('DELETE FROM sessions WHERE expires_at<now()').catch(() => {}), 3600000).unref();
 }
@@ -896,7 +953,12 @@ async function handleApi(req, res, pathname) {
           nb = { ...b };
           ['plan', 'suspended', 'trialEndsAt', 'trialExtended', 'name', 'salesPin', 'pinLocked', 'pinFails', 'pinLockedAt'].forEach((k) => { if (body[k] !== undefined) nb[k] = body[k]; });
           if (body.rejectPendingPlan) nb.pendingPlan = null;
+          if (typeof body.planExpiresAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.planExpiresAt)) nb.planExpiresAt = body.planExpiresAt;
           if (body.plan && body.plan !== 'FREE') {
+            // new plan, a confirmed payment claim, or a plan with no expiry yet -> 30 days, added on top of any time still left
+            if (!(typeof body.planExpiresAt === 'string') && (b.plan !== body.plan || b.pendingPlan || !b.planExpiresAt)) {
+              nb.planExpiresAt = addDays(b.planExpiresAt && b.planExpiresAt > today() && b.plan === body.plan ? b.planExpiresAt : today(), PLAN_DAYS);
+            }
             nb.planPaidAt = today();
             nb.planReceipt = (b.pendingPlan && b.pendingPlan.receipt) || b.planReceipt || 'ADMIN-' + Date.now();
             nb.pendingPlan = null;
@@ -1924,6 +1986,8 @@ async function runScheduledBusinessBackups() {
   }
 }
 function startAutoBackupScheduler() {
+  setTimeout(() => { runExpiryReminders().catch((e) => console.warn('expiry reminders', e.message)); }, 40000);
+  setInterval(() => { runExpiryReminders().catch((e) => console.warn('expiry reminders', e.message)); }, 6 * 60 * 60 * 1000);
   setTimeout(() => { runScheduledBusinessBackups().catch(() => {}); }, 20000);
   setInterval(() => { runScheduledBusinessBackups().catch(() => {}); }, 6 * 60 * 60 * 1000);
 }

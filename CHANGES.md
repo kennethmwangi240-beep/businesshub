@@ -1,3 +1,53 @@
+# Finance: sales follow the invoices automatically + weekly / monthly bar graphs
+- Finance (menu "Finance") now builds its sales LIVE from the invoices every time it opens: every PAID invoice counts (refunded,
+  pending and draft ones do not), including online orders, offline sales restored after sync, and anything a worker rings up.
+  Nothing is copied, so figures can never go stale or be entered twice. Same definitions as Wallet: income = paid invoices +
+  manual income; expenses = expense entries (stock purchases already create these).
+- Summary cards for the current week or month: Sales (from invoices, with the invoice count), Other income, Expenses, Net.
+- Two bar graphs with a Weekly / Monthly switch (last 12 weeks, Monday-Sunday, or last 12 months): Income (sales from invoices and
+  other income stacked in two colours) and Expenses. Amount labels on the bars, hover/tap for the exact figures of a period.
+  Drawn as plain SVG: works offline, no chart library needed.
+- The list below shows one automatic "Sales - auto" row per day (with a "View invoices" link that opens the Invoices page filtered
+  to that day) plus every manual income/expense entry, newest first; first 60 rows, "Show all" for the rest.
+- Heads-up: if a client already typed their daily sales in as manual "Income" entries, those now appear in addition to the
+  automatic sales and would be counted twice. They should delete those entries.
+- Display only: works for all existing clients immediately. Service worker cache `bh-offline-v20`.
+
+# Invoices grouped by day / week / month, with a date filter
+- Date filter above the list: From / To date pickers (either can be left empty for open-ended) and quick buttons Today, Yesterday,
+  This week, This month, Last month, plus Clear dates. The filter is applied before grouping, so it works with Daily / Weekly /
+  Monthly and the counts and paid totals follow it; a summary line shows "N of M invoices - range - paid total". If From is
+  after To they are swapped; no matches shows a clear message. With a filter on and 5 or fewer periods, all periods open by default.
+  Invoices with no date are left out while a filter is active. Service worker cache `bh-offline-v19`.
+- Invoices page no longer lists everything in one long table. A Daily / Weekly / Monthly switch groups invoices under period
+  headers (newest first): "Thursday, 19 Nov 2026 - Today", "Mon 16 Nov - Sun 22 Nov 2026 - This week" (weeks run Monday-Sunday),
+  "November 2026 - This month". Each header shows the number of invoices and the PAID total (refunded/pending are counted as
+  invoices but not in the paid amount, same rule as the rest of the app).
+- Only the newest period is open; the others are collapsed. The page remembers what you opened/closed and the chosen view while you
+  move around the app. "Expand all" / "Collapse all" buttons. A period with more than 100 invoices shows the first 100 and a
+  "Show all N invoices" button.
+- Dates follow Kenya time; an invoice with no date uses the Kenya date of its timestamp, otherwise it goes under "No date".
+- Works for every existing client immediately (display only, no data changed). Service worker cache `bh-offline-v18`.
+
+# Plan / trial expiry alerts
+- Every business now has a real expiry: free trial = `trialEndsAt` (3 days), paid plan = `planExpiresAt` (30 days from
+  activation; renewals are added on top of the time still left). A plan runs until the END of its expiry day, 11:59 PM Kenya time.
+- Clients see it automatically: a banner on EVERY page (amber when almost over, red in the last 24 h and after it has ended)
+  with the exact date/time (e.g. "Tue, 24 Nov 2026, 11:59 PM EAT"), a live countdown ("5 days 13 h left") and a Renew button, plus a
+  popup once a day when they open the app. Paid plans warn 7 days ahead; the 3-day trial warns during its last 2 days. Outside
+  those windows the dashboard shows a calm "active until ..." line.
+- Email (only if SMTP is configured, same settings as password recovery): owners get an email at 7, 3 and 1 day(s) before a
+  paid plan ends (1 day for trials) and once after it ended. Checked every 6 hours; an email is marked as sent only after it
+  was really delivered, so a failed send is retried. Each reminder is sent once per expiry date.
+- Admin: Businesses table shows plan/trial state, time left and expiry date; "Needs your attention" lists trials AND paid plans
+  that are ending/ended; new "+30 days" button (and the expiry date can be set via the API). Choosing a plan or confirming a
+  client's payment sets the expiry automatically; re-selecting the same plan does not extend it.
+- Existing paid clients (they had no expiry): on first start they get last payment + 30 days, or 7 days from now if that
+  date has already passed, so they receive the alerts and a chance to renew instead of being shown as expired at once.
+- Owners cannot change `planExpiresAt` (server-controlled). Expiry only ALERTS; it does not lock or suspend a paid plan
+  (the free trial paywall works as before).
+- Service worker cache `bh-offline-v17`; tests/api-smoke.js now has 84 checks.
+
 # Kenya time (EAT, UTC+3) for every business
 - Audit log (and stock movements, plan-payment alerts, tickets, last backup, worker shift times, report timestamps) were shown
   in raw UTC, 3 hours behind Kenya. They are now always displayed in Nairobi time, whatever the device's own time zone is.
